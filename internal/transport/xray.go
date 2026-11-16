@@ -41,6 +41,10 @@ func ServerConfig(s store.State, o ServerOptions, now time.Time) obj {
 			continue
 		}
 		clients = append(clients, obj{"id": d.Secret, "email": d.ID})
+		if d.AppSecret != "" {
+			clients = append(clients, obj{"id": d.AppSecret, "email": d.ID + ":apps"})
+			rules = append(rules, obj{"type": "field", "user": []string{d.ID + ":apps"}, "outboundTag": "allowed"})
+		}
 		domains := []string{}
 		ips := []string{}
 		for _, r := range a.Rules {

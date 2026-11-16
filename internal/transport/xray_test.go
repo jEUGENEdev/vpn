@@ -41,3 +41,30 @@ func TestPrivateEgressDenied(t *testing.T) {
 		t.Fatal("public rejected")
 	}
 }
+
+func TestApplicationCredentialDoesNotWidenAddressCredential(t *testing.T) {
+	s := store.Empty()
+	now := time.Now()
+	s.Accounts["a"] = store.Account{Account: model.Account{ID: "a", Status: "active", Rules: []string{"example.com"}}}
+	s.Devices["d"] = store.Device{Device: model.Device{ID: "d", AccountID: "a", Expires: now.Add(time.Hour)}, Secret: "address-key", AppSecret: "app-key"}
+	cfg := ServerConfig(s, ServerOptions{}, now)
+	rules := cfg["routing"].(obj)["rules"].([]obj)
+	if len(rules) != 2 {
+		t.Fatal(rules)
+	}
+	for _, r := range rules {
+		user := r["user"].([]string)[0]
+		if user == "d" && r["domain"] == nil {
+			t.Fatal("address credential became unrestricted")
+		}
+		if user != "d" && user != "d:apps" {
+			t.Fatal("unscoped app route")
+		}
+	}
+	device := s.Devices["d"]
+	device.Revoked = true
+	s.Devices["d"] = device
+	if len(ServerConfig(s, ServerOptions{}, now)["routing"].(obj)["rules"].([]obj)) != 0 {
+		t.Fatal("app credential survived revocation")
+	}
+}

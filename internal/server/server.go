@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/netip"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -169,7 +170,7 @@ func (s *Server) device(r *http.Request) (store.Device, store.Account, error) {
 }
 func (s *Server) profile(d store.Device, a store.Account, token string) model.Profile {
 	o := s.Config.Transport
-	return model.Profile{DeviceID: d.ID, AccountID: a.ID, Token: token, Server: s.Config.PublicIP, Port: o.Port, UUID: d.Secret, SNI: o.SNI, PublicKey: o.PublicKey, ShortID: o.ShortID, Path: o.Path, Rules: a.Rules, Revision: a.Revision, Status: a.Status}
+	return model.Profile{DeviceID: d.ID, AccountID: a.ID, Token: token, Server: s.Config.PublicIP, Port: o.Port, UUID: d.Secret, AppUUID: d.AppSecret, SNI: o.SNI, PublicKey: o.PublicKey, ShortID: o.ShortID, Path: o.Path, Rules: a.Rules, Revision: a.Revision, Status: a.Status}
 }
 
 func (s *Server) Handler(static http.Handler) http.Handler {
@@ -192,6 +193,7 @@ func (s *Server) Handler(static http.Handler) http.Handler {
 	mux.HandleFunc("GET /api/sync", s.syncState)
 	mux.HandleFunc("POST /api/discover", s.discover)
 	mux.HandleFunc("POST /api/rules", s.rules)
+	mux.HandleFunc("POST /api/app-vpn", s.appVPN)
 	mux.HandleFunc("POST /api/dismiss", s.dismiss)
 	mux.HandleFunc("POST /api/pair", s.pair)
 	mux.HandleFunc("POST /api/revoke", s.revoke)
@@ -417,6 +419,9 @@ func (s *Server) syncState(w http.ResponseWriter, r *http.Request) {
 				dismissed = append(dismissed, v.Target)
 			}
 			if v.AccountID == a.ID && !v.Dismissed && !policy.Approved(a.Rules, v.Target) {
+				at, failed := v.FailedDevices[d.ID]
+				v.DirectFailed = failed && time.Since(at) < 30*time.Minute
+				v.FailedDevices = nil
 				requests = append(requests, v)
 			}
 		}
@@ -427,43 +432,115 @@ func (s *Server) syncState(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	})
-	JSON(w, 200, map[string]any{"profile": s.profile(d, a, ""), "requests": requests, "dismissed": dismissed, "devices": devices})
+	sort.Slice(requests, func(i, j int) bool {
+		if requests[i].FirstSeen.Equal(requests[j].FirstSeen) {
+			return requests[i].Target < requests[j].Target
+		}
+		return requests[i].FirstSeen.Before(requests[j].FirstSeen)
+	})
+	sort.Slice(devices, func(i, j int) bool {
+		if devices[i].Created.Equal(devices[j].Created) {
+			return devices[i].ID < devices[j].ID
+		}
+		return devices[i].Created.Before(devices[j].Created)
+	})
+	sort.Strings(dismissed)
+	visible := requests[:0]
+	for _, request := range requests {
+		if !policy.Approved(dismissed, request.Target) {
+			visible = append(visible, request)
+		}
+	}
+	JSON(w, 200, map[string]any{"profile": s.profile(d, a, ""), "requests": visible, "dismissed": dismissed, "devices": devices})
 }
 func (s *Server) discover(w http.ResponseWriter, r *http.Request) {
-	_, a, e := s.device(r)
+	d, a, e := s.device(r)
 	if e != nil {
 		fail(w, 401, e)
 		return
 	}
-	var c struct {
-		Targets []string `json:"targets"`
+	var input struct {
+		Targets  []string `json:"targets"`
+		Failed   []string `json:"failed_targets"`
+		Resolved []string `json:"resolved_targets"`
 	}
-	if !body(w, r, &c) {
+	if !body(w, r, &input) {
 		return
 	}
-	if len(c.Targets) > 100 {
+	if len(input.Targets)+len(input.Failed) > 100 || len(input.Resolved) > 100 {
 		fail(w, 400, errors.New("слишком много адресов"))
 		return
 	}
-	targets, e := policy.Clean(c.Targets)
+	targets, e := policy.Clean(append(append([]string{}, input.Targets...), input.Failed...))
 	if e != nil {
 		fail(w, 400, e)
 		return
 	}
+	failed, e := policy.Clean(input.Failed)
+	if e != nil {
+		fail(w, 400, e)
+		return
+	}
+	resolved, e := policy.Clean(input.Resolved)
+	if e != nil {
+		fail(w, 400, e)
+		return
+	}
+	failures := map[string]bool{}
+	for _, target := range failed {
+		failures[target] = true
+	}
 	e = s.Store.Update(func(st *store.State) error {
 		count := 0
-		for _, v := range st.Requests {
-			if v.AccountID == a.ID {
+		dismissed := []string{}
+		for _, q := range st.Requests {
+			if q.AccountID == a.ID {
 				count++
+				if q.Dismissed {
+					dismissed = append(dismissed, q.Target)
+				}
+			}
+		}
+		for _, target := range resolved {
+			key := a.ID + ":" + target
+			if q, ok := st.Requests[key]; ok {
+				delete(q.FailedDevices, d.ID)
+				q.DirectFailed = len(q.FailedDevices) > 0
+				st.Requests[key] = q
 			}
 		}
 		for _, target := range targets {
-			if policy.Approved(st.Accounts[a.ID].Rules, target) {
+			if policy.Approved(st.Accounts[a.ID].Rules, target) || policy.Approved(dismissed, target) {
 				continue
 			}
 			key := a.ID + ":" + target
 			q, ok := st.Requests[key]
 			if !ok {
+				if count >= 1000 && failures[target] {
+					oldest := ""
+					var at time.Time
+					for candidate, old := range st.Requests {
+						if old.AccountID != a.ID || old.Dismissed {
+							continue
+						}
+						active := false
+						for id, seen := range old.FailedDevices {
+							device := st.Devices[id]
+							if time.Since(seen) < 30*time.Minute && !device.Revoked && time.Now().Before(device.Expires) {
+								active = true
+								break
+							}
+						}
+						if !active && (oldest == "" || old.LastSeen.Before(at)) {
+							oldest = candidate
+							at = old.LastSeen
+						}
+					}
+					if oldest != "" {
+						delete(st.Requests, oldest)
+						count--
+					}
+				}
 				if count >= 1000 {
 					continue
 				}
@@ -472,6 +549,19 @@ func (s *Server) discover(w http.ResponseWriter, r *http.Request) {
 			}
 			q.Count++
 			q.LastSeen = time.Now()
+			if failures[target] {
+				if q.FailedDevices == nil {
+					q.FailedDevices = map[string]time.Time{}
+				}
+				for id, at := range q.FailedDevices {
+					device := st.Devices[id]
+					if time.Since(at) >= 30*time.Minute || device.Revoked || !time.Now().Before(device.Expires) {
+						delete(q.FailedDevices, id)
+					}
+				}
+				q.FailedDevices[d.ID] = time.Now()
+				q.DirectFailed = true
+			}
 			st.Requests[key] = q
 		}
 		return nil

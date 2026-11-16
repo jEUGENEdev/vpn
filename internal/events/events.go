@@ -90,3 +90,25 @@ func (c *Center) List() []Event {
 	defer c.mu.Unlock()
 	return append([]Event{}, c.items...)
 }
+
+func (c *Center) NewApplication(now time.Time, id, name, target string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if now.Sub(c.globalSuggestion) < 5*time.Minute {
+		return
+	}
+	if c.add(now, "application", "app:"+id, "Новое приложение", name+" обращается к "+policy.Group(target)+". Откройте Линию, чтобы выбрать VPN для приложения или только отдельных адресов.", id, 24*time.Hour) {
+		c.globalSuggestion = now
+	}
+}
+
+func (c *Center) DirectUnavailable(now time.Time, target string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if now.Sub(c.globalSuggestion) < 5*time.Minute {
+		return
+	}
+	if c.add(now, "suggestion", "suggest:"+policy.Group(target), "Нет ответа напрямую", target+": прямое подключение несколько раз завершилось ошибкой. Можно разрешить VPN; причиной также может быть сбой самого сервиса.", target, time.Hour) {
+		c.globalSuggestion = now
+	}
+}

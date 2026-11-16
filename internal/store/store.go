@@ -17,8 +17,9 @@ type Account struct {
 }
 type Device struct {
 	model.Device
-	Secret string `json:"vless"`
-	Hash   string `json:"token_hash"`
+	Secret    string `json:"vless"`
+	AppSecret string `json:"app_vless,omitempty"`
+	Hash      string `json:"token_hash"`
 }
 type Pair struct {
 	AccountID string

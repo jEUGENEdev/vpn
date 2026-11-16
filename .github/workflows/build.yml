@@ -29,6 +29,7 @@ jobs:
           build/ui-test/node_modules/.bin/playwright install --with-deps chromium
           PLAYWRIGHT_MODULE="$GITHUB_WORKSPACE/build/ui-test/node_modules/playwright" node scripts/test-ui.cjs
       - uses: actions/upload-artifact@v4
+        if: always()
         with: {name: ui-previews, path: 'build/ui-*.png'}
       - run: scripts/build-server.sh
       - uses: actions/upload-artifact@v4
@@ -92,7 +93,7 @@ jobs:
       - name: Collect explicitly marked preview APK
         run: |
           mkdir -p build/installers
-          cp apps/android/app/build/outputs/apk/debug/app-debug.apk build/installers/LineVPN-0.1.0-android-preview.apk
+          cp apps/android/app/build/outputs/apk/debug/app-debug.apk build/installers/LineVPN-0.2.0-android-preview.apk
       - uses: actions/upload-artifact@v4
         with:
           name: installer-android
@@ -112,6 +113,8 @@ jobs:
         with: {python-version: '3.12'}
       - uses: actions/setup-dotnet@v4
         with: {dotnet-version: '8.0.x'}
+      - name: Verify Windows socket ownership
+        run: go test ./internal/owner
       - run: ./scripts/package-windows.ps1
       - name: Verify installed service and persistent WFP
         run: ./scripts/test-windows.ps1
@@ -145,6 +148,8 @@ jobs:
         with: {go-version: '1.27.4', cache: true}
       - uses: actions/setup-node@v4
         with: {node-version: '24', cache: npm, cache-dependency-path: apps/desktop/package-lock.json}
+      - name: Verify macOS socket ownership
+        run: go test ./internal/owner
       - run: scripts/package-macos.sh ${{ matrix.arch }}
       - name: Verify installed service and PF on matching host architecture
         if: (matrix.arch == 'arm64' && runner.arch == 'ARM64') || (matrix.arch == 'amd64' && runner.arch == 'X64')

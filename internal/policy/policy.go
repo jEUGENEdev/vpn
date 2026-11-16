@@ -102,6 +102,9 @@ func Clean(rules []string) ([]string, error) {
 }
 
 func Group(target string) string {
+	if ip, err := netip.ParseAddr(target); err == nil {
+		return ip.Unmap().String()
+	}
 	if root, err := publicsuffix.EffectiveTLDPlusOne(target); err == nil {
 		return root
 	}
@@ -113,6 +116,7 @@ type Route string
 const (
 	Direct Route = "direct"
 	VPN    Route = "vpn"
+	AppVPN Route = "app_vpn"
 	Block  Route = "blocked"
 )
 
