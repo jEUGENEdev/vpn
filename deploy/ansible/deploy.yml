@@ -1,0 +1,135 @@
+---
+- name: Deploy LineVPN (Debian 12/13 or Ubuntu 24.04)
+  hosts: vpn
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Validate platform and configuration
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.os_family == 'Debian'
+          - ansible_facts.architecture == 'x86_64'
+          - vpn_admin_password | length >= 16
+          - vpn_admin_password | length <= 72
+          - vpn_public_ip | length > 0
+        fail_msg: Configure the public IP, Linux amd64 binaries and an admin password in Ansible Vault.
+      no_log: true
+    - name: Install system packages
+      ansible.builtin.apt:
+        name: [ca-certificates, ufw]
+        state: present
+        update_cache: true
+  tasks:
+    - name: Create service account
+      ansible.builtin.user:
+        name: linevpn
+        system: true
+        home: /var/lib/linevpn
+        create_home: false
+        shell: /usr/sbin/nologin
+    - name: Create protected state and configuration directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: linevpn
+        group: linevpn
+        mode: '0700'
+      loop: [/etc/linevpn, /var/lib/linevpn]
+    - name: Install executables
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - {src: "{{ vpn_server_binary }}", dest: /usr/local/bin/linevpn-server}
+        - {src: "{{ vpn_keygen_binary }}", dest: /usr/local/bin/linevpn-keygen}
+      notify: Restart LineVPN
+    - name: Generate REALITY keys and pinned API certificate once
+      ansible.builtin.command:
+        argv: [/usr/local/bin/linevpn-keygen, -dir, /etc/linevpn, -ip, "{{ vpn_public_ip }}", -reality-target, "{{ vpn_reality_target | default('www.microsoft.com') }}"]
+        creates: /etc/linevpn/server.json
+      register: vpn_bootstrap
+      no_log: true
+      notify: Restart LineVPN
+    - name: Save public bootstrap profile
+      ansible.builtin.copy:
+        content: "{{ vpn_bootstrap.stdout | trim }}\n"
+        dest: /etc/linevpn/bootstrap.txt
+        owner: linevpn
+        group: linevpn
+        mode: '0600'
+      when: vpn_bootstrap.changed
+      no_log: true
+    - name: Set ownership of generated configuration
+      ansible.builtin.file:
+        path: /etc/linevpn
+        owner: linevpn
+        group: linevpn
+        recurse: true
+    - name: Install admin password from vault
+      ansible.builtin.copy:
+        content: "{{ vpn_admin_password }}"
+        dest: /etc/linevpn/admin-password
+        owner: linevpn
+        group: linevpn
+        mode: '0600'
+      no_log: true
+      notify: Restart LineVPN
+    - name: Validate server configuration
+      ansible.builtin.command: /usr/local/bin/linevpn-server -config /etc/linevpn/server.json -check
+      changed_when: false
+    - name: Install systemd units
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: '0644'
+      loop: [linevpn.service, linevpn-renew.service, linevpn-renew.timer]
+      notify: Restart LineVPN
+    - name: Allow SSH before enabling firewall
+      community.general.ufw:
+        rule: allow
+        port: "{{ vpn_ssh_port | default(ansible_port | default(22)) }}"
+        proto: tcp
+    - name: Expose only encrypted public services
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop: ['443', '8443']
+    - name: Deny unsolicited inbound connections
+      community.general.ufw:
+        default: deny
+        direction: incoming
+        state: enabled
+    - name: Enable services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+      loop: [linevpn.service, linevpn-renew.timer]
+    - name: Apply changes before readiness check
+      ansible.builtin.meta: flush_handlers
+    - name: Check API listener
+      ansible.builtin.wait_for:
+        port: 8443
+        host: 127.0.0.1
+        timeout: 30
+    - name: Fetch public bootstrap profile over SSH
+      ansible.builtin.fetch:
+        src: /etc/linevpn/bootstrap.txt
+        dest: "{{ playbook_dir }}/generated/{{ inventory_hostname }}-bootstrap.txt"
+        flat: true
+    - name: Fetch API certificate for administrator trust setup
+      ansible.builtin.fetch:
+        src: /etc/linevpn/api-cert.pem
+        dest: "{{ playbook_dir }}/generated/{{ inventory_hostname }}-api-cert.pem"
+        flat: true
+  handlers:
+    - name: Restart LineVPN
+      ansible.builtin.systemd:
+        name: linevpn.service
+        state: restarted
+        daemon_reload: true

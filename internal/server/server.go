@@ -1,0 +1,696 @@
+package server
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"net/netip"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/jEUGENEdev/vpn/internal/model"
+	"github.com/jEUGENEdev/vpn/internal/policy"
+	"github.com/jEUGENEdev/vpn/internal/secure"
+	"github.com/jEUGENEdev/vpn/internal/store"
+	"github.com/jEUGENEdev/vpn/internal/transport"
+	"golang.org/x/crypto/bcrypt"
+)
+
+type Config struct {
+	Address           string                  `json:"address"`
+	PublicIP          string                  `json:"public_ip"`
+	Database          string                  `json:"database"`
+	Cert              string                  `json:"cert"`
+	Key               string                  `json:"key"`
+	AdminPasswordFile string                  `json:"admin_password_file"`
+	Transport         transport.ServerOptions `json:"transport"`
+}
+type session struct{ expires time.Time }
+type bucket struct {
+	at    time.Time
+	count int
+}
+type Server struct {
+	Store     *store.Store
+	Config    Config
+	Apply     func(store.State) error
+	change    sync.Mutex
+	mu        sync.Mutex
+	admins    map[string]session
+	attempts  map[string]bucket
+	adminHash []byte
+	dummyHash []byte
+}
+
+var ErrForbidden = errors.New("доступ запрещён")
+
+func New(st *store.Store, c Config, password string, apply func(store.State) error) (*Server, error) {
+	if len(password) < 16 || len(password) > 72 {
+		return nil, errors.New("пароль администратора должен содержать 16–72 байта")
+	}
+	hash, e := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if e != nil {
+		return nil, e
+	}
+	dummy, _ := bcrypt.GenerateFromPassword([]byte(secure.Token()), bcrypt.DefaultCost)
+	return &Server{Store: st, Config: c, Apply: apply, admins: map[string]session{}, attempts: map[string]bucket{}, adminHash: hash, dummyHash: dummy}, nil
+}
+func JSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
+}
+func fail(w http.ResponseWriter, status int, e error) {
+	JSON(w, status, map[string]string{"error": e.Error()})
+}
+func body(w http.ResponseWriter, r *http.Request, v any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, 32768)
+	d := json.NewDecoder(r.Body)
+	d.DisallowUnknownFields()
+	if e := d.Decode(v); e != nil {
+		fail(w, 400, errors.New("некорректный запрос"))
+		return false
+	}
+	return true
+}
+func (s *Server) limited(r *http.Request, kind string, limit int, window time.Duration) bool {
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	key := kind + ":" + ip
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	b := s.attempts[key]
+	if now.Sub(b.at) > window {
+		b = bucket{at: now}
+	}
+	b.count++
+	s.attempts[key] = b
+	if len(s.attempts) > 8192 {
+		for k, v := range s.attempts {
+			if now.Sub(v.at) > time.Hour {
+				delete(s.attempts, k)
+			}
+		}
+	}
+	return b.count > limit
+}
+func (s *Server) mutation(fn func(*store.State) error) error {
+	s.change.Lock()
+	defer s.change.Unlock()
+	if e := s.Store.Update(fn); e != nil {
+		return e
+	}
+	if s.Apply != nil {
+		return s.Store.View(s.Apply)
+	}
+	return nil
+}
+func (s *Server) Refresh() error { return s.mutation(func(*store.State) error { return nil }) }
+
+// Expire revokes each expired device once; periodic checks must not restart
+// every active user's transport repeatedly after the first expired session.
+func (s *Server) Expire(now time.Time) error {
+	s.change.Lock()
+	defer s.change.Unlock()
+	changed := false
+	if e := s.Store.Update(func(st *store.State) error {
+		for id, d := range st.Devices {
+			if !d.Revoked && !now.Before(d.Expires) {
+				d.Revoked = true
+				st.Devices[id] = d
+				changed = true
+			}
+		}
+		return nil
+	}); e != nil {
+		return e
+	}
+	if changed && s.Apply != nil {
+		return s.Store.View(s.Apply)
+	}
+	return nil
+}
+func bearer(r *http.Request) string {
+	return strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+}
+func (s *Server) admin(r *http.Request) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.admins[secure.Hash(bearer(r))]
+	return ok && time.Now().Before(v.expires)
+}
+func (s *Server) device(r *http.Request) (store.Device, store.Account, error) {
+	var d store.Device
+	var a store.Account
+	found := false
+	h := secure.Hash(bearer(r))
+	e := s.Store.View(func(st store.State) error {
+		for _, v := range st.Devices {
+			if secure.Equal(v.Hash, h) && !v.Revoked && time.Now().Before(v.Expires) {
+				d = v
+				a = st.Accounts[d.AccountID]
+				found = a.Status == "active"
+				break
+			}
+		}
+		return nil
+	})
+	if e != nil {
+		return d, a, e
+	}
+	if !found {
+		return d, a, ErrForbidden
+	}
+	return d, a, nil
+}
+func (s *Server) profile(d store.Device, a store.Account, token string) model.Profile {
+	o := s.Config.Transport
+	return model.Profile{DeviceID: d.ID, AccountID: a.ID, Token: token, Server: s.Config.PublicIP, Port: o.Port, UUID: d.Secret, SNI: o.SNI, PublicKey: o.PublicKey, ShortID: o.ShortID, Path: o.Path, Rules: a.Rules, Revision: a.Revision, Status: a.Status}
+}
+
+func (s *Server) Handler(static http.Handler) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { JSON(w, 200, map[string]string{"status": "ok"}) })
+	mux.HandleFunc("POST /api/register", s.register)
+	mux.HandleFunc("POST /api/login", s.login)
+	mux.HandleFunc("POST /api/pair/claim", s.claim)
+	mux.HandleFunc("POST /api/admin/login", s.adminLogin)
+	mux.HandleFunc("GET /api/admin/accounts", s.adminAccounts)
+	mux.HandleFunc("POST /api/admin/account", s.adminAccount)
+	mux.HandleFunc("POST /api/admin/revoke", s.adminRevoke)
+	mux.HandleFunc("POST /api/admin/logout", func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		delete(s.admins, secure.Hash(bearer(r)))
+		s.mu.Unlock()
+		JSON(w, 200, map[string]bool{"ok": true})
+	})
+	mux.HandleFunc("GET /api/sync", s.syncState)
+	mux.HandleFunc("POST /api/discover", s.discover)
+	mux.HandleFunc("POST /api/rules", s.rules)
+	mux.HandleFunc("POST /api/dismiss", s.dismiss)
+	mux.HandleFunc("POST /api/pair", s.pair)
+	mux.HandleFunc("POST /api/revoke", s.revoke)
+	if static != nil {
+		mux.Handle("/", static)
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		mux.ServeHTTP(w, r)
+	})
+}
+
+var loginRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{2,63}$`)
+
+type credentials struct {
+	Login    string `json:"login"`
+	Password string `json:"password"`
+	Name     string `json:"name"`
+	Platform string `json:"platform"`
+}
+
+func (s *Server) register(w http.ResponseWriter, r *http.Request) {
+	if s.limited(r, "register", 5, time.Hour) {
+		fail(w, 429, errors.New("слишком много заявок"))
+		return
+	}
+	var c credentials
+	if !body(w, r, &c) {
+		return
+	}
+	c.Login = strings.ToLower(strings.TrimSpace(c.Login))
+	if !loginRE.MatchString(c.Login) || len(c.Password) < 12 || len(c.Password) > 72 {
+		fail(w, 400, errors.New("логин: 3–64 латинских символа; пароль: 12–72 байта"))
+		return
+	}
+	hash, _ := bcrypt.GenerateFromPassword([]byte(c.Password), bcrypt.DefaultCost)
+	e := s.Store.Update(func(st *store.State) error {
+		for _, a := range st.Accounts {
+			if a.Login == c.Login {
+				return errors.New("логин уже занят")
+			}
+		}
+		if len(st.Accounts) >= 10000 {
+			return errors.New("лимит регистраций")
+		}
+		a := store.Account{Account: model.Account{ID: secure.UUID(), Login: c.Login, Status: "pending", Created: time.Now(), Rules: []string{}, Revision: 1}, Hash: string(hash)}
+		st.Accounts[a.ID] = a
+		return nil
+	})
+	if e != nil {
+		fail(w, 409, e)
+		return
+	}
+	JSON(w, 202, map[string]string{"status": "pending", "message": "Заявка отправлена администратору"})
+}
+func validDevice(name, platform string) bool {
+	return len(strings.TrimSpace(name)) > 0 && len(name) <= 80 && (platform == "android" || platform == "windows" || platform == "darwin" || platform == "linux")
+}
+func (s *Server) enroll(account, name, platform string) (model.Profile, error) {
+	if !validDevice(name, platform) {
+		return model.Profile{}, errors.New("некорректное имя или платформа устройства")
+	}
+	token := secure.Token()
+	var d store.Device
+	var a store.Account
+	e := s.mutation(func(st *store.State) error {
+		a = st.Accounts[account]
+		if a.Status != "active" {
+			return ErrForbidden
+		}
+		n := 0
+		for _, v := range st.Devices {
+			if v.AccountID == account && !v.Revoked && time.Now().Before(v.Expires) {
+				n++
+			}
+		}
+		if n >= 20 {
+			return errors.New("максимум 20 активных устройств")
+		}
+		d = store.Device{Device: model.Device{ID: secure.UUID(), AccountID: account, Name: name, Platform: platform, Expires: time.Now().Add(90 * 24 * time.Hour), Created: time.Now()}, Hash: secure.Hash(token), Secret: secure.UUID()}
+		st.Devices[d.ID] = d
+		return nil
+	})
+	return s.profile(d, a, token), e
+}
+func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	if s.limited(r, "login", 10, 10*time.Minute) {
+		fail(w, 429, errors.New("слишком много попыток входа"))
+		return
+	}
+	var c credentials
+	if !body(w, r, &c) {
+		return
+	}
+	var a store.Account
+	c.Login = strings.ToLower(strings.TrimSpace(c.Login))
+	s.Store.View(func(st store.State) error {
+		for _, v := range st.Accounts {
+			if v.Login == c.Login {
+				a = v
+			}
+		}
+		return nil
+	})
+	hash := []byte(a.Hash)
+	if len(hash) == 0 {
+		hash = s.dummyHash
+	}
+	if bcrypt.CompareHashAndPassword(hash, []byte(c.Password)) != nil {
+		fail(w, 401, errors.New("неверный логин или пароль"))
+		return
+	}
+	if a.Status != "active" {
+		JSON(w, 403, map[string]string{"status": a.Status, "error": "аккаунт ещё не одобрен или заблокирован"})
+		return
+	}
+	p, e := s.enroll(a.ID, c.Name, c.Platform)
+	if e != nil {
+		fail(w, 503, e)
+		return
+	}
+	JSON(w, 200, p)
+}
+func (s *Server) adminLogin(w http.ResponseWriter, r *http.Request) {
+	if s.limited(r, "admin", 8, 15*time.Minute) {
+		fail(w, 429, errors.New("слишком много попыток входа"))
+		return
+	}
+	var c struct {
+		Password string `json:"password"`
+	}
+	if !body(w, r, &c) {
+		return
+	}
+	if bcrypt.CompareHashAndPassword(s.adminHash, []byte(c.Password)) != nil {
+		fail(w, 401, ErrForbidden)
+		return
+	}
+	t := secure.Token()
+	s.mu.Lock()
+	for k, v := range s.admins {
+		if time.Now().After(v.expires) {
+			delete(s.admins, k)
+		}
+	}
+	s.admins[secure.Hash(t)] = session{time.Now().Add(8 * time.Hour)}
+	s.mu.Unlock()
+	JSON(w, 200, map[string]string{"token": t})
+}
+func (s *Server) adminAccounts(w http.ResponseWriter, r *http.Request) {
+	if !s.admin(r) {
+		fail(w, 401, ErrForbidden)
+		return
+	}
+	accounts := []model.Account{}
+	devices := []model.Device{}
+	s.Store.View(func(st store.State) error {
+		for _, a := range st.Accounts {
+			accounts = append(accounts, a.Account)
+		}
+		for _, d := range st.Devices {
+			devices = append(devices, d.Device)
+		}
+		return nil
+	})
+	JSON(w, 200, map[string]any{"accounts": accounts, "devices": devices})
+}
+func (s *Server) adminAccount(w http.ResponseWriter, r *http.Request) {
+	if !s.admin(r) {
+		fail(w, 401, ErrForbidden)
+		return
+	}
+	var c struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if !body(w, r, &c) {
+		return
+	}
+	if c.Status != "active" && c.Status != "blocked" && c.Status != "rejected" {
+		fail(w, 400, errors.New("неверный статус"))
+		return
+	}
+	e := s.mutation(func(st *store.State) error {
+		a, ok := st.Accounts[c.ID]
+		if !ok {
+			return errors.New("аккаунт не найден")
+		}
+		a.Status = c.Status
+		a.Revision++
+		st.Accounts[a.ID] = a
+		if c.Status != "active" {
+			for k, p := range st.Pairs {
+				if p.AccountID == a.ID {
+					delete(st.Pairs, k)
+				}
+			}
+		}
+		return nil
+	})
+	if e != nil {
+		fail(w, 503, e)
+		return
+	}
+	JSON(w, 200, map[string]bool{"ok": true})
+}
+func (s *Server) syncState(w http.ResponseWriter, r *http.Request) {
+	d, a, e := s.device(r)
+	if e != nil {
+		fail(w, 401, e)
+		return
+	}
+	requests := []model.Request{}
+	dismissed := []string{}
+	devices := []model.Device{}
+	s.Store.View(func(st store.State) error {
+		for _, v := range st.Requests {
+			if v.AccountID == a.ID && v.Dismissed {
+				dismissed = append(dismissed, v.Target)
+			}
+			if v.AccountID == a.ID && !v.Dismissed && !policy.Approved(a.Rules, v.Target) {
+				requests = append(requests, v)
+			}
+		}
+		for _, v := range st.Devices {
+			if v.AccountID == a.ID {
+				devices = append(devices, v.Device)
+			}
+		}
+		return nil
+	})
+	JSON(w, 200, map[string]any{"profile": s.profile(d, a, ""), "requests": requests, "dismissed": dismissed, "devices": devices})
+}
+func (s *Server) discover(w http.ResponseWriter, r *http.Request) {
+	_, a, e := s.device(r)
+	if e != nil {
+		fail(w, 401, e)
+		return
+	}
+	var c struct {
+		Targets []string `json:"targets"`
+	}
+	if !body(w, r, &c) {
+		return
+	}
+	if len(c.Targets) > 100 {
+		fail(w, 400, errors.New("слишком много адресов"))
+		return
+	}
+	targets, e := policy.Clean(c.Targets)
+	if e != nil {
+		fail(w, 400, e)
+		return
+	}
+	e = s.Store.Update(func(st *store.State) error {
+		count := 0
+		for _, v := range st.Requests {
+			if v.AccountID == a.ID {
+				count++
+			}
+		}
+		for _, target := range targets {
+			if policy.Approved(st.Accounts[a.ID].Rules, target) {
+				continue
+			}
+			key := a.ID + ":" + target
+			q, ok := st.Requests[key]
+			if !ok {
+				if count >= 1000 {
+					continue
+				}
+				count++
+				q = model.Request{AccountID: a.ID, Target: target, FirstSeen: time.Now()}
+			}
+			q.Count++
+			q.LastSeen = time.Now()
+			st.Requests[key] = q
+		}
+		return nil
+	})
+	if e != nil {
+		fail(w, 500, e)
+		return
+	}
+	JSON(w, 200, map[string]bool{"ok": true})
+}
+func (s *Server) rules(w http.ResponseWriter, r *http.Request) {
+	_, a, e := s.device(r)
+	if e != nil {
+		fail(w, 401, e)
+		return
+	}
+	var c struct {
+		Target   string `json:"target"`
+		Action   string `json:"action"`
+		Revision uint64 `json:"revision"`
+	}
+	if !body(w, r, &c) {
+		return
+	}
+	target, e := policy.Normalize(c.Target)
+	if e != nil {
+		fail(w, 400, e)
+		return
+	}
+	if c.Action != "approve" && c.Action != "remove" {
+		fail(w, 400, errors.New("неверное действие"))
+		return
+	}
+	if ip, e := netip.ParseAddr(target); c.Action == "approve" && e == nil && !policy.Public(ip) {
+		fail(w, 400, errors.New("VPN-сервер не предоставляет доступ к внутренним и служебным IP"))
+		return
+	}
+	e = s.mutation(func(st *store.State) error {
+		v := st.Accounts[a.ID]
+		if v.Status != "active" {
+			return ErrForbidden
+		}
+		if v.Revision != c.Revision {
+			return errors.New("список изменился на другом устройстве; обновите его")
+		}
+		if c.Action == "approve" {
+			if len(v.Rules) >= 1000 {
+				return errors.New("лимит разрешений")
+			}
+			v.Rules = append(v.Rules, target)
+			v.Rules, _ = policy.Clean(v.Rules)
+		} else {
+			out := []string{}
+			for _, rule := range v.Rules {
+				if rule != target {
+					out = append(out, rule)
+				}
+			}
+			v.Rules = out
+		}
+		v.Revision++
+		st.Accounts[a.ID] = v
+		return nil
+	})
+	if e != nil {
+		fail(w, 409, e)
+		return
+	}
+	s.syncState(w, r)
+}
+func (s *Server) dismiss(w http.ResponseWriter, r *http.Request) {
+	_, a, e := s.device(r)
+	if e != nil {
+		fail(w, 401, e)
+		return
+	}
+	var c struct {
+		Target string `json:"target"`
+	}
+	if !body(w, r, &c) {
+		return
+	}
+	c.Target, e = policy.Normalize(c.Target)
+	if e != nil {
+		fail(w, 400, e)
+		return
+	}
+	e = s.Store.Update(func(st *store.State) error {
+		k := a.ID + ":" + c.Target
+		v, ok := st.Requests[k]
+		if !ok {
+			count := 0
+			for _, request := range st.Requests {
+				if request.AccountID == a.ID {
+					count++
+				}
+			}
+			if count >= 1000 {
+				return errors.New("очередь адресов заполнена")
+			}
+			v = model.Request{AccountID: a.ID, Target: c.Target, FirstSeen: time.Now(), LastSeen: time.Now()}
+		}
+		v.Dismissed = true
+		st.Requests[k] = v
+		return nil
+	})
+	if e != nil {
+		fail(w, 500, e)
+		return
+	}
+	JSON(w, 200, map[string]bool{"ok": true})
+}
+func (s *Server) pair(w http.ResponseWriter, r *http.Request) {
+	_, a, e := s.device(r)
+	if e != nil {
+		fail(w, 401, e)
+		return
+	}
+	code := secure.Token()[:20]
+	e = s.Store.Update(func(st *store.State) error {
+		for k, p := range st.Pairs {
+			if time.Now().After(p.Expires) || p.AccountID == a.ID {
+				delete(st.Pairs, k)
+			}
+		}
+		st.Pairs[secure.Hash(code)] = store.Pair{AccountID: a.ID, Expires: time.Now().Add(5 * time.Minute)}
+		return nil
+	})
+	if e != nil {
+		fail(w, 500, e)
+		return
+	}
+	JSON(w, 200, map[string]any{"code": code, "expires_in": 300})
+}
+func (s *Server) claim(w http.ResponseWriter, r *http.Request) {
+	if s.limited(r, "pair", 10, 10*time.Minute) {
+		fail(w, 429, ErrForbidden)
+		return
+	}
+	var c struct {
+		Code     string `json:"code"`
+		Name     string `json:"name"`
+		Platform string `json:"platform"`
+	}
+	if !body(w, r, &c) {
+		return
+	}
+	if !validDevice(c.Name, c.Platform) {
+		fail(w, 400, errors.New("неверное устройство"))
+		return
+	}
+	var account string
+	e := s.Store.Update(func(st *store.State) error {
+		k := secure.Hash(c.Code)
+		p, ok := st.Pairs[k]
+		if !ok || time.Now().After(p.Expires) {
+			return ErrForbidden
+		}
+		account = p.AccountID
+		delete(st.Pairs, k)
+		return nil
+	})
+	if e != nil {
+		fail(w, 401, e)
+		return
+	}
+	p, e := s.enroll(account, c.Name, c.Platform)
+	if e != nil {
+		fail(w, 503, e)
+		return
+	}
+	JSON(w, 200, p)
+}
+func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request, admin bool) {
+	account := ""
+	if admin {
+		if !s.admin(r) {
+			fail(w, 401, ErrForbidden)
+			return
+		}
+	} else {
+		_, a, e := s.device(r)
+		if e != nil {
+			fail(w, 401, e)
+			return
+		}
+		account = a.ID
+	}
+	var c struct {
+		ID string `json:"id"`
+	}
+	if !body(w, r, &c) {
+		return
+	}
+	e := s.mutation(func(st *store.State) error {
+		d, ok := st.Devices[c.ID]
+		if !ok || (!admin && d.AccountID != account) {
+			return ErrForbidden
+		}
+		d.Revoked = true
+		st.Devices[d.ID] = d
+		return nil
+	})
+	if e != nil {
+		fail(w, 403, e)
+		return
+	}
+	JSON(w, 200, map[string]bool{"ok": true})
+}
+func (s *Server) revoke(w http.ResponseWriter, r *http.Request)      { s.revokeDevice(w, r, false) }
+func (s *Server) adminRevoke(w http.ResponseWriter, r *http.Request) { s.revokeDevice(w, r, true) }
+func (c Config) Validate() error {
+	if ip, e := netip.ParseAddr(c.PublicIP); e != nil || !policy.Public(ip) {
+		return errors.New("public_ip должен быть публичным IP")
+	}
+	if c.Transport.Port != 443 {
+		return fmt.Errorf("VPN должен слушать порт 443")
+	}
+	if c.Transport.Path == "" || c.Transport.Path == "/" || !strings.HasPrefix(c.Transport.Path, "/") {
+		return errors.New("нужен непустой XHTTP path")
+	}
+	return nil
+}

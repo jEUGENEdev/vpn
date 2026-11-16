@@ -1,0 +1,199 @@
+name: Test and build current installers
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['installers/**', 'docs/**', 'README.md']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    timeout-minutes: 15
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.27.4', cache: true}
+      - run: go test -race -tags with_gvisor ./...
+      - run: go vet -tags with_gvisor ./...
+      - uses: actions/setup-node@v4
+        with: {node-version: '24'}
+      - name: Test client UI and capture layouts
+        run: |
+          mkdir -p build/ui-test
+          npm install --prefix build/ui-test playwright@1.56.1
+          build/ui-test/node_modules/.bin/playwright install --with-deps chromium
+          PLAYWRIGHT_MODULE="$GITHUB_WORKSPACE/build/ui-test/node_modules/playwright" node scripts/test-ui.cjs
+      - uses: actions/upload-artifact@v4
+        with: {name: ui-previews, path: 'build/ui-*.png'}
+      - run: scripts/build-server.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-binaries
+          path: build/*-linux-amd64
+          if-no-files-found: error
+  android:
+    timeout-minutes: 35
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reserve space on the disposable Android runner
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android/sdk/ndk
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.27.4', cache: true}
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+        with: {gradle-version: '8.11.1', cache-read-only: false}
+      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;28.0.13004108'
+      - uses: actions/cache/restore@v4
+        id: android_go_cache
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-android-go1.27.4-ndk28-${{ hashFiles('go.sum') }}
+      - run: scripts/package-android.sh
+      - uses: actions/cache/save@v4
+        if: steps.android_go_cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-android-go1.27.4-ndk28-${{ hashFiles('go.sum') }}
+      - name: Build Android instrumentation test
+        run: cd apps/android && gradle --no-daemon assembleDebugAndroidTest
+      - name: Release build-only SDK files before emulator
+        run: rm -rf "$ANDROID_HOME/ndk/28.0.13004108"
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          script: scripts/test-android.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-native-check
+          path: |
+            build/android-*.txt
+            build/android-native.png
+      - name: Collect explicitly marked preview APK
+        run: |
+          mkdir -p build/installers
+          cp apps/android/app/build/outputs/apk/debug/app-debug.apk build/installers/LineVPN-0.1.0-android-preview.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-android
+          path: build/installers/*.apk
+          if-no-files-found: error
+  windows:
+    timeout-minutes: 25
+    needs: test
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.27.4', cache: true}
+      - uses: actions/setup-node@v4
+        with: {node-version: '24', cache: npm, cache-dependency-path: apps/desktop/package-lock.json}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - uses: actions/setup-dotnet@v4
+        with: {dotnet-version: '8.0.x'}
+      - run: ./scripts/package-windows.ps1
+      - name: Verify installed service and persistent WFP
+        run: ./scripts/test-windows.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-native-check
+          path: |
+            build/windows-native.txt
+            build/windows-install.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-windows
+          path: build/*.msi
+          if-no-files-found: error
+  macos:
+    timeout-minutes: 25
+    needs: test
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: amd64, runner: macos-15-intel}
+          - {arch: arm64, runner: macos-26}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.27.4', cache: true}
+      - uses: actions/setup-node@v4
+        with: {node-version: '24', cache: npm, cache-dependency-path: apps/desktop/package-lock.json}
+      - run: scripts/package-macos.sh ${{ matrix.arch }}
+      - name: Verify installed service and PF on matching host architecture
+        if: (matrix.arch == 'arm64' && runner.arch == 'ARM64') || (matrix.arch == 'amd64' && runner.arch == 'X64')
+        run: scripts/test-macos.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-native-check-${{ matrix.arch }}
+          path: |
+            build/macos-native.txt
+            build/macos-install.log
+            build/macos-service.log
+            build/macos-package.log
+            build/macos-network.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-macos-${{ matrix.arch }}
+          path: apps/desktop/dist/*.dmg
+          if-no-files-found: error
+  publish-current:
+    timeout-minutes: 15
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: [android, windows, macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 0
+          ref: ${{ github.head_ref || github.ref_name }}
+      - uses: actions/download-artifact@v4
+        with: {pattern: 'installer-*', path: build/installers, merge-multiple: true}
+      - uses: actions/download-artifact@v4
+        with: {name: ui-previews, path: docs/screenshots}
+      - uses: actions/download-artifact@v4
+        with: {name: android-native-check, path: build/native-preview}
+      - run: cp build/native-preview/android-native.png docs/screenshots/android-native.png
+      - name: Verify and publish complete installer set
+        env:
+          SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          python3 scripts/publish-installers.py build/installers installers/current
+          git lfs install --local
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add installers/current docs/screenshots
+          git commit -m 'build: update current preview installers [skip ci]' || exit 0
+          git push origin "HEAD:$TARGET_BRANCH"
