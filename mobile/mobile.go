@@ -7,19 +7,24 @@ import (
 	"errors"
 	"fmt"
 	"github.com/jEUGENEdev/vpn/internal/client"
+	"github.com/jEUGENEdev/vpn/internal/model"
 	"github.com/jEUGENEdev/vpn/internal/secure"
 	"github.com/jEUGENEdev/vpn/internal/transport"
 	"github.com/jEUGENEdev/vpn/internal/ui"
 	tun "github.com/sagernet/sing-tun"
 	"net"
 	"net/http"
+	"net/netip"
 	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
 )
 
-type Protector interface{ Protect(fd int64) bool }
+type Protector interface {
+	Protect(fd int64) bool
+	ResolveApplication(network, source string, sourcePort int64, destination string, destinationPort int64) string
+}
 
 var mu sync.Mutex
 var current *session
@@ -69,6 +74,14 @@ func Start(fd int64, dir string, p Protector) (string, error) {
 		syscall.Close(int(fd))
 		return "", e
 	}
+	c.SetOwnerLookup(func(ctx context.Context, network string, source, dest netip.AddrPort) (model.ApplicationInfo, error) {
+		raw := p.ResolveApplication(network, source.Addr().String(), int64(source.Port()), dest.Addr().String(), int64(dest.Port()))
+		var app model.ApplicationInfo
+		if len(raw) > 8192 || json.Unmarshal([]byte(raw), &app) != nil {
+			return app, errors.New("application unavailable")
+		}
+		return app, nil
+	})
 	t, e := c.StartTunnel(ctx, tun.Options{Name: "linevpn", FileDescriptor: int(fd), AutoRoute: false, EXP_ExternalConfiguration: true})
 	if e != nil {
 		c.Close()

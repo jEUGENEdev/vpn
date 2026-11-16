@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/jEUGENEdev/vpn/internal/owner"
 	"github.com/jEUGENEdev/vpn/internal/platform"
 	"github.com/jEUGENEdev/vpn/internal/secure"
 	"github.com/jEUGENEdev/vpn/internal/ui"
@@ -19,6 +20,12 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--lookup-owner" {
+		if e := owner.ServeHelper(); e != nil {
+			log.Fatal(e)
+		}
+		return
+	}
 	dir := flag.String("data", platform.DefaultDir(), "protected state directory")
 	service := flag.Bool("service", false, "run as Windows service")
 	recover := flag.Bool("recover-network", false, "explicitly remove Windows VPN firewall rules")

@@ -9,7 +9,7 @@ cp packaging/macos/dev.linevpn.agent.plist build/macos-root/Library/LaunchDaemon
 cp packaging/macos/postinstall build/macos-scripts/postinstall
 cp packaging/macos/recover-network.sh 'build/macos-root/Library/Application Support/LineVPN/'
 chmod 755 build/macos-scripts/postinstall 'build/macos-root/Library/Application Support/LineVPN/'*
-pkgbuild --root build/macos-root --scripts build/macos-scripts --identifier dev.linevpn.service --version 0.1.0 --install-location / apps/desktop/assets/Install-LineVPN-Service.pkg
+pkgbuild --root build/macos-root --scripts build/macos-scripts --identifier dev.linevpn.service --version 0.2.0 --install-location / apps/desktop/assets/Install-LineVPN-Service.pkg
 cat > apps/desktop/assets/Install-Service.command <<'COMMAND'
 #!/bin/bash
 open "$(dirname "$0")/Install-LineVPN-Service.pkg"

@@ -92,7 +92,7 @@ func (c *Client) NewConnectionEx(ctx context.Context, conn net.Conn, source, des
 			result = e
 			return
 		}
-		up, e := c.Dial(ctx, "tcp", target, dest.Port)
+		up, e := c.dialApplication(ctx, "tcp", target, dest.Port, c.lookupApplication(ctx, "tcp", source.AddrPort(), dest.AddrPort()))
 		if e != nil {
 			result = e
 			return
@@ -153,7 +153,7 @@ func (c *Client) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, s
 			result = e
 			return
 		}
-		up, e := c.Dial(ctx, "udp", target, dest.Port)
+		up, e := c.dialApplication(ctx, "udp", target, dest.Port, c.lookupApplication(ctx, "udp", source.AddrPort(), dest.AddrPort()))
 		if e != nil {
 			result = e
 			return

@@ -23,12 +23,16 @@ type Device struct {
 	Created   time.Time `json:"created"`
 }
 type Request struct {
-	AccountID string    `json:"account_id"`
-	Target    string    `json:"target"`
-	FirstSeen time.Time `json:"first_seen"`
-	LastSeen  time.Time `json:"last_seen"`
-	Count     int       `json:"count"`
-	Dismissed bool      `json:"dismissed"`
+	DirectFailed  bool                 `json:"direct_failed,omitempty"`
+	FailedDevices map[string]time.Time `json:"failed_devices,omitempty"`
+	AccountID     string               `json:"account_id"`
+	Target        string               `json:"target"`
+	FirstSeen     time.Time            `json:"first_seen"`
+	LastSeen      time.Time            `json:"last_seen"`
+	Count         int                  `json:"count"`
+	Dismissed     bool                 `json:"dismissed"`
+	Sources       []ApplicationInfo    `json:"sources,omitempty"`
+	Unknown       bool                 `json:"unknown_source,omitempty"`
 }
 type Profile struct {
 	DeviceID  string   `json:"device_id"`
@@ -37,6 +41,7 @@ type Profile struct {
 	Server    string   `json:"server"`
 	Port      int      `json:"port"`
 	UUID      string   `json:"uuid"`
+	AppUUID   string   `json:"app_uuid,omitempty"`
 	SNI       string   `json:"sni"`
 	PublicKey string   `json:"public_key"`
 	ShortID   string   `json:"short_id"`

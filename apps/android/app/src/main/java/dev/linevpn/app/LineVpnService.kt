@@ -14,6 +14,7 @@ class LineVpnService : VpnService() {
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var starting = false
     private var lastFailure = 0L
+    private val applicationResolver by lazy { ApplicationResolver(this) }
     private val seenEvents = linkedSetOf<String>()
     private val monitor = object : Runnable { override fun run() {
         try {
@@ -55,7 +56,10 @@ class LineVpnService : VpnService() {
                     .setBlocking(true).establish() ?: throw IllegalStateException("VPN permission revoked")
                 // Ownership transfers to Go. Do not close the detached descriptor in Java.
                 val fd = descriptor.detachFd()
-                Mobile.start(fd.toLong(), filesDir.absolutePath, object : Protector { override fun protect(fd: Long): Boolean = this@LineVpnService.protect(fd.toInt()) })
+                Mobile.start(fd.toLong(), filesDir.absolutePath, object : Protector {
+                    override fun protect(fd: Long): Boolean = this@LineVpnService.protect(fd.toInt())
+                    override fun resolveApplication(network: String, source: String, sourcePort: Long, destination: String, destinationPort: Long): String = applicationResolver.resolve(network, source, sourcePort, destination, destinationPort)
+                })
                 getSystemService(NotificationManager::class.java).notify(1, notification("Защита включена. Одобренные адреса — только через VPN."))
             } catch (e: Exception) {
                 android.util.Log.e("LineVPN", "Native service startup failed", e)
@@ -76,11 +80,11 @@ object NativeNotifications {
     fun show(context: android.content.Context, kind: String, title: String, message: String) {
         val prefs = context.getSharedPreferences("notices", 0)
         val now = System.currentTimeMillis()
-        val interval = when (kind) { "suggestion" -> 5 * 60 * 1000L; "recovered" -> 60 * 1000L; else -> 15 * 60 * 1000L }
+        val interval = when (kind) { "suggestion", "application" -> 5 * 60 * 1000L; "recovered" -> 60 * 1000L; else -> 15 * 60 * 1000L }
         if (now - prefs.getLong(kind, 0) < interval) return
         prefs.edit().putLong(kind, now).apply()
         val open = PendingIntent.getActivity(context, 0, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val n = Notification.Builder(context, "events").setSmallIcon(R.drawable.ic_line).setContentTitle(title).setContentText(message).setStyle(Notification.BigTextStyle().bigText(message)).setContentIntent(open).setAutoCancel(true).build()
-        try { context.getSystemService(NotificationManager::class.java).notify(if (kind == "suggestion") 3 else 2, n) } catch (_: SecurityException) { }
+        try { context.getSystemService(NotificationManager::class.java).notify(if (kind == "application") 4 else if (kind == "suggestion") 3 else 2, n) } catch (_: SecurityException) { }
     }
 }

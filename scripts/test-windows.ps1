@@ -2,7 +2,7 @@
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Use an isolated CI runner for this network test' }
 Set-Location (Join-Path $PSScriptRoot '..')
-$msi = (Resolve-Path build/LineVPN-0.1.0-windows-x64.msi).Path
+$msi = (Resolve-Path build/LineVPN-0.2.0-windows-x64.msi).Path
 $agent = Join-Path $env:ProgramFiles 'LineVPN/resources/agent/linevpn-agent.exe'
 $log = Join-Path (Get-Location) 'build/windows-install.log'
 $nativeOK = $false
@@ -33,6 +33,16 @@ try {
     if (-not ($answer.IPAddress -match '^198\.(18|19)\.')) { throw 'TUN DNS did not return a fake IP' }
     & curl.exe --silent --output NUL --connect-timeout 4 --max-time 8 http://1.1.1.1/cdn-cgi/trace
     if ($LASTEXITCODE -ne 0) { throw 'Unapproved direct connection failed' }
+    $state = Invoke-RestMethod -Uri http://127.0.0.1:17891/local/state -Headers $headers -TimeoutSec 3
+    if (@($state.requests | Where-Object { $_.target -eq '1.1.1.1' }).Count -ne 0) { throw 'Healthy direct traffic produced a proposal' }
+    $curlApp = @($state.applications | Where-Object { $_.name -eq 'curl.exe' })[0]
+    if (-not $curlApp.id) { throw 'Native connection owner was not identified' }
+    $decision = @{id=$curlApp.id;decision='trusted'} | ConvertTo-Json
+    Invoke-RestMethod -Uri http://127.0.0.1:17891/local/applications -Headers $headers -Method Post -ContentType 'application/json' -Body $decision -TimeoutSec 3 | Out-Null
+    & curl.exe --silent --output NUL --connect-timeout 2 --max-time 3 http://1.1.1.1/cdn-cgi/trace
+    if ($LASTEXITCODE -eq 0) { throw 'Trusted application escaped without VPN' }
+    $decision = @{id=$curlApp.id;decision='addresses'} | ConvertTo-Json
+    Invoke-RestMethod -Uri http://127.0.0.1:17891/local/applications -Headers $headers -Method Post -ContentType 'application/json' -Body $decision -TimeoutSec 3 | Out-Null
     try { Invoke-RestMethod -Uri http://127.0.0.1:17891/local/rules -Headers $headers -Method Post -ContentType 'application/json' -Body '{"target":"1.1.1.1","action":"approve","revision":0}' -TimeoutSec 3 | Out-Null } catch { }
     $state = Invoke-RestMethod -Uri http://127.0.0.1:17891/local/state -Headers $headers -TimeoutSec 2
     if ($state.pending_protection -notcontains '1.1.1.1') { throw 'Approval not protected locally' }
@@ -65,4 +75,4 @@ try {
         & $ciGuard -remove @controllers
     }
 }
-if ($nativeOK) { 'PASS: MSI install, TUN DNS, direct connection, approval block and persistent WFP after service stop' | Set-Content build/windows-native.txt }
+if ($nativeOK) { 'PASS: MSI install, TUN DNS, direct connection, process attribution, app trust, approval block and persistent WFP after service stop' | Set-Content build/windows-native.txt }

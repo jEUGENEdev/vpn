@@ -52,7 +52,7 @@ func (c *Client) Handler(token string, static http.Handler) http.Handler {
 			out = map[string]bool{"ok": e == nil}
 		case "login", "register", "pair/claim":
 			out, e = c.Auth(r.Context(), action, data)
-		case "rules", "dismiss", "pair", "revoke":
+		case "rules", "dismiss", "pair", "revoke", "applications":
 			out, e = c.Action(r.Context(), action, data)
 		default:
 			e = errors.New("unknown action")

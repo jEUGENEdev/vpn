@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"github.com/jEUGENEdev/vpn/internal/client"
+	"github.com/jEUGENEdev/vpn/internal/owner"
 	"github.com/jEUGENEdev/vpn/internal/transport"
 	tun "github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/control"
@@ -19,6 +20,7 @@ import (
 type Desktop struct {
 	Client  *client.Client
 	Tunnel  *client.Tunnel
+	owner   *owner.Desktop
 	network tun.NetworkUpdateMonitor
 	monitor tun.DefaultInterfaceMonitor
 }
@@ -59,6 +61,10 @@ func Start(ctx context.Context, dir string) (*Desktop, error) {
 		return nil, e
 	}
 	d := &Desktop{Client: c, network: network, monitor: monitor}
+	if resolver, err := owner.NewDesktop(); err == nil {
+		d.owner = resolver
+		c.SetOwnerLookup(resolver.Lookup)
+	}
 	name := tun.CalculateInterfaceName("linevpn")
 	monitor.RegisterMyInterface(name)
 	// A persistent deny rule is installed BEFORE routes are changed. An error
@@ -90,6 +96,9 @@ func Start(ctx context.Context, dir string) (*Desktop, error) {
 	return d, nil
 }
 func (d *Desktop) Close() {
+	if d.owner != nil {
+		d.owner.Close()
+	}
 	if d.Client != nil {
 		d.Client.Close()
 	}

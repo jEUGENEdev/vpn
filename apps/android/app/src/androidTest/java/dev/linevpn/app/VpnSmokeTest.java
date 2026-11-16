@@ -150,6 +150,20 @@ public class VpnSmokeTest {
         String local = Mobile.url(); int hash = local.indexOf("#token=");
         assertTrue(hash > 0);
         String base = local.substring(0,hash), token = URLDecoder.decode(local.substring(hash+7),"UTF-8");
+        JSONObject snapshot = new JSONObject(Mobile.snapshot());
+        org.json.JSONArray proposals = snapshot.getJSONArray("requests");
+        for (int i=0; i<proposals.length(); i++) assertNotEquals("Healthy direct traffic must not prompt", "10.0.2.2", proposals.getJSONObject(i).getString("target"));
+        String applicationID = null;
+        org.json.JSONArray applications = snapshot.getJSONArray("applications");
+        for (int i=0; i<applications.length(); i++) {
+            JSONObject application = applications.getJSONObject(i);
+            if (application.getString("path").equals(getInstrumentation().getTargetContext().getPackageName())) applicationID = application.getString("id");
+        }
+        assertNotNull("VpnService must identify the UID/package owning the probe", applicationID);
+        request(base+"local/applications",token,new JSONObject().put("id",applicationID).put("decision","trusted").toString());
+        try { request("http://10.0.2.2:8765/probe",null,null); fail("Trusted application escaped without VPN"); }
+        catch (IOException expected) { }
+        request(base+"local/applications",token,new JSONObject().put("id",applicationID).put("decision","addresses").toString());
         // No server has been configured. Approval must nevertheless protect locally
         // before the API returns an error and retain that protection on disk.
         try { request(base+"local/rules",token,"{\"action\":\"approve\",\"target\":\"10.0.2.2\",\"revision\":0}"); fail("Missing server must fail approval sync"); }
