@@ -110,6 +110,30 @@ func (s *Server) mutation(fn func(*store.State) error) error {
 	return nil
 }
 func (s *Server) Refresh() error { return s.mutation(func(*store.State) error { return nil }) }
+
+// Expire revokes each expired device once; periodic checks must not restart
+// every active user's transport repeatedly after the first expired session.
+func (s *Server) Expire(now time.Time) error {
+	s.change.Lock()
+	defer s.change.Unlock()
+	changed := false
+	if e := s.Store.Update(func(st *store.State) error {
+		for id, d := range st.Devices {
+			if !d.Revoked && !now.Before(d.Expires) {
+				d.Revoked = true
+				st.Devices[id] = d
+				changed = true
+			}
+		}
+		return nil
+	}); e != nil {
+		return e
+	}
+	if changed && s.Apply != nil {
+		return s.Store.View(s.Apply)
+	}
+	return nil
+}
 func bearer(r *http.Request) string {
 	return strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 }

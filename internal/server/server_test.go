@@ -123,3 +123,37 @@ func TestAccountIsolation(t *testing.T) {
 	})
 	_ = time.Second
 }
+
+func TestExpiryOnlyReconfiguresOnce(t *testing.T) {
+	st, e := store.Open(filepath.Join(t.TempDir(), "state.db"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer st.Close()
+	now := time.Now()
+	st.Update(func(v *store.State) error {
+		v.Devices["expired"] = store.Device{Device: model.Device{ID: "expired", Expires: now.Add(-time.Second)}}
+		v.Devices["valid"] = store.Device{Device: model.Device{ID: "valid", Expires: now.Add(time.Hour)}}
+		return nil
+	})
+	applied := 0
+	s, e := New(st, Config{}, "admin-password-very-long", func(v store.State) error {
+		applied++
+		if !v.Devices["expired"].Revoked || v.Devices["valid"].Revoked {
+			t.Fatal("incorrect revocation")
+		}
+		return nil
+	})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = s.Expire(now); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.Expire(now.Add(time.Minute)); e != nil {
+		t.Fatal(e)
+	}
+	if applied != 1 {
+		t.Fatalf("transport reconfigured %d times", applied)
+	}
+}

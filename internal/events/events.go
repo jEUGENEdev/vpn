@@ -56,7 +56,6 @@ func (c *Center) Recovered(now time.Time) {
 	defer c.mu.Unlock()
 	if c.outage {
 		c.outage = false
-		delete(c.last, "outage")
 		c.add(now, "recovered", "recovered", "Защита восстановлена", "Одобренные адреса снова доступны через VPN.", "", time.Minute)
 	}
 }

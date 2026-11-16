@@ -1,9 +1,10 @@
 """Generate WiX v4 package with a real, automatically installed Windows service."""
 import pathlib, uuid, xml.etree.ElementTree as ET, sys
 root=pathlib.Path(sys.argv[1]).resolve(); out=pathlib.Path(sys.argv[2])
+out.parent.mkdir(parents=True, exist_ok=True)
 ns='http://wixtoolset.org/schemas/v4/wxs'; ET.register_namespace('',ns)
 def node(parent,tag,**attrs):return ET.SubElement(parent,'{'+ns+'}'+tag,attrs)
-w=ET.Element('{'+ns+'}Wix'); p=node(w,'Package',Name='LineVPN',Manufacturer='jEUGENEdev',Version='0.1.0',UpgradeCode='{0ACF9EA2-83F8-4EE0-8877-E3BAE8A42E91}',Scope='perMachine',InstallerVersion='500')
+w=ET.Element('{'+ns+'}Wix'); p=node(w,'Package',Name='LineVPN',Manufacturer='jEUGENEdev',Version='0.1.0',UpgradeCode='{0ACF9EA2-83F8-4EE0-8877-E3BAE8A42E91}',Scope='perMachine',InstallerVersion='500',Codepage='1251',Language='1049')
 node(p,'MajorUpgrade',DowngradeErrorMessage='A newer LineVPN version is installed.');node(p,'MediaTemplate',EmbedCab='yes',CompressionLevel='high')
 program=node(p,'StandardDirectory',Id='ProgramFiles64Folder');install=node(program,'Directory',Id='INSTALLFOLDER',Name='LineVPN')
 feature=node(p,'Feature',Id='Main',Title='LineVPN',Level='1');dirs={pathlib.Path('.'):install}

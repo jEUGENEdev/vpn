@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -30,25 +31,33 @@ type Config struct {
 	Profile model.Profile `json:"profile"`
 }
 type Client struct {
-	mu       sync.RWMutex
-	change   sync.Mutex
-	config   Config
-	dir      string
-	http     *http.Client
-	vpn      transport.Runtime
-	Direct   *transport.Dialer
-	DNS      *FakeDNS
-	Events   *events.Center
-	pending  map[string]bool
-	active   map[io.Closer]string
-	ready    bool
-	status   string
-	requests []model.Request
-	devices  []model.Device
-	lastSync time.Time
-	tunnel   bool
-	guard    bool
+	mu        sync.RWMutex
+	change    sync.Mutex
+	config    Config
+	dir       string
+	http      *http.Client
+	vpn       transport.Runtime
+	Direct    *transport.Dialer
+	DNS       *FakeDNS
+	Events    *events.Center
+	pending   map[string]bool
+	active    map[io.Closer]string
+	ready     bool
+	status    string
+	requests  []model.Request
+	devices   []model.Device
+	lastSync  time.Time
+	tunnel    bool
+	guard     bool
+	vpnFailed bool
 }
+
+type APIError struct {
+	Status  int
+	Message string
+}
+
+func (e *APIError) Error() string { return fmt.Sprintf("%d: %s", e.Status, e.Message) }
 
 func New(dir string, dialer *transport.Dialer) (*Client, error) {
 	f, e := OpenDNS(dir)
@@ -77,6 +86,7 @@ func New(dir string, dialer *transport.Dialer) (*Client, error) {
 func (c *Client) Close() {
 	c.mu.Lock()
 	for v := range c.active {
+		delete(c.active, v)
 		v.Close()
 	}
 	c.ready = false
@@ -141,7 +151,7 @@ func (c *Client) request(ctx context.Context, method, path string, in any, out a
 		if v.Error == "" {
 			v.Error = res.Status
 		}
-		return fmt.Errorf("%d: %s", res.StatusCode, v.Error)
+		return &APIError{res.StatusCode, v.Error}
 	}
 	if out != nil {
 		return json.NewDecoder(io.LimitReader(res.Body, 4<<20)).Decode(out)
@@ -181,7 +191,7 @@ func (c *Client) Auth(ctx context.Context, action string, data any) (any, error)
 	c.mu.RLock()
 	hasProfile := c.config.Profile.Token != ""
 	c.mu.RUnlock()
-	if hasProfile {
+	if hasProfile && action != "login" {
 		return nil, errors.New("устройство уже связано с аккаунтом")
 	}
 	var p model.Profile
@@ -226,6 +236,7 @@ func (c *Client) apply(p model.Profile) error {
 	}
 	c.ready = false
 	for flow := range c.active {
+		delete(c.active, flow)
 		flow.Close()
 	}
 	c.config = next
@@ -259,8 +270,15 @@ func (c *Client) Sync(ctx context.Context) error {
 		c.mu.Lock()
 		c.ready = false
 		c.status = "blocked"
-		for flow := range c.active {
-			flow.Close()
+		var apiError *APIError
+		if errors.As(e, &apiError) && (apiError.Status == 401 || apiError.Status == 403) {
+			c.status = "auth_required"
+		}
+		for flow, host := range c.active {
+			if policy.Approved(c.effectiveRules(), host) {
+				delete(c.active, flow)
+				flow.Close()
+			}
 		}
 		c.mu.Unlock()
 		c.Events.Outage(time.Now(), "Связь с сервером потеряна. Одобренные адреса заблокированы; прямого обхода нет.")
@@ -296,7 +314,12 @@ func (c *Client) Sync(ctx context.Context) error {
 			c.mu.Unlock()
 		}
 	}
-	c.Events.Recovered(time.Now())
+	c.mu.RLock()
+	vpnFailed := c.vpnFailed
+	c.mu.RUnlock()
+	if !vpnFailed {
+		c.Events.Recovered(time.Now())
+	}
 	return nil
 }
 func (c *Client) Run(ctx context.Context) {
@@ -315,7 +338,11 @@ func (c *Client) SetTunnel(ready bool) { c.mu.Lock(); c.tunnel = ready; c.mu.Unl
 func (c *Client) State() any {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return map[string]any{"status": c.status, "tunnel": c.tunnel, "guard": c.guard, "account_id": c.config.Profile.AccountID, "device_id": c.config.Profile.DeviceID, "server": c.config.API, "rules": c.effectiveRules(), "pending_protection": c.config.Pinned, "requests": c.requests, "devices": c.devices, "events": c.Events.List(), "last_sync": c.lastSync, "revision": c.config.Profile.Revision}
+	status := c.status
+	if c.ready && c.vpnFailed {
+		status = "degraded"
+	}
+	return map[string]any{"status": status, "tunnel": c.tunnel, "guard": c.guard, "account_id": c.config.Profile.AccountID, "device_id": c.config.Profile.DeviceID, "server": c.config.API, "rules": c.effectiveRules(), "pending_protection": c.config.Pinned, "requests": c.requests, "devices": c.devices, "events": c.Events.List(), "last_sync": c.lastSync, "revision": c.config.Profile.Revision}
 }
 func (c *Client) Action(ctx context.Context, path string, data any) (any, error) {
 	if path == "rules" {
@@ -336,6 +363,7 @@ func (c *Client) Action(ctx context.Context, path string, data any) (any, error)
 				c.config = next
 				for flow, host := range c.active {
 					if policy.Matches(target, host) {
+						delete(c.active, flow)
 						flow.Close()
 					}
 				}
@@ -413,6 +441,9 @@ func (c *Client) Dial(ctx context.Context, network, target string, port uint16) 
 		if route == policy.Direct {
 			c.Events.FailedDirect(time.Now(), target)
 		} else {
+			c.mu.Lock()
+			c.vpnFailed = true
+			c.mu.Unlock()
 			c.Events.Outage(time.Now(), "Ошибка защищённого подключения. Повторим через VPN.")
 		}
 		return nil, err
@@ -431,7 +462,8 @@ func (c *Client) Dial(ctx context.Context, network, target string, port uint16) 
 
 type tracked struct {
 	net.Conn
-	c *Client
+	c        *Client
+	received atomic.Bool
 }
 
 func (t *tracked) Close() error {
@@ -439,6 +471,46 @@ func (t *tracked) Close() error {
 	delete(t.c.active, t.Conn)
 	t.c.mu.Unlock()
 	return t.Conn.Close()
+}
+
+func (t *tracked) CloseWrite() error {
+	if c, ok := t.Conn.(interface{ CloseWrite() error }); ok {
+		return c.CloseWrite()
+	}
+	return t.Close()
+}
+
+func (t *tracked) Read(p []byte) (int, error) {
+	n, err := t.Conn.Read(p)
+	if n > 0 {
+		t.received.Store(true)
+		t.c.mu.Lock()
+		target := t.c.active[t.Conn]
+		protected := policy.Approved(t.c.effectiveRules(), target)
+		recovered := protected && t.c.ready && t.c.vpnFailed
+		if recovered {
+			t.c.vpnFailed = false
+		}
+		t.c.mu.Unlock()
+		if recovered {
+			t.c.Events.Recovered(time.Now())
+		}
+	}
+	if err != nil && (!errors.Is(err, io.EOF) || !t.received.Load()) {
+		t.c.mu.Lock()
+		target, active := t.c.active[t.Conn]
+		protected := active && policy.Approved(t.c.effectiveRules(), target)
+		if protected {
+			t.c.vpnFailed = true
+		}
+		t.c.mu.Unlock()
+		if protected {
+			t.c.Events.Outage(time.Now(), "Защищённое соединение прервано. Прямого переключения нет.")
+		} else if active {
+			t.c.Events.FailedDirect(time.Now(), target)
+		}
+	}
+	return n, err
 }
 
 func (c *Client) SetGuard(enabled bool) { c.mu.Lock(); c.guard = enabled; c.mu.Unlock() }

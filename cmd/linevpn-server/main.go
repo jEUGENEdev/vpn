@@ -75,17 +75,8 @@ func main() {
 			case <-ctx.Done():
 				return
 			case <-tick.C:
-				var expired bool
-				st.View(func(v store.State) error {
-					for _, d := range v.Devices {
-						if !d.Revoked && time.Now().After(d.Expires) {
-							expired = true
-						}
-					}
-					return nil
-				})
-				if expired {
-					s.Refresh()
+				if e := s.Expire(time.Now()); e != nil {
+					log.Printf("expired-device cleanup failed: %v", e)
 				}
 			}
 		}

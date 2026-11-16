@@ -4,7 +4,9 @@ import (
 	"context"
 	"github.com/jEUGENEdev/vpn/internal/platform"
 	"golang.org/x/sys/windows/svc"
+	"golang.org/x/sys/windows/svc/mgr"
 	"os/exec"
+	"time"
 )
 
 type handler struct{ run func(context.Context) error }
@@ -36,8 +38,26 @@ func (h handler) Execute(args []string, requests <-chan svc.ChangeRequest, chang
 		}
 	}
 }
-func runService(run func(context.Context) error) error { return svc.Run("LineVPN", handler{run}) }
-func recoverNetwork() error                            { return platform.Recover() }
+func runService(run func(context.Context) error) error {
+	m, e := mgr.Connect()
+	if e != nil {
+		return e
+	}
+	defer m.Disconnect()
+	s, e := m.OpenService("LineVPN")
+	if e != nil {
+		return e
+	}
+	defer s.Close()
+	if e = s.SetRecoveryActions([]mgr.RecoveryAction{{Type: mgr.ServiceRestart, Delay: 5 * time.Second}, {Type: mgr.ServiceRestart, Delay: 15 * time.Second}, {Type: mgr.ServiceRestart, Delay: time.Minute}}, 86400); e != nil {
+		return e
+	}
+	if e = s.SetRecoveryActionsOnNonCrashFailures(true); e != nil {
+		return e
+	}
+	return svc.Run("LineVPN", handler{run})
+}
+func recoverNetwork() error { return platform.Recover() }
 func tokenPermissions(dir, path string) error {
 	if e := exec.Command("icacls", dir, "/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "*S-1-5-32-545:(RX)").Run(); e != nil {
 		return e

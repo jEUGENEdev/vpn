@@ -14,7 +14,7 @@ class LineVpnService : VpnService() {
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var starting = false
     private var lastFailure = 0L
-    private var lastEventId = 0L
+    private val seenEvents = linkedSetOf<String>()
     private val monitor = object : Runnable { override fun run() {
         try {
             Mobile.setGuard(isAlwaysOn && isLockdownEnabled)
@@ -23,10 +23,10 @@ class LineVpnService : VpnService() {
             val events = snapshot.optJSONArray("events")
             if (events != null) for (i in 0 until events.length()) {
                 val e = events.getJSONObject(i)
-                val id = e.getString("id").toLong()
-                if (id > lastEventId) { NativeNotifications.show(this@LineVpnService, e.getString("kind"), e.getString("title"), e.getString("message")); lastEventId = id }
+                val id = e.getString("at") + ":" + e.getString("id")
+                if (seenEvents.add(id)) { NativeNotifications.show(this@LineVpnService, e.getString("kind"), e.getString("title"), e.getString("message")); if (seenEvents.size > 300) seenEvents.remove(seenEvents.first()) }
             }
-            val text = if (!isAlwaysOn || !isLockdownEnabled) "Включите постоянный VPN и блокировку без VPN в настройках." else if (status == "blocked") "Сервер недоступен. Одобренные соединения заблокированы." else "Защита включена. Одобренные адреса — только через VPN."
+            val text = if (!isAlwaysOn || !isLockdownEnabled) "Включите постоянный VPN и блокировку без VPN в настройках." else if (status == "stopped") "Служба не запущена. Системная блокировка сохраняет защиту." else if (status == "setup" || status == "auth_required") "Войдите в аккаунт для подключения VPN." else if (status == "blocked") "Сервер недоступен. Одобренные соединения заблокированы." else "Защита включена. Одобренные адреса — только через VPN."
             getSystemService(NotificationManager::class.java).notify(1, notification(text))
         } catch (_: Exception) { }
         main.postDelayed(this, 5000)
@@ -75,8 +75,8 @@ object NativeNotifications {
     fun show(context: android.content.Context, kind: String, title: String, message: String) {
         val prefs = context.getSharedPreferences("notices", 0)
         val now = System.currentTimeMillis()
-        val interval = if (kind == "suggestion") 5 * 60 * 1000L else 15 * 60 * 1000L
-        if (kind != "recovered" && now - prefs.getLong(kind, 0) < interval) return
+        val interval = when (kind) { "suggestion" -> 5 * 60 * 1000L; "recovered" -> 60 * 1000L; else -> 15 * 60 * 1000L }
+        if (now - prefs.getLong(kind, 0) < interval) return
         prefs.edit().putLong(kind, now).apply()
         val open = PendingIntent.getActivity(context, 0, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val n = Notification.Builder(context, "events").setSmallIcon(R.drawable.ic_line).setContentTitle(title).setContentText(message).setStyle(Notification.BigTextStyle().bigText(message)).setContentIntent(open).setAutoCancel(true).build()

@@ -36,9 +36,15 @@ func Start(fd int64, dir string, p Protector) (string, error) {
 	mu.Lock()
 	defer mu.Unlock()
 	if current != nil {
+		if fd > 0 {
+			syscall.Close(int(fd))
+		}
 		return current.url, nil
 	}
 	if fd < 1 || p == nil {
+		if fd > 0 {
+			syscall.Close(int(fd))
+		}
 		return "", errors.New("VPN interface is required")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -60,6 +66,7 @@ func Start(fd int64, dir string, p Protector) (string, error) {
 	c, e := client.New(filepath.Join(dir, "core"), d)
 	if e != nil {
 		cancel()
+		syscall.Close(int(fd))
 		return "", e
 	}
 	t, e := c.StartTunnel(ctx, tun.Options{Name: "linevpn", FileDescriptor: int(fd), AutoRoute: false, EXP_ExternalConfiguration: true})

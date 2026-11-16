@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"github.com/jEUGENEdev/vpn/internal/policy"
 	tun "github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/logger"
@@ -108,20 +107,7 @@ func (c *Client) NewConnectionEx(ctx context.Context, conn net.Conn, source, des
 		conn.Close()
 		up.Close()
 		<-done
-		if result != nil {
-			c.connectionError(target)
-		}
 	}()
-}
-func (c *Client) connectionError(target string) {
-	c.mu.RLock()
-	protected := policy.Approved(c.effectiveRules(), target)
-	c.mu.RUnlock()
-	if protected {
-		c.Events.Outage(time.Now(), "Защищённое соединение прервано. Прямого переключения нет.")
-	} else {
-		c.Events.FailedDirect(time.Now(), target)
-	}
 }
 func (c *Client) dnsTCP(conn net.Conn) error {
 	for {

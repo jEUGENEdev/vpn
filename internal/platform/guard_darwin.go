@@ -20,6 +20,12 @@ func Guard(name string) error {
 	if name != "" && !strings.HasPrefix(name, "utun") {
 		return errors.New("invalid interface")
 	}
+	hook, e := exec.Command("/sbin/pfctl", "-sr").Output()
+	if e != nil || !strings.Contains(string(hook), `anchor "linevpn"`) {
+		if b, err := exec.Command("/sbin/pfctl", "-f", "/etc/pf.conf").CombinedOutput(); err != nil {
+			return fmt.Errorf("PF config: %s: %w", b, err)
+		}
+	}
 	rules := "pass out quick on lo0 all\npass out quick proto { tcp udp } from any to any user _linevpn\npass out quick inet proto udp from any port 68 to 255.255.255.255 port 67\npass out quick inet6 proto icmp6 icmp6-type { routersol, neighbrsol, neighbradv }\n"
 	if name != "" {
 		rules += "pass out quick on " + name + " all\n"
@@ -31,6 +37,15 @@ func Guard(name string) error {
 		return fmt.Errorf("PF: %s: %w", b, e)
 	}
 	exec.Command("/sbin/pfctl", "-E").Run()
+	info, e := exec.Command("/sbin/pfctl", "-s", "info").CombinedOutput()
+	if e != nil || !strings.Contains(string(info), "Status: Enabled") {
+		return errors.New("PF is not enabled")
+	}
+	if name == "" {
+		if e := exec.Command("/sbin/pfctl", "-F", "states").Run(); e != nil {
+			return e
+		}
+	}
 	return nil
 }
 func ConfigureDNS() error {
