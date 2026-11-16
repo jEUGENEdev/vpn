@@ -516,6 +516,31 @@ func (s *Server) discover(w http.ResponseWriter, r *http.Request) {
 			key := a.ID + ":" + target
 			q, ok := st.Requests[key]
 			if !ok {
+				if count >= 1000 && failures[target] {
+					oldest := ""
+					var at time.Time
+					for candidate, old := range st.Requests {
+						if old.AccountID != a.ID || old.Dismissed {
+							continue
+						}
+						active := false
+						for id, seen := range old.FailedDevices {
+							device := st.Devices[id]
+							if time.Since(seen) < 30*time.Minute && !device.Revoked && time.Now().Before(device.Expires) {
+								active = true
+								break
+							}
+						}
+						if !active && (oldest == "" || old.LastSeen.Before(at)) {
+							oldest = candidate
+							at = old.LastSeen
+						}
+					}
+					if oldest != "" {
+						delete(st.Requests, oldest)
+						count--
+					}
+				}
 				if count >= 1000 {
 					continue
 				}
@@ -527,6 +552,12 @@ func (s *Server) discover(w http.ResponseWriter, r *http.Request) {
 			if failures[target] {
 				if q.FailedDevices == nil {
 					q.FailedDevices = map[string]time.Time{}
+				}
+				for id, at := range q.FailedDevices {
+					device := st.Devices[id]
+					if time.Since(at) >= 30*time.Minute || device.Revoked || !time.Now().Before(device.Expires) {
+						delete(q.FailedDevices, id)
+					}
 				}
 				q.FailedDevices[d.ID] = time.Now()
 				q.DirectFailed = true

@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"github.com/jEUGENEdev/vpn/internal/model"
 	"github.com/jEUGENEdev/vpn/internal/secure"
 	"github.com/jEUGENEdev/vpn/internal/store"
@@ -93,6 +94,18 @@ func TestAppTunnelAndFailureReportsAreDeviceScoped(t *testing.T) {
 	call("POST", "/api/discover", "two", map[string]any{"failed_targets": []string{"fresh.example.com"}}, 200)
 	if len(failed("two")) != 0 {
 		t.Fatal("new subdomain escaped parent dismissal")
+	}
+	st.Update(func(v *store.State) error {
+		v.Requests = map[string]model.Request{}
+		for i := 0; i < 1000; i++ {
+			target := fmt.Sprintf("working-%d.example.org", i)
+			v.Requests["a:"+target] = model.Request{AccountID: "a", Target: target, FirstSeen: time.Now().Add(-time.Hour), LastSeen: time.Now().Add(-time.Hour)}
+		}
+		return nil
+	})
+	call("POST", "/api/discover", "one", map[string]any{"failed_targets": []string{"failed.new-example.net"}}, 200)
+	if got := failed("one"); len(got) != 1 || got[0] != "failed.new-example.net" {
+		t.Fatalf("legacy successful discoveries crowded out a new failure: %v", got)
 	}
 	st.Update(func(v *store.State) error { d := v.Devices["one"]; d.Revoked = true; v.Devices["one"] = d; return nil })
 	call("POST", "/api/app-vpn", "one", map[string]bool{"enabled": true}, 401)

@@ -92,7 +92,7 @@ function maybePromptApplication() {
   promptedApplication = app;
   promptedApplications.add(app.id);
   $('application-title').textContent = 'Использовать «' + app.name + '» через VPN?';
-  $('application-description').textContent = '«Линия» впервые видит это приложение. Его запрос к ' + app.target + ' несколько раз не прошёл напрямую.';
+  $('application-description').textContent = 'Вы ещё не выбирали VPN для этого приложения. Его запрос к ' + app.target + ' несколько раз не прошёл напрямую.';
   $('application-identity').textContent = app.path;
   $('application-prompt').showModal();
 }

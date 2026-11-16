@@ -14,7 +14,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -56,11 +55,12 @@ func TestREALITYXHTTPRoundTripAndDeny(t *testing.T) {
 	o := ServerOptions{Listen: "127.0.0.1", Port: port, PrivateKey: secret, PublicKey: pub, SNI: "example.com", Target: target.Listener.Addr().String(), ShortID: "12ab34cd", Path: "/test-xhttp"}
 	st := store.Empty()
 	st.Accounts["a"] = store.Account{Account: model.Account{ID: "a", Status: "active", Rules: []string{"127.0.0.1"}}}
-	st.Devices["d"] = store.Device{Device: model.Device{ID: "d", AccountID: "a", Expires: time.Now().Add(time.Hour)}, Secret: uuid}
+	st.Devices["d"] = store.Device{Device: model.Device{ID: "d", AccountID: "a", Expires: time.Now().Add(time.Hour)}, Secret: uuid, AppSecret: secure.UUID()}
 	InstallDialer(&Dialer{})
-	var server, client Runtime
+	var server, client, appClient Runtime
 	defer server.Close()
 	defer client.Close()
+	defer appClient.Close()
 	if e = server.Apply(loopbackTestConfig(ServerConfig(st, o, time.Now()))); e != nil {
 		t.Fatal(e)
 	}
@@ -68,7 +68,7 @@ func TestREALITYXHTTPRoundTripAndDeny(t *testing.T) {
 	if e = client.Apply(ClientConfig(p)); e != nil {
 		t.Fatal(e)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	conn, e := client.Dial(ctx, "tcp", echo.Addr().String())
 	if e != nil {
@@ -132,17 +132,55 @@ func TestREALITYXHTTPRoundTripAndDeny(t *testing.T) {
 		t.Fatal(e)
 	}
 	before := hits.Load()
-	blocked, e := client.Dial(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(echo.Addr().(*net.TCPAddr).Port)))
-	if e != nil {
-		return
+	blocked, e := client.Dial(ctx, "tcp", echo.Addr().String())
+	if e == nil {
+		timer := time.AfterFunc(3*time.Second, func() { blocked.Close() })
+		blocked.Write([]byte("must-not-pass"))
+		n, _ := blocked.Read(make([]byte, 20))
+		timer.Stop()
+		blocked.Close()
+		if n != 0 || hits.Load() != before {
+			t.Fatal("server routed an unapproved destination")
+		}
 	}
-	defer blocked.Close()
-	timer := time.AfterFunc(3*time.Second, func() { blocked.Close() })
-	defer timer.Stop()
-	blocked.Write([]byte("must-not-pass"))
-	n, _ := blocked.Read(make([]byte, 20))
-	if n != 0 || hits.Load() != before {
-		t.Fatal("server routed an unapproved destination")
+	p.UUID = st.Devices["d"].AppSecret
+	if e = appClient.Apply(ClientConfig(p)); e != nil {
+		t.Fatal(e)
+	}
+	trusted, e := appClient.Dial(ctx, "tcp", echo.Addr().String())
+	if e != nil {
+		t.Fatal(e)
+	}
+	timer := time.AfterFunc(5*time.Second, func() { trusted.Close() })
+	trusted.Write([]byte("trusted-app"))
+	reply = make([]byte, len("trusted-app"))
+	_, e = io.ReadFull(trusted, reply)
+	timer.Stop()
+	trusted.Close()
+	if e != nil || string(reply) != "trusted-app" {
+		t.Fatalf("trusted app tunnel failed for a destination outside address rules: %q %v", reply, e)
+	}
+	d := st.Devices["d"]
+	d.Revoked = true
+	st.Devices["d"] = d
+	if e = server.Apply(loopbackTestConfig(ServerConfig(st, o, time.Now()))); e != nil {
+		t.Fatal(e)
+	}
+	appClient.Close()
+	if e = appClient.Apply(ClientConfig(p)); e != nil {
+		t.Fatal(e)
+	}
+	before = hits.Load()
+	blocked, e = appClient.Dial(ctx, "tcp", echo.Addr().String())
+	if e == nil {
+		timer := time.AfterFunc(3*time.Second, func() { blocked.Close() })
+		blocked.Write([]byte("revoked-app"))
+		n, _ := blocked.Read(make([]byte, 20))
+		timer.Stop()
+		blocked.Close()
+		if n != 0 || hits.Load() != before {
+			t.Fatal("revoked device retained its app tunnel")
+		}
 	}
 }
 
