@@ -53,7 +53,11 @@ func main() {
 		if e != nil {
 			log.Fatal(e)
 		}
-		key = k.(*ecdsa.PrivateKey)
+		var ok bool
+		key, ok = k.(*ecdsa.PrivateKey)
+		if !ok {
+			log.Fatal("API key must be ECDSA")
+		}
 	} else {
 		key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {
@@ -82,7 +86,11 @@ func main() {
 		}
 		sid := make([]byte, 8)
 		rand.Read(sid)
-		cfg := server.Config{Address: ":8443", PublicIP: *ip, Database: "/var/lib/linevpn/server.db", Cert: certPath, Key: keyPath, AdminPasswordFile: filepath.Join(*dir, "admin-password"), Transport: transport.ServerOptions{Listen: "0.0.0.0", Port: 443, PrivateKey: base64.RawURLEncoding.EncodeToString(rk.Bytes()), PublicKey: base64.RawURLEncoding.EncodeToString(rk.PublicKey().Bytes()), SNI: *sni, Target: net.JoinHostPort(*sni, "443"), ShortID: fmt.Sprintf("%x", sid), Path: "/line/" + secure.Token()[:24]}}
+		listen := "0.0.0.0"
+		if net.ParseIP(*ip).To4() == nil {
+			listen = "::"
+		}
+		cfg := server.Config{Address: ":8443", PublicIP: *ip, Database: "/var/lib/linevpn/server.db", Cert: certPath, Key: keyPath, AdminPasswordFile: filepath.Join(*dir, "admin-password"), Transport: transport.ServerOptions{Listen: listen, Port: 443, PrivateKey: base64.RawURLEncoding.EncodeToString(rk.Bytes()), PublicKey: base64.RawURLEncoding.EncodeToString(rk.PublicKey().Bytes()), SNI: *sni, Target: net.JoinHostPort(*sni, "443"), ShortID: fmt.Sprintf("%x", sid), Path: "/line/" + secure.Token()[:24]}}
 		raw, _ := json.MarshalIndent(cfg, "", "  ")
 		if e = secure.Save(configPath, raw); e != nil {
 			log.Fatal(e)

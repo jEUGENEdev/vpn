@@ -1,6 +1,8 @@
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
 New-Item -ItemType Directory -Force apps/desktop/assets | Out-Null
+python scripts/collect-licenses.py apps/desktop/assets/THIRD_PARTY_NOTICES.txt
+if ($LASTEXITCODE -ne 0) { throw 'Dependency notices failed' }
 $env:GOOS='windows'; $env:GOARCH='amd64'; $env:CGO_ENABLED='0'
 go build -tags with_gvisor -trimpath -ldflags='-s -w' -o apps/desktop/assets/linevpn-agent.exe ./cmd/linevpn-agent
 if ($LASTEXITCODE -ne 0) { throw 'Agent build failed' }

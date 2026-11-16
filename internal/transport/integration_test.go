@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdh"
 	"crypto/rand"
@@ -86,6 +87,40 @@ func TestREALITYXHTTPRoundTripAndDeny(t *testing.T) {
 		t.Fatal(string(reply))
 	}
 	conn.Close()
+	udpEcho, e := net.ListenPacket("udp", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer udpEcho.Close()
+	go func() {
+		b := make([]byte, 65535)
+		for {
+			n, address, e := udpEcho.ReadFrom(b)
+			if e != nil {
+				return
+			}
+			udpEcho.WriteTo(b[:n], address)
+		}
+	}()
+	udp, e := client.Dial(ctx, "udp", udpEcho.LocalAddr().String())
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer udp.Close()
+	udpTimer := time.AfterFunc(5*time.Second, func() { udp.Close() })
+	defer udpTimer.Stop()
+	for _, size := range []int{7, 1300, 3000} {
+		payload := bytes.Repeat([]byte{byte(size)}, size)
+		if _, e = udp.Write(payload); e != nil {
+			t.Fatal(e)
+		}
+		response := make([]byte, 65535)
+		n, e := udp.Read(response)
+		if e != nil || !bytes.Equal(payload, response[:n]) {
+			t.Fatalf("UDP datagram size %d: got %d bytes: %v", size, n, e)
+		}
+	}
+	udp.Close()
 	a := st.Accounts["a"]
 	a.Rules = nil
 	st.Accounts["a"] = a

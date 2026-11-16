@@ -2,7 +2,7 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android {
     namespace = "dev.linevpn.app"
     compileSdk = 35
-    defaultConfig { applicationId = "dev.linevpn.app"; minSdk = 29; targetSdk = 35; versionCode = 1; versionName = "0.1.0-preview" }
+    defaultConfig { testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"; applicationId = "dev.linevpn.app"; minSdk = 29; targetSdk = 35; versionCode = 1; versionName = "0.1.0-preview" }
     signingConfigs {
         create("release") {
             val path = System.getenv("ANDROID_KEYSTORE")
@@ -15,4 +15,8 @@ android {
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
 }
-dependencies { implementation(files("libs/core.aar")) }
+dependencies {
+ implementation(files("libs/core.aar"))
+ androidTestImplementation("androidx.test:runner:1.6.2")
+ androidTestImplementation("junit:junit:4.13.2")
+}

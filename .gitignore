@@ -23,3 +23,5 @@ deploy/ansible/generated/
 .DS_Store
 __pycache__/
 *.pyc
+
+apps/android/app/src/main/assets/THIRD_PARTY_NOTICES.txt

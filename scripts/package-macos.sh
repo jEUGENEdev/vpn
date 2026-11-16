@@ -2,6 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 vpn_arch="${1:-arm64}"
+python3 scripts/collect-licenses.py apps/desktop/assets/THIRD_PARTY_NOTICES.txt
 mkdir -p build/macos-root/Library/LaunchDaemons 'build/macos-root/Library/Application Support/LineVPN' build/macos-scripts apps/desktop/assets
 GOOS=darwin GOARCH="$vpn_arch" CGO_ENABLED=0 go build -tags with_gvisor -trimpath -ldflags='-s -w' -o 'build/macos-root/Library/Application Support/LineVPN/linevpn-agent' ./cmd/linevpn-agent
 cp packaging/macos/dev.linevpn.agent.plist build/macos-root/Library/LaunchDaemons/
