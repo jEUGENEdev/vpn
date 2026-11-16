@@ -179,6 +179,7 @@ func (s *Server) Handler(static http.Handler) http.Handler {
 	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("POST /api/pair/claim", s.claim)
 	mux.HandleFunc("POST /api/admin/login", s.adminLogin)
+	mux.HandleFunc("GET /api/admin/bootstrap", s.adminBootstrap)
 	mux.HandleFunc("GET /api/admin/accounts", s.adminAccounts)
 	mux.HandleFunc("POST /api/admin/account", s.adminAccount)
 	mux.HandleFunc("POST /api/admin/revoke", s.adminRevoke)
