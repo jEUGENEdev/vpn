@@ -36,6 +36,7 @@ class MainActivity : Activity() {
         box.addView(Button(this).apply { text = "Включить защиту"; setOnClickListener { prepareVPN() } })
         box.addView(Button(this).apply { text = "Настройки постоянного VPN"; setOnClickListener { startActivity(Intent(Settings.ACTION_VPN_SETTINGS)) } })
         pageContent(box)
+        systemTheme(false)
         handler.post(poll)
         prepareVPN()
     }
@@ -45,7 +46,7 @@ class MainActivity : Activity() {
         web?.setBackgroundColor(color)
         if (Build.VERSION.SDK_INT >= 30) {
             val mask = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
-            window.insetsController?.setSystemBarsAppearance(if (dark) 0 else mask, mask)
+            window.decorView.windowInsetsController?.setSystemBarsAppearance(if (dark) 0 else mask, mask)
         } else {
             val layout = View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
             window.decorView.systemUiVisibility = layout or if (dark) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
