@@ -1,6 +1,13 @@
 package dev.linevpn.app;
 
 import android.content.Intent;
+import android.app.Activity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.webkit.WebView;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
@@ -35,10 +42,49 @@ public class VpnSmokeTest {
             }
         } finally { conn.disconnect(); }
     }
+    private WebView findWeb(View view) {
+        if (view instanceof WebView) return (WebView) view;
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                WebView web = findWeb(group.getChildAt(i));
+                if (web != null) return web;
+            }
+        }
+        return null;
+    }
+    private void awaitNativeUI(Activity activity) throws Exception {
+        AtomicBoolean ready = new AtomicBoolean(false);
+        long deadline = System.currentTimeMillis() + 30000;
+        while (!ready.get() && System.currentTimeMillis() < deadline) {
+            CountDownLatch result = new CountDownLatch(1);
+            getInstrumentation().runOnMainSync(() -> {
+                WebView web = findWeb(activity.getWindow().getDecorView());
+                if (web == null || !web.isShown() || web.getWidth() == 0) { result.countDown(); return; }
+                web.evaluateJavascript("document.readyState === 'complete' && document.body.innerText.includes('Линия')", value -> {
+                    ready.set("true".equals(value) && activity.hasWindowFocus());
+                    result.countDown();
+                });
+            });
+            result.await(2, TimeUnit.SECONDS);
+            if (!ready.get()) Thread.sleep(250);
+        }
+        assertTrue("MainActivity must display the loaded client WebView in the foreground", ready.get());
+        getInstrumentation().runOnMainSync(() -> {
+            WebView web = findWeb(activity.getWindow().getDecorView());
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets safe = web.getRootWindowInsets().getInsetsIgnoringVisibility(
+                    android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.displayCutout());
+                int[] position = new int[2]; web.getLocationOnScreen(position);
+                assertTrue("Client overlaps the status bar", position[1] >= safe.top);
+                assertTrue("Client overlaps the navigation bar", position[1] + web.getHeight() <= activity.getWindow().getDecorView().getHeight() - safe.bottom);
+            }
+        });
+    }
     @Test public void testNativeTunnelDNSAndFailClosedApproval() throws Exception {
         Intent intent = new Intent(getInstrumentation().getTargetContext(), MainActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        getInstrumentation().startActivitySync(intent);
+        Activity activity = getInstrumentation().startActivitySync(intent);
         long deadline = System.currentTimeMillis() + 30000;
         while (!"running".equals(Mobile.status()) && System.currentTimeMillis() < deadline) Thread.sleep(200);
         assertEquals("Native VPN service did not start", "running", Mobile.status());
@@ -75,7 +121,8 @@ public class VpnSmokeTest {
         assertTrue(new JSONObject(Mobile.snapshot()).getJSONArray("pending_protection").toString().contains("10.0.2.2"));
         try { request("http://10.0.2.2:8765/probe",null,null); fail("Approved address escaped directly"); }
         catch (IOException expected) { }
-        // Capture the actual Activity before AndroidJUnitRunner closes it.
+        // Require the real foreground WebView, not a launcher/system dialog screenshot.
+        awaitNativeUI(activity);
         getInstrumentation().waitForIdleSync();
         android.graphics.Bitmap preview = getInstrumentation().getUiAutomation().takeScreenshot();
         assertNotNull("Native UI screenshot unavailable", preview);
