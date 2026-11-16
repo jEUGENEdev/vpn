@@ -143,5 +143,8 @@ func Recover() error {
 	if e = s.DeleteSublayer(sublayer); e != nil && !errors.Is(e, windows.ERROR_NOT_FOUND) {
 		return e
 	}
-	return s.DeleteProvider(provider)
+	if e = s.DeleteProvider(provider); e != nil {
+		return e
+	}
+	return ConfigureDNS()
 }

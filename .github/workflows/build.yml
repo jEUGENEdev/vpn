@@ -53,9 +53,19 @@ jobs:
           packages: platform-tools
           log-accepted-android-sdk-licenses: false
       - uses: gradle/actions/setup-gradle@v4
-        with: {gradle-version: '8.11.1'}
+        with: {gradle-version: '8.11.1', cache-read-only: false}
       - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;28.0.13004108'
+      - uses: actions/cache/restore@v4
+        id: android_go_cache
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-android-go1.27.4-ndk28-${{ hashFiles('go.sum') }}
       - run: scripts/package-android.sh
+      - uses: actions/cache/save@v4
+        if: steps.android_go_cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-android-go1.27.4-ndk28-${{ hashFiles('go.sum') }}
       - name: Build Android instrumentation test
         run: cd apps/android && gradle --no-daemon assembleDebugAndroidTest
       - name: Release build-only SDK files before emulator
@@ -144,6 +154,7 @@ jobs:
             build/macos-native.txt
             build/macos-install.log
             build/macos-service.log
+            build/macos-package.log
       - uses: actions/upload-artifact@v4
         with:
           name: installer-macos-${{ matrix.arch }}

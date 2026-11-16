@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/jEUGENEdev/vpn/internal/secure"
 	"os"
 	"os/exec"
 	"os/user"
@@ -73,7 +74,7 @@ func ConfigureDNS() error {
 			}
 			backup[line] = values
 			raw, _ := json.Marshal(backup)
-			if e = os.WriteFile(path, raw, 0600); e != nil {
+			if e = secure.Save(path, raw); e != nil {
 				return e
 			}
 		}

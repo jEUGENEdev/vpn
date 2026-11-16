@@ -11,7 +11,7 @@ adb install -r apps/android/app/build/outputs/apk/androidTest/debug/app-debug-an
 adb shell pm grant dev.linevpn.app android.permission.POST_NOTIFICATIONS
 adb shell appops set dev.linevpn.app ACTIVATE_VPN allow
 adb shell am instrument -w dev.linevpn.app.test/androidx.test.runner.AndroidJUnitRunner | tee build/android-instrumentation.txt
-if ! rg -q 'OK \(1 test\)' build/android-instrumentation.txt; then
+if ! grep -q 'OK (1 test)' build/android-instrumentation.txt; then
   adb logcat -d -t 600 > build/android-logcat.txt
   exit 1
 fi

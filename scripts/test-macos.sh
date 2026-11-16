@@ -5,6 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 recover() {
   sudo '/Library/Application Support/LineVPN/recover-network.sh' || true
+  sudo tail -n 160 /var/log/install.log > build/macos-package.log 2>/dev/null || true
   sudo cat /var/log/linevpn-error.log > build/macos-service.log 2>/dev/null || true
 }
 trap recover EXIT

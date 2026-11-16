@@ -58,6 +58,7 @@ class LineVpnService : VpnService() {
                 Mobile.start(fd.toLong(), filesDir.absolutePath, object : Protector { override fun protect(fd: Long): Boolean = this@LineVpnService.protect(fd.toInt()) })
                 getSystemService(NotificationManager::class.java).notify(1, notification("Защита включена. Одобренные адреса — только через VPN."))
             } catch (e: Exception) {
+                android.util.Log.e("LineVPN", "Native service startup failed", e)
                 Mobile.stop()
                 getSystemService(NotificationManager::class.java).notify(1, notification("Ошибка VPN. Проверьте блокировку соединений без VPN."))
                 val now = System.currentTimeMillis()
