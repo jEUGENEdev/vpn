@@ -3,9 +3,6 @@
   hosts: vpn
   become: true
   gather_facts: true
-  vars:
-    vpn_ssh_port: 22
-    vpn_reality_target: www.microsoft.com
   pre_tasks:
     - name: Validate platform and configuration
       ansible.builtin.assert:
@@ -51,7 +48,7 @@
       notify: Restart LineVPN
     - name: Generate REALITY keys and pinned API certificate once
       ansible.builtin.command:
-        argv: [/usr/local/bin/linevpn-keygen, -dir, /etc/linevpn, -ip, "{{ vpn_public_ip }}", -reality-target, "{{ vpn_reality_target }}"]
+        argv: [/usr/local/bin/linevpn-keygen, -dir, /etc/linevpn, -ip, "{{ vpn_public_ip }}", -reality-target, "{{ vpn_reality_target | default('www.microsoft.com') }}"]
         creates: /etc/linevpn/server.json
       register: vpn_bootstrap
       no_log: true
@@ -93,7 +90,7 @@
     - name: Allow SSH before enabling firewall
       community.general.ufw:
         rule: allow
-        port: "{{ vpn_ssh_port }}"
+        port: "{{ vpn_ssh_port | default(ansible_port | default(22)) }}"
         proto: tcp
     - name: Expose only encrypted public services
       community.general.ufw:

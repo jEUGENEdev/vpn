@@ -2,6 +2,7 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android {
     namespace = "dev.linevpn.app"
     compileSdk = 35
+    ndkVersion = "28.0.13004108"
     defaultConfig { testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"; applicationId = "dev.linevpn.app"; minSdk = 29; targetSdk = 35; versionCode = 1; versionName = "0.1.0-preview" }
     signingConfigs {
         create("release") {

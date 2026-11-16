@@ -110,3 +110,25 @@ func TestAuthenticationExpiryRetainsProtection(t *testing.T) {
 		t.Fatal("expired account fell back to direct")
 	}
 }
+
+func TestApprovalClosesExistingDirectFlow(t *testing.T) {
+	c, e := New(t.TempDir(), &transport.Dialer{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer c.Close()
+	ln, e := net.Listen("tcp", "127.0.0.1:0")
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer ln.Close()
+	flow, e := c.Dial(context.Background(), "tcp", "127.0.0.1", uint16(ln.Addr().(*net.TCPAddr).Port))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer flow.Close()
+	c.Action(context.Background(), "rules", map[string]any{"action": "approve", "target": "127.0.0.1", "revision": 0})
+	if _, e = flow.Write([]byte("must not continue direct")); e == nil {
+		t.Fatal("existing flow survived approval")
+	}
+}

@@ -34,7 +34,8 @@
         "dmg"
       ],
       "category": "public.app-category.utilities",
-      "hardenedRuntime": true
+      "hardenedRuntime": true,
+      "artifactName": "LineVPN-${version}-macos-${arch}.${ext}"
     },
     "dmg": {
       "contents": [

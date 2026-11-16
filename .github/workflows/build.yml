@@ -12,6 +12,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   test:
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -36,10 +37,13 @@ jobs:
           path: build/*-linux-amd64
           if-no-files-found: error
   android:
+    timeout-minutes: 35
     needs: test
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Reserve space on the disposable Android runner
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android/sdk/ndk
       - uses: actions/setup-go@v5
         with: {go-version: '1.27.4', cache: true}
       - uses: actions/setup-java@v4
@@ -54,6 +58,8 @@ jobs:
       - run: scripts/package-android.sh
       - name: Build Android instrumentation test
         run: cd apps/android && gradle --no-daemon assembleDebugAndroidTest
+      - name: Release build-only SDK files before emulator
+        run: rm -rf "$ANDROID_HOME/ndk/28.0.13004108"
       - name: Enable emulator acceleration
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -83,6 +89,7 @@ jobs:
           path: build/installers/*.apk
           if-no-files-found: error
   windows:
+    timeout-minutes: 25
     needs: test
     runs-on: windows-2025
     steps:
@@ -96,12 +103,22 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with: {dotnet-version: '8.0.x'}
       - run: ./scripts/package-windows.ps1
+      - name: Verify installed service and persistent WFP
+        run: ./scripts/test-windows.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-native-check
+          path: |
+            build/windows-native.txt
+            build/windows-install.log
       - uses: actions/upload-artifact@v4
         with:
           name: installer-windows
           path: build/*.msi
           if-no-files-found: error
   macos:
+    timeout-minutes: 25
     needs: test
     runs-on: macos-15
     strategy:
@@ -116,12 +133,24 @@ jobs:
       - uses: actions/setup-node@v4
         with: {node-version: '24', cache: npm, cache-dependency-path: apps/desktop/package-lock.json}
       - run: scripts/package-macos.sh ${{ matrix.arch }}
+      - name: Verify installed service and PF on matching host architecture
+        if: (matrix.arch == 'arm64' && runner.arch == 'ARM64') || (matrix.arch == 'amd64' && runner.arch == 'X64')
+        run: scripts/test-macos.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-native-check-${{ matrix.arch }}
+          path: |
+            build/macos-native.txt
+            build/macos-install.log
+            build/macos-service.log
       - uses: actions/upload-artifact@v4
         with:
           name: installer-macos-${{ matrix.arch }}
           path: apps/desktop/dist/*.dmg
           if-no-files-found: error
   publish-current:
+    timeout-minutes: 15
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     needs: [android, windows, macos]
     runs-on: ubuntu-24.04

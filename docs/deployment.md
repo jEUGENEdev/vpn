@@ -15,7 +15,7 @@ ansible-galaxy collection install -r requirements.yml
 ansible-vault create group_vars/vault.yml
 ```
 
-В `inventory.ini` укажите VPS. В зашифрованном `group_vars/vault.yml` сохраните:
+В `inventory.ini` укажите VPS и `ansible_port`, если SSH работает не на 22. Firewall использует этот порт, если `vpn_ssh_port` не переопределён. В зашифрованном `group_vars/vault.yml` сохраните:
 
 ```yaml
 vault_admin_password: "ВАШ_УНИКАЛЬНЫЙ_ПАРОЛЬ_16_72_БАЙТА"

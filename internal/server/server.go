@@ -500,7 +500,7 @@ func (s *Server) rules(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, errors.New("неверное действие"))
 		return
 	}
-	if ip, e := netip.ParseAddr(target); e == nil && !policy.Public(ip) {
+	if ip, e := netip.ParseAddr(target); c.Action == "approve" && e == nil && !policy.Public(ip) {
 		fail(w, 400, errors.New("VPN-сервер не предоставляет доступ к внутренним и служебным IP"))
 		return
 	}
