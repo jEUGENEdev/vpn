@@ -75,5 +75,12 @@ public class VpnSmokeTest {
         assertTrue(new JSONObject(Mobile.snapshot()).getJSONArray("pending_protection").toString().contains("10.0.2.2"));
         try { request("http://10.0.2.2:8765/probe",null,null); fail("Approved address escaped directly"); }
         catch (IOException expected) { }
+        // Capture the actual Activity before AndroidJUnitRunner closes it.
+        getInstrumentation().waitForIdleSync();
+        android.graphics.Bitmap preview = getInstrumentation().getUiAutomation().takeScreenshot();
+        assertNotNull("Native UI screenshot unavailable", preview);
+        try (FileOutputStream out = new FileOutputStream(new File(getInstrumentation().getTargetContext().getFilesDir(), "native-preview.png"))) {
+            assertTrue(preview.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out));
+        } finally { preview.recycle(); }
     }
 }

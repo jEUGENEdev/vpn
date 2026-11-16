@@ -15,4 +15,4 @@ if ! grep -q 'OK (1 test)' build/android-instrumentation.txt; then
   adb logcat -d -t 600 > build/android-logcat.txt
   exit 1
 fi
-adb exec-out screencap -p > build/android-native.png
+adb exec-out run-as dev.linevpn.app cat files/native-preview.png > build/android-native.png

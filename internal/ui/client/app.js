@@ -1,7 +1,7 @@
 'use strict';
 const $=id=>document.getElementById(id);let token=sessionStorage.getItem('local-token')||'',state={},mode='login',lastEvent='',toastTimer;
 const params=new URLSearchParams(location.hash.slice(1));if(params.has('token')){token=params.get('token');sessionStorage.setItem('local-token',token);history.replaceState(null,'',location.pathname)}
-let theme=localStorage.getItem('theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');document.body.classList.toggle('dark',theme==='dark');$('theme').onclick=()=>{theme=theme==='dark'?'light':'dark';document.body.classList.toggle('dark',theme==='dark');localStorage.setItem('theme',theme)};
+let theme=localStorage.getItem('theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');document.body.classList.toggle('dark',theme==='dark');if(window.LineBridge&&window.LineBridge.theme)window.LineBridge.theme(theme==='dark');$('theme').onclick=()=>{theme=theme==='dark'?'light':'dark';document.body.classList.toggle('dark',theme==='dark');if(window.LineBridge&&window.LineBridge.theme)window.LineBridge.theme(theme==='dark');localStorage.setItem('theme',theme)};
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,6500)}
 async function api(path,data){const res=await fetch('/local/'+path,{method:data===undefined?'GET':'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:data===undefined?undefined:JSON.stringify(data)});const out=await res.json();if(!res.ok)throw Error(out.error||'Ошибка запроса');return out}
 async function act(path,data){try{const out=await api(path,data);await update();return out}catch(e){toast(e.message);throw e}}

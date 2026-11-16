@@ -179,6 +179,11 @@ jobs:
           ref: ${{ github.head_ref || github.ref_name }}
       - uses: actions/download-artifact@v4
         with: {pattern: 'installer-*', path: build/installers, merge-multiple: true}
+      - uses: actions/download-artifact@v4
+        with: {name: ui-previews, path: docs/screenshots}
+      - uses: actions/download-artifact@v4
+        with: {name: android-native-check, path: build/native-preview}
+      - run: cp build/native-preview/android-native.png docs/screenshots/android-native.png
       - name: Verify and publish complete installer set
         env:
           SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -189,6 +194,6 @@ jobs:
           git lfs install --local
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add installers/current
+          git add installers/current docs/screenshots
           git commit -m 'build: update current preview installers [skip ci]' || exit 0
           git push origin "HEAD:$TARGET_BRANCH"
