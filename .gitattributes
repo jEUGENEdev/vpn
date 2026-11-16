@@ -1,0 +1,5 @@
+installers/current/*.apk filter=lfs diff=lfs merge=lfs -text
+installers/current/*.dmg filter=lfs diff=lfs merge=lfs -text
+installers/current/*.msi filter=lfs diff=lfs merge=lfs -text
+*.sh text eol=lf
+*.ps1 text eol=crlf

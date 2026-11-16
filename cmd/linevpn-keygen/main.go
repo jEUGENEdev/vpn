@@ -1,0 +1,92 @@
+package main
+
+import (
+	"crypto/ecdh"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
+	"flag"
+	"fmt"
+	"github.com/jEUGENEdev/vpn/internal/secure"
+	"github.com/jEUGENEdev/vpn/internal/server"
+	"github.com/jEUGENEdev/vpn/internal/transport"
+	"log"
+	"math/big"
+	"net"
+	"os"
+	"path/filepath"
+	"time"
+)
+
+func main() {
+	dir := flag.String("dir", "/etc/linevpn", "configuration directory")
+	ip := flag.String("ip", "", "public server IP")
+	sni := flag.String("reality-target", "www.microsoft.com", "REALITY handshake destination")
+	renew := flag.Bool("renew", false, "renew API certificate using the existing pinned key")
+	flag.Parse()
+	if net.ParseIP(*ip) == nil {
+		log.Fatal("-ip must be an IP address")
+	}
+	os.MkdirAll(*dir, 0700)
+	configPath := filepath.Join(*dir, "server.json")
+	if _, e := os.Stat(configPath); e == nil && !*renew {
+		log.Fatal("configuration exists; use -renew only for certificate renewal")
+	}
+	keyPath := filepath.Join(*dir, "api-key.pem")
+	var key *ecdsa.PrivateKey
+	var err error
+	if *renew {
+		raw, e := os.ReadFile(keyPath)
+		if e != nil {
+			log.Fatal(e)
+		}
+		b, _ := pem.Decode(raw)
+		if b == nil {
+			log.Fatal("invalid key")
+		}
+		k, e := x509.ParsePKCS8PrivateKey(b.Bytes)
+		if e != nil {
+			log.Fatal(e)
+		}
+		key = k.(*ecdsa.PrivateKey)
+	} else {
+		key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			log.Fatal(err)
+		}
+		raw, _ := x509.MarshalPKCS8PrivateKey(key)
+		if e := secure.Save(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: raw})); e != nil {
+			log.Fatal(e)
+		}
+	}
+	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	cert := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "LineVPN API"}, IPAddresses: []net.IP{net.ParseIP(*ip)}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(365 * 24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true}
+	der, e := x509.CreateCertificate(rand.Reader, cert, cert, &key.PublicKey, key)
+	if e != nil {
+		log.Fatal(e)
+	}
+	certPath := filepath.Join(*dir, "api-cert.pem")
+	if e = secure.Save(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})); e != nil {
+		log.Fatal(e)
+	}
+	parsed, _ := x509.ParseCertificate(der)
+	if !*renew {
+		rk, e := ecdh.X25519().GenerateKey(rand.Reader)
+		if e != nil {
+			log.Fatal(e)
+		}
+		sid := make([]byte, 8)
+		rand.Read(sid)
+		cfg := server.Config{Address: ":8443", PublicIP: *ip, Database: "/var/lib/linevpn/server.db", Cert: certPath, Key: keyPath, AdminPasswordFile: filepath.Join(*dir, "admin-password"), Transport: transport.ServerOptions{Listen: "0.0.0.0", Port: 443, PrivateKey: base64.RawURLEncoding.EncodeToString(rk.Bytes()), PublicKey: base64.RawURLEncoding.EncodeToString(rk.PublicKey().Bytes()), SNI: *sni, Target: net.JoinHostPort(*sni, "443"), ShortID: fmt.Sprintf("%x", sid), Path: "/line/" + secure.Token()[:24]}}
+		raw, _ := json.MarshalIndent(cfg, "", "  ")
+		if e = secure.Save(configPath, raw); e != nil {
+			log.Fatal(e)
+		}
+	}
+	fmt.Printf("linevpn://%s?pin=%s\n", net.JoinHostPort(*ip, "8443"), secure.Pin(parsed))
+}
