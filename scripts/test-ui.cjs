@@ -107,4 +107,11 @@ async function testTraffic(page) {
   await page.evaluate(() => update());
   await page.locator('[data-view="requests"]').click();
   if(!await page.getByText('Прямые подключения работают.',{exact:false}).isVisible())throw Error('recovered direct traffic did not clear proposals');
+  const recoveredApp = {...application,id:'c'.repeat(64),name:'Recovered app',decision:'pending'};
+  state.applications.push(recoveredApp);state.pending_applications=[recoveredApp];
+  await page.evaluate(() => { nextApplicationPrompt=0; return update(); });
+  await page.locator('#application-prompt').waitFor({state:'visible'});
+  state.pending_applications=[];
+  await page.evaluate(() => update());
+  await page.locator('#application-prompt').waitFor({state:'hidden'});
 }

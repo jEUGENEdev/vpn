@@ -86,6 +86,10 @@ function renderApplications() {
   maybePromptApplication();
 }
 function maybePromptApplication() {
+	if ($('application-prompt').open && promptedApplication && !(state.pending_applications || []).some(a => a.id === promptedApplication.id)) {
+		$('application-prompt').close('later');
+		return;
+	}
   if (!state.account_id || state.status === 'auth_required' || document.hidden || Date.now() < nextApplicationPrompt || document.querySelector('dialog[open]')) return;
   const app = (state.pending_applications || []).find(a => !promptedApplications.has(a.id));
   if (!app) return;

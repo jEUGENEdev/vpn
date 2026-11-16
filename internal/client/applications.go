@@ -239,6 +239,9 @@ func (c *Client) applicationSnapshotLocked() ([]model.Application, []model.Appli
 	for _, a := range apps {
 		if a.Decision == "pending" {
 			for target, o := range c.observed {
+				if c.isDismissedLocked(target) || policy.Approved(c.effectiveRules(), target) {
+					continue
+				}
 				if o.Failed && time.Since(o.LastFailure) < 30*time.Minute {
 					if failure := o.Failures[a.ID]; failure != nil && failure.Failed && time.Since(failure.Last) < 30*time.Minute {
 						a.Target = target

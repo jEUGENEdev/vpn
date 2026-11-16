@@ -80,6 +80,28 @@ func TestHistoricSuccessesAndExpiredFailuresDoNotSuggest(t *testing.T) {
 		t.Fatal("historic discovery or expired failure was suggested")
 	}
 }
+
+func TestAddressDecisionsTakePrecedenceOverApplicationPrompts(t *testing.T) {
+	c := testTrafficClient(t)
+	app := testApp("a")
+	now := time.Now()
+	observe(t, c, "api.example.com", app, now)
+	c.directFailure("api.example.com", app.ID, now)
+	c.directFailure("api.example.com", app.ID, now.Add(time.Second))
+	pending := func() int { return len(c.State().(map[string]any)["pending_applications"].([]model.Application)) }
+	if pending() != 1 {
+		t.Fatal("failed new app should initially have a prompt")
+	}
+	c.dismissed["example.com"] = true
+	if pending() != 0 {
+		t.Fatal("an ignored address still prompted for application trust")
+	}
+	delete(c.dismissed, "example.com")
+	c.config.Profile.Rules = []string{"example.com"}
+	if pending() != 0 {
+		t.Fatal("an address already routed by an explicit rule still prompted")
+	}
+}
 func TestStableGroupingSourcesAndPublicSuffixBoundaries(t *testing.T) {
 	c := testTrafficClient(t)
 	now := time.Now()
