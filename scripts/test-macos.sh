@@ -4,9 +4,22 @@ set -euo pipefail
 [[ "${GITHUB_ACTIONS:-}" == true ]] || { echo 'Use isolated CI' >&2; exit 1; }
 cd "$(dirname "$0")/.."
 recover() {
+  local vpn_test_status=$?
+  if [[ "$vpn_test_status" -ne 0 ]]; then
+    {
+      sudo /sbin/pfctl -a linevpn -sr -v
+      /sbin/route -n get 127.0.0.1
+      /sbin/route -n get 1.1.1.1
+      sudo /usr/sbin/lsof -n -P -iTCP:17891
+      /bin/ps -axo uid,pid,command | grep linevpn-agent
+    } > build/macos-network.log 2>&1 || true
+    sudo /usr/bin/pkill -QUIT -x linevpn-agent || true
+  fi
   sudo '/Library/Application Support/LineVPN/recover-network.sh' || true
   sudo tail -n 160 /var/log/install.log > build/macos-package.log 2>/dev/null || true
   sudo cat /var/log/linevpn-error.log > build/macos-service.log 2>/dev/null || true
+  cat build/macos-service.log
+  if [[ -f build/macos-network.log ]]; then cat build/macos-network.log; fi
 }
 trap recover EXIT
 sudo installer -pkg apps/desktop/assets/Install-LineVPN-Service.pkg -target / > build/macos-install.log
@@ -18,7 +31,7 @@ for ((i=0; i<20; i++)); do
   fi
   sleep 1
 done
-[[ "$vpn_ready" == true ]]
+if [[ "$vpn_ready" != true ]]; then echo "Local service API never became ready" >&2; exit 1; fi
 python3 -c 'import json; v=json.load(open("build/macos-state.json")); assert v["tunnel"] and v["guard"]'
 dig +short +time=2 +tries=1 @172.29.255.2 example.com A | grep -Eq '^198\.(18|19)\.'
 curl -s --output /dev/null --connect-timeout 4 --max-time 8 http://1.1.1.1/cdn-cgi/trace

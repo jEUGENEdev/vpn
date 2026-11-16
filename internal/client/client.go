@@ -40,7 +40,8 @@ type Client struct {
 	Direct    *transport.Dialer
 	DNS       *FakeDNS
 	Events    *events.Center
-	pending   map[string]bool
+	pending   map[string]time.Time
+	dismissed map[string]bool
 	active    map[io.Closer]string
 	ready     bool
 	status    string
@@ -64,7 +65,7 @@ func New(dir string, dialer *transport.Dialer) (*Client, error) {
 	if e != nil {
 		return nil, e
 	}
-	c := &Client{dir: dir, Direct: dialer, DNS: f, Events: events.New(), pending: map[string]bool{}, active: map[io.Closer]string{}, status: "setup", requests: []model.Request{}, devices: []model.Device{}}
+	c := &Client{dir: dir, Direct: dialer, DNS: f, Events: events.New(), pending: map[string]time.Time{}, dismissed: map[string]bool{}, active: map[io.Closer]string{}, status: "setup", requests: []model.Request{}, devices: []model.Device{}}
 	raw, e := os.ReadFile(filepath.Join(dir, "profile.json"))
 	if e == nil {
 		if e = json.Unmarshal(raw, &c.config); e != nil {
@@ -251,9 +252,10 @@ func (c *Client) apply(p model.Profile) error {
 }
 
 type syncResult struct {
-	Profile  model.Profile   `json:"profile"`
-	Requests []model.Request `json:"requests"`
-	Devices  []model.Device  `json:"devices"`
+	Profile   model.Profile   `json:"profile"`
+	Requests  []model.Request `json:"requests"`
+	Dismissed []string        `json:"dismissed"`
+	Devices   []model.Device  `json:"devices"`
 }
 
 func (c *Client) Sync(ctx context.Context) error {
@@ -297,8 +299,21 @@ func (c *Client) Sync(ctx context.Context) error {
 	c.lastSync = time.Now()
 	c.requests = s.Requests
 	c.devices = s.Devices
+	c.dismissed = map[string]bool{}
+	// Keep local discoveries visible until the next GET confirms server storage.
+	for _, request := range s.Requests {
+		delete(c.pending, request.Target)
+	}
+	for _, target := range s.Dismissed {
+		c.dismissed[target] = true
+		delete(c.pending, target)
+	}
 	targets := []string{}
 	for target := range c.pending {
+		if policy.Approved(c.effectiveRules(), target) {
+			delete(c.pending, target)
+			continue
+		}
 		if len(targets) >= 100 {
 			break
 		}
@@ -306,13 +321,7 @@ func (c *Client) Sync(ctx context.Context) error {
 	}
 	c.mu.Unlock()
 	if len(targets) > 0 {
-		if e := c.request(ctx, "POST", "/api/discover", map[string]any{"targets": targets}, nil); e == nil {
-			c.mu.Lock()
-			for _, t := range targets {
-				delete(c.pending, t)
-			}
-			c.mu.Unlock()
-		}
+		_ = c.request(ctx, "POST", "/api/discover", map[string]any{"targets": targets}, nil)
 	}
 	c.mu.RLock()
 	vpnFailed := c.vpnFailed
@@ -342,7 +351,20 @@ func (c *Client) State() any {
 	if c.ready && c.vpnFailed {
 		status = "degraded"
 	}
-	return map[string]any{"status": status, "tunnel": c.tunnel, "guard": c.guard, "account_id": c.config.Profile.AccountID, "device_id": c.config.Profile.DeviceID, "server": c.config.API, "rules": c.effectiveRules(), "pending_protection": c.config.Pinned, "requests": c.requests, "devices": c.devices, "events": c.Events.List(), "last_sync": c.lastSync, "revision": c.config.Profile.Revision}
+	requests := []model.Request{}
+	seen := map[string]bool{}
+	for _, request := range c.requests {
+		seen[request.Target] = true
+		if !request.Dismissed && !policy.Approved(c.effectiveRules(), request.Target) {
+			requests = append(requests, request)
+		}
+	}
+	for target, at := range c.pending {
+		if !seen[target] && !c.dismissed[target] && !policy.Approved(c.effectiveRules(), target) {
+			requests = append(requests, model.Request{Target: target, FirstSeen: at, LastSeen: at, Count: 1})
+		}
+	}
+	return map[string]any{"status": status, "tunnel": c.tunnel, "guard": c.guard, "account_id": c.config.Profile.AccountID, "device_id": c.config.Profile.DeviceID, "server": c.config.API, "rules": c.effectiveRules(), "pending_protection": c.config.Pinned, "requests": requests, "devices": c.devices, "events": c.Events.List(), "last_sync": c.lastSync, "revision": c.config.Profile.Revision}
 }
 func (c *Client) Action(ctx context.Context, path string, data any) (any, error) {
 	if path == "rules" {
@@ -431,8 +453,8 @@ func (c *Client) Dial(ctx context.Context, network, target string, port uint16) 
 		conn, err = c.vpn.Dial(ctx, network, addr)
 	} else {
 		c.mu.Lock()
-		if len(c.pending) < 1000 {
-			c.pending[target] = true
+		if _, seen := c.pending[target]; !seen && !c.dismissed[target] && len(c.pending) < 1000 {
+			c.pending[target] = time.Now()
 		}
 		c.mu.Unlock()
 		conn, err = c.Direct.DialContext(ctx, network, addr)

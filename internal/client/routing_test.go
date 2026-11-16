@@ -52,8 +52,16 @@ func TestUnapprovedDirect(t *testing.T) {
 		t.Fatal(e)
 	}
 	conn.Close()
-	if !c.pending["127.0.0.1"] {
+	if c.pending["127.0.0.1"].IsZero() {
 		t.Fatal("missing approval request")
+	}
+	requests := c.State().(map[string]any)["requests"].([]model.Request)
+	if len(requests) != 1 || requests[0].Target != "127.0.0.1" {
+		t.Fatal("discovery must be visible before any server is configured")
+	}
+	c.dismissed["127.0.0.1"] = true
+	if len(c.State().(map[string]any)["requests"].([]model.Request)) != 0 {
+		t.Fatal("dismissed discovery reappeared")
 	}
 }
 

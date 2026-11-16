@@ -408,9 +408,13 @@ func (s *Server) syncState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	requests := []model.Request{}
+	dismissed := []string{}
 	devices := []model.Device{}
 	s.Store.View(func(st store.State) error {
 		for _, v := range st.Requests {
+			if v.AccountID == a.ID && v.Dismissed {
+				dismissed = append(dismissed, v.Target)
+			}
 			if v.AccountID == a.ID && !v.Dismissed && !policy.Approved(a.Rules, v.Target) {
 				requests = append(requests, v)
 			}
@@ -422,7 +426,7 @@ func (s *Server) syncState(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	})
-	JSON(w, 200, map[string]any{"profile": s.profile(d, a, ""), "requests": requests, "devices": devices})
+	JSON(w, 200, map[string]any{"profile": s.profile(d, a, ""), "requests": requests, "dismissed": dismissed, "devices": devices})
 }
 func (s *Server) discover(w http.ResponseWriter, r *http.Request) {
 	_, a, e := s.device(r)
@@ -549,13 +553,28 @@ func (s *Server) dismiss(w http.ResponseWriter, r *http.Request) {
 	if !body(w, r, &c) {
 		return
 	}
+	c.Target, e = policy.Normalize(c.Target)
+	if e != nil {
+		fail(w, 400, e)
+		return
+	}
 	e = s.Store.Update(func(st *store.State) error {
 		k := a.ID + ":" + c.Target
 		v, ok := st.Requests[k]
-		if ok {
-			v.Dismissed = true
-			st.Requests[k] = v
+		if !ok {
+			count := 0
+			for _, request := range st.Requests {
+				if request.AccountID == a.ID {
+					count++
+				}
+			}
+			if count >= 1000 {
+				return errors.New("очередь адресов заполнена")
+			}
+			v = model.Request{AccountID: a.ID, Target: c.Target, FirstSeen: time.Now(), LastSeen: time.Now()}
 		}
+		v.Dismissed = true
+		st.Requests[k] = v
 		return nil
 	})
 	if e != nil {

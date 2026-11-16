@@ -67,6 +67,13 @@ func TestAccountLifecycle(t *testing.T) {
 	if len(sync["requests"].([]any)) != 0 {
 		t.Fatal("inheritance")
 	}
+	// A device can dismiss its local discovery before its first sync upload.
+	call("/api/dismiss", token, map[string]string{"target": "Fresh.Example.org."}, 200)
+	call("/api/discover", token, map[string]any{"targets": []string{"fresh.example.org"}}, 200)
+	sync = call("/api/sync", token, nil, 200)
+	if len(sync["requests"].([]any)) != 0 || len(sync["dismissed"].([]any)) != 1 || sync["dismissed"].([]any)[0] != "fresh.example.org" {
+		t.Fatal("dismissal before discovery was lost")
+	}
 	code := call("/api/pair", token, map[string]any{}, 200)["code"].(string)
 	paired := call("/api/pair/claim", "", map[string]string{"code": code, "name": "Phone", "platform": "android"}, 200)
 	call("/api/pair/claim", "", map[string]string{"code": code, "name": "Phone2", "platform": "android"}, 401)

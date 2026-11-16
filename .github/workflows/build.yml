@@ -7,6 +7,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
@@ -15,6 +16,15 @@ jobs:
     timeout-minutes: 15
     runs-on: ubuntu-24.04
     steps:
+      - name: Retrieve previous macOS diagnostics
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-native-check-arm64
+          run-id: 43854261654
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: ${{ runner.temp }}/previous-macos
+      - name: Inspect previous macOS installation
+        run: cat "$RUNNER_TEMP/previous-macos/macos-service.log" "$RUNNER_TEMP/previous-macos/macos-package.log"
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with: {go-version: '1.27.4', cache: true}
@@ -155,6 +165,7 @@ jobs:
             build/macos-install.log
             build/macos-service.log
             build/macos-package.log
+            build/macos-network.log
       - uses: actions/upload-artifact@v4
         with:
           name: installer-macos-${{ matrix.arch }}
