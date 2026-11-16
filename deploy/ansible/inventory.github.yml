@@ -1,0 +1,15 @@
+all:
+  children:
+    vpn:
+      hosts:
+        vpn1:
+          ansible_host: "{{ lookup('ansible.builtin.env', 'VPS_HOST') }}"
+          ansible_user: "{{ lookup('ansible.builtin.env', 'VPS_USERNAME') }}"
+          ansible_password: "{{ lookup('ansible.builtin.env', 'VPS_PASSWORD') }}"
+          ansible_become_password: "{{ lookup('ansible.builtin.env', 'VPS_PASSWORD') }}"
+          ansible_port: "{{ lookup('ansible.builtin.env', 'VPS_PORT') | default('22', true) | int }}"
+          vpn_admin_password: "{{ lookup('ansible.builtin.env', 'VPN_ADMIN_PASSWORD') }}"
+          ansible_ssh_common_args: >-
+            -o StrictHostKeyChecking={{ 'yes' if lookup('ansible.builtin.env', 'VPS_KNOWN_HOSTS') else 'accept-new' }}
+            -o UserKnownHostsFile={{ lookup('ansible.builtin.env', 'RUNNER_TEMP') }}/linevpn-ssh/known_hosts
+            -o ConnectTimeout=20 -o ConnectionAttempts=2

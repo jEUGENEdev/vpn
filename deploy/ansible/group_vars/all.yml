@@ -1,0 +1,7 @@
+# Shared defaults for both local and GitHub Actions deployments.
+vpn_public_ip: "{{ ansible_host }}"
+vpn_ssh_port: "{{ ansible_port | default(22) }}"
+vpn_reality_target: www.microsoft.com
+vpn_admin_password: "{{ vault_admin_password | default('') }}"
+vpn_server_binary: "{{ playbook_dir }}/../../build/linevpn-server-linux-amd64"
+vpn_keygen_binary: "{{ playbook_dir }}/../../build/linevpn-keygen-linux-amd64"
