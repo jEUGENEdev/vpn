@@ -555,13 +555,59 @@ type tracked struct {
 	c               *Client
 	received        atomic.Bool
 	failureReported atomic.Bool
+	closed          atomic.Bool
+	responseOnce    sync.Once
+	responseTimer   atomic.Pointer[time.Timer]
 }
 
+const firstResponseTimeout = 20 * time.Second
+
 func (t *tracked) Close() error {
+	t.closed.Store(true)
+	t.stopResponseTimer()
 	t.c.mu.Lock()
 	delete(t.c.active, t.Conn)
 	t.c.mu.Unlock()
 	return t.Conn.Close()
+}
+
+func (t *tracked) stopResponseTimer() {
+	if timer := t.responseTimer.Load(); timer != nil {
+		timer.Stop()
+	}
+}
+func (t *tracked) reportDirectFailure() {
+	t.c.mu.Lock()
+	defer t.c.mu.Unlock()
+	flow, active := t.c.active[t.Conn]
+	if !active || flow.Route != policy.Direct || t.closed.Load() || t.received.Load() || t.failureReported.Swap(true) {
+		return
+	}
+	t.c.directFailureLocked(flow.Target, flow.AppID, time.Now())
+}
+func (t *tracked) Write(p []byte) (int, error) {
+	n, err := t.Conn.Write(p)
+	if n > 0 {
+		t.responseOnce.Do(func() {
+			t.c.mu.RLock()
+			flow, active := t.c.active[t.Conn]
+			t.c.mu.RUnlock()
+			if !active || flow.Route != policy.Direct || t.received.Load() || t.closed.Load() {
+				return
+			}
+			// Observe a silent connection only after sending actual data. Do not
+			// interrupt it: a late response clears this tentative failure.
+			timer := time.AfterFunc(firstResponseTimeout, t.reportDirectFailure)
+			t.responseTimer.Store(timer)
+			if t.received.Load() || t.closed.Load() {
+				timer.Stop()
+			}
+		})
+	}
+	if err != nil {
+		t.reportDirectFailure()
+	}
+	return n, err
 }
 
 func (t *tracked) CloseWrite() error {
@@ -575,6 +621,7 @@ func (t *tracked) Read(p []byte) (int, error) {
 	n, err := t.Conn.Read(p)
 	if n > 0 {
 		if !t.received.Swap(true) {
+			t.stopResponseTimer()
 			t.c.mu.RLock()
 			flow, active := t.c.active[t.Conn]
 			t.c.mu.RUnlock()
@@ -604,8 +651,8 @@ func (t *tracked) Read(p []byte) (int, error) {
 		t.c.mu.Unlock()
 		if protected {
 			t.c.Events.Outage(time.Now(), "Защищённое соединение прервано. Прямого переключения нет.")
-		} else if active && !t.received.Load() && !t.failureReported.Swap(true) {
-			t.c.directFailure(info.Target, info.AppID, time.Now())
+		} else if active {
+			t.reportDirectFailure()
 		}
 	}
 	return n, err

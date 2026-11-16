@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/jEUGENEdev/vpn/internal/model"
@@ -213,4 +214,74 @@ func TestFailuresDoNotBorrowIdentityFromSuccessfulApps(t *testing.T) {
 	if len(prompts) != 1 || prompts[0].ID != a.ID {
 		t.Fatal("healthy application prompted")
 	}
+}
+
+func TestSilentDirectConnectionsRequireDataAndRecoverOnLateResponse(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := testTrafficClient(t)
+		app := testApp("a")
+		observe(t, c, "silent.example.com", app, time.Now())
+		connection := func() (*tracked, net.Conn) {
+			left, right := net.Pipe()
+			c.mu.Lock()
+			c.active[left] = activeFlow{Target: "silent.example.com", AppID: app.ID, Route: policy.Direct}
+			c.mu.Unlock()
+			conn := &tracked{Conn: left, c: c}
+			t.Cleanup(func() { conn.Close(); right.Close() })
+			go io.Copy(io.Discard, right)
+			return conn, right
+		}
+		idle, _ := connection()
+		time.Sleep(firstResponseTimeout + time.Second)
+		if len(c.observed["silent.example.com"].Failures) != 0 {
+			t.Fatal("an idle connection counted as an unavailable address")
+		}
+		idle.Close()
+		first, _ := connection()
+		first.Write([]byte("request one"))
+		time.Sleep(firstResponseTimeout + time.Second)
+		if len(pendingRequests(c)) != 0 {
+			t.Fatal("one silent request produced a suggestion")
+		}
+		second, remote := connection()
+		second.Write([]byte("request two"))
+		time.Sleep(firstResponseTimeout + time.Second)
+		if len(pendingRequests(c)) != 1 {
+			t.Fatal("repeated silent requests were not suggested")
+		}
+		// The timeout observes only; the same connection can still receive data.
+		go remote.Write([]byte("late reply"))
+		if _, err := io.ReadFull(second, make([]byte, len("late reply"))); err != nil {
+			t.Fatal(err)
+		}
+		if len(pendingRequests(c)) != 0 {
+			t.Fatal("late response did not clear the suggestion")
+		}
+	})
+}
+
+func TestSuccessfulAndCancelledRequestsDoNotBecomeTimeoutFailures(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := testTrafficClient(t)
+		for _, cancel := range []bool{false, true} {
+			observe(t, c, "working.example.com", model.ApplicationInfo{}, time.Now())
+			left, right := net.Pipe()
+			c.mu.Lock()
+			c.active[left] = activeFlow{Target: "working.example.com", Route: policy.Direct}
+			c.mu.Unlock()
+			conn := &tracked{Conn: left, c: c}
+			go io.Copy(io.Discard, right)
+			conn.Write([]byte("request"))
+			if !cancel {
+				go right.Write([]byte("response"))
+				io.ReadFull(conn, make([]byte, len("response")))
+			}
+			conn.Close()
+			right.Close()
+			time.Sleep(firstResponseTimeout + time.Second)
+			if len(c.observed["working.example.com"].Failures) != 0 {
+				t.Fatal("successful or cancelled request counted as a failure")
+			}
+		}
+	})
 }

@@ -372,6 +372,9 @@ func groupRequests(requests []model.Request) []model.RequestGroup {
 func (c *Client) directFailure(target, appID string, now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.directFailureLocked(target, appID, now)
+}
+func (c *Client) directFailureLocked(target, appID string, now time.Time) {
 	if c.closed || c.routeLocked(target, appID) != policy.Direct || c.isDismissedLocked(target) {
 		return
 	}
