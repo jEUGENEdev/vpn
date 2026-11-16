@@ -98,6 +98,7 @@ function maybePromptApplication() {
   $('application-title').textContent = 'Использовать «' + app.name + '» через VPN?';
   $('application-description').textContent = 'Вы ещё не выбирали VPN для этого приложения. Его запрос к ' + app.target + ' несколько раз не прошёл напрямую.';
   $('application-identity').textContent = app.path;
+  $('application-prompt').returnValue = '';
   $('application-prompt').showModal();
 }
 function renderStableRules() {

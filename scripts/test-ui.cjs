@@ -107,7 +107,16 @@ async function testTraffic(page) {
   await page.evaluate(() => update());
   await page.locator('[data-view="requests"]').click();
   if(!await page.getByText('Прямые подключения работают.',{exact:false}).isVisible())throw Error('recovered direct traffic did not clear proposals');
-  const recoveredApp = {...application,id:'c'.repeat(64),name:'Recovered app',decision:'pending'};
+  const cancelledApp = {...application,id:'c'.repeat(64),name:'Cancelled app',decision:'pending'};
+  state.applications.push(cancelledApp);state.pending_applications=[cancelledApp];
+  await page.evaluate(() => { nextApplicationPrompt=0; return update(); });
+  await page.locator('#application-prompt').waitFor({state:'visible'});
+  if(await page.locator('#application-prompt').evaluate(el => el.returnValue !== ''))throw Error('new prompt inherited the previous decision');
+  await page.keyboard.press('Escape');
+  await page.locator('#application-prompt').waitFor({state:'hidden'});
+  await page.evaluate(() => update());
+  if(cancelledApp.decision!=='pending')throw Error('Escape granted application consent');
+  const recoveredApp = {...application,id:'d'.repeat(64),name:'Recovered app',decision:'pending'};
   state.applications.push(recoveredApp);state.pending_applications=[recoveredApp];
   await page.evaluate(() => { nextApplicationPrompt=0; return update(); });
   await page.locator('#application-prompt').waitFor({state:'visible'});
