@@ -1,0 +1,112 @@
+name: Deploy VPN server
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy.yml'
+      - 'deploy/**'
+      - 'scripts/*deploy*.py'
+      - 'scripts/build-server.sh'
+      - 'cmd/linevpn-server/**'
+      - 'cmd/linevpn-keygen/**'
+      - 'internal/server/**'
+      - 'internal/store/**'
+      - 'internal/model/**'
+      - 'internal/policy/**'
+      - 'internal/secure/**'
+      - 'internal/transport/**'
+      - 'internal/ui/**'
+      - 'go.mod'
+      - 'go.sum'
+  pull_request:
+    paths:
+      - '.github/workflows/deploy.yml'
+      - 'deploy/**'
+      - 'scripts/*deploy*.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linevpn-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate deployment
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: python -m pip install -r deploy/requirements.txt
+      - run: ansible-galaxy collection install -r deploy/ansible/requirements.yml
+      - run: python scripts/test-deploy-actions.py
+      - name: Check Ansible playbook
+        working-directory: deploy/ansible
+        run: ansible-playbook -i inventory.example.ini deploy.yml --syntax-check
+
+  deploy:
+    name: Deploy from main
+    needs: validate
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - name: Check required repository secrets
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USERNAME: ${{ secrets.VPS_USERNAME }}
+          VPS_PASSWORD: ${{ secrets.VPS_PASSWORD }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPN_ADMIN_PASSWORD: ${{ secrets.VPN_ADMIN_PASSWORD }}
+        run: python3 scripts/deploy-actions.py
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.27.4', cache: true}
+      - name: Test server and transport
+        run: go test -race ./internal/policy ./internal/secure ./internal/server ./internal/transport
+      - name: Build server on the runner
+        run: scripts/build-server.sh
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Install deployment tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends sshpass
+          python -m pip install -r deploy/requirements.txt
+          ansible-galaxy collection install -r deploy/ansible/requirements.yml
+      - name: Deploy and verify public listeners
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USERNAME: ${{ secrets.VPS_USERNAME }}
+          VPS_PASSWORD: ${{ secrets.VPS_PASSWORD }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+          VPN_ADMIN_PASSWORD: ${{ secrets.VPN_ADMIN_PASSWORD }}
+          ANSIBLE_SSH_PASSWORD_MECHANISM: sshpass
+        run: |
+          install -d -m 700 "$RUNNER_TEMP/linevpn-ssh"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/linevpn-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/linevpn-ssh/known_hosts"
+          cd deploy/ansible
+          ansible-playbook -i inventory.github.yml deploy.yml
+          cd ../..
+          python scripts/deploy-actions.py --certificate deploy/ansible/generated/vpn1-api-cert.pem
+      - name: Save client bootstrap and public certificate
+        uses: actions/upload-artifact@v4
+        with:
+          name: vpn-client-bootstrap
+          path: |
+            deploy/ansible/generated/*-bootstrap.txt
+            deploy/ansible/generated/*-api-cert.pem
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove SSH session files
+        if: always()
+        run: rm -rf -- "$RUNNER_TEMP/linevpn-ssh"

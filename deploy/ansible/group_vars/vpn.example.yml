@@ -1,8 +1,9 @@
-# Copy to vpn.yml; use ansible-vault for vault_admin_password.
+# Optional overrides. Without vault_admin_password, a password is generated once.
 vpn_public_ip: "{{ ansible_host }}"
 vpn_ssh_port: "{{ ansible_port | default(22) }}"
 vpn_reality_target: www.microsoft.com
-vpn_admin_password: "{{ vault_admin_password }}"
+vpn_admin_password: "{{ vault_admin_password | default('') }}"
 # Build these on the controller with scripts/build-server.sh.
 vpn_server_binary: "{{ playbook_dir }}/../../build/linevpn-server-linux-amd64"
 vpn_keygen_binary: "{{ playbook_dir }}/../../build/linevpn-keygen-linux-amd64"
+

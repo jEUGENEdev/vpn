@@ -1,5 +1,5 @@
 ---
-- name: Deploy LineVPN (Debian 12/13 or Ubuntu 24.04)
+- name: Deploy LineVPN (Debian 12/13 or Ubuntu 24.04/26.04)
   hosts: vpn
   become: true
   gather_facts: true
@@ -9,10 +9,12 @@
         that:
           - ansible_facts.os_family == 'Debian'
           - ansible_facts.architecture == 'x86_64'
-          - vpn_admin_password | length >= 16
-          - vpn_admin_password | length <= 72
+          - >-
+            (ansible_facts.distribution == 'Debian' and ansible_facts.distribution_major_version in ['12', '13'])
+            or (ansible_facts.distribution == 'Ubuntu' and ansible_facts.distribution_version in ['24.04', '26.04'])
+          - vpn_admin_password | length == 0 or (vpn_admin_password | length >= 16 and vpn_admin_password | length <= 72)
           - vpn_public_ip | length > 0
-        fail_msg: Configure the public IP, Linux amd64 binaries and an admin password in Ansible Vault.
+        fail_msg: Use a supported Linux amd64 host, a public IP and an optional 16-72 byte admin password.
       no_log: true
     - name: Install system packages
       ansible.builtin.apt:
@@ -68,13 +70,14 @@
         owner: linevpn
         group: linevpn
         recurse: true
-    - name: Install admin password from vault
+    - name: Install configured admin password or generate it once
       ansible.builtin.copy:
-        content: "{{ vpn_admin_password }}"
+        content: "{{ vpn_admin_password or lookup('ansible.builtin.password', '/dev/null', length=48, chars=['ascii_letters', 'digits']) }}"
         dest: /etc/linevpn/admin-password
         owner: linevpn
         group: linevpn
         mode: '0600'
+        force: "{{ vpn_admin_password | length > 0 }}"
       no_log: true
       notify: Restart LineVPN
     - name: Validate server configuration
@@ -133,3 +136,4 @@
         name: linevpn.service
         state: restarted
         daemon_reload: true
+
