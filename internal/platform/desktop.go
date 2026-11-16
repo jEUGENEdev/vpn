@@ -90,11 +90,11 @@ func Start(ctx context.Context, dir string) (*Desktop, error) {
 	return d, nil
 }
 func (d *Desktop) Close() {
-	if d.Tunnel != nil {
-		d.Tunnel.Close()
-	}
 	if d.Client != nil {
 		d.Client.Close()
+	}
+	if d.Tunnel != nil {
+		d.Tunnel.Close()
 	}
 	if d.monitor != nil {
 		d.monitor.Close()

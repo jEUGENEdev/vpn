@@ -77,8 +77,8 @@ func Start(fd int64, dir string, p Protector) (string, error) {
 	}
 	ln, e := net.Listen("tcp", "127.0.0.1:0")
 	if e != nil {
-		t.Close()
 		c.Close()
+		t.Close()
 		cancel()
 		return "", e
 	}
@@ -114,8 +114,8 @@ func Stop() {
 	}
 	current.cancel()
 	current.h.Close()
-	current.t.Close()
 	current.c.Close()
+	current.t.Close()
 	current = nil
 }
 

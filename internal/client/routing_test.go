@@ -140,3 +140,21 @@ func TestApprovalClosesExistingDirectFlow(t *testing.T) {
 		t.Fatal("existing flow survived approval")
 	}
 }
+
+func TestStoppedClientCannotOpenDirectConnections(t *testing.T) {
+	c, err := New(t.TempDir(), &transport.Dialer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	c.Close()
+	c.Close()
+	if conn, err := c.Dial(context.Background(), "tcp", "127.0.0.1", uint16(listener.Addr().(*net.TCPAddr).Port)); err == nil {
+		conn.Close()
+		t.Fatal("stopped client opened a direct connection")
+	}
+}

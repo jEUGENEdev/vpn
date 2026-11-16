@@ -28,9 +28,13 @@ func (h handler) Execute(args []string, requests <-chan svc.ChangeRequest, chang
 		case r := <-requests:
 			switch r.Cmd {
 			case svc.Stop, svc.Shutdown:
-				changes <- svc.Status{State: svc.StopPending}
+				changes <- svc.Status{State: svc.StopPending, WaitHint: 10000, CheckPoint: 1}
 				cancel()
-				<-done
+				select {
+				case <-done:
+				case <-time.After(8 * time.Second):
+					// Returning ends the service process; persistent WFP stays active.
+				}
 				return false, 0
 			case svc.Interrogate:
 				changes <- r.CurrentStatus

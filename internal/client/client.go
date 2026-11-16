@@ -51,6 +51,7 @@ type Client struct {
 	tunnel    bool
 	guard     bool
 	vpnFailed bool
+	closed    bool
 }
 
 type APIError struct {
@@ -86,6 +87,12 @@ func New(dir string, dialer *transport.Dialer) (*Client, error) {
 }
 func (c *Client) Close() {
 	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return
+	}
+	c.closed = true
+	c.status = "stopped"
 	for v := range c.active {
 		delete(c.active, v)
 		v.Close()
@@ -119,7 +126,11 @@ func (c *Client) request(ctx context.Context, method, path string, in any, out a
 	c.mu.RLock()
 	h := c.http
 	cfg := c.config
+	closed := c.closed
 	c.mu.RUnlock()
+	if closed {
+		return errors.New("client stopped")
+	}
 	if h == nil {
 		return errors.New("импортируйте профиль сервера")
 	}
@@ -207,6 +218,9 @@ func (c *Client) Auth(ctx context.Context, action string, data any) (any, error)
 func (c *Client) apply(p model.Profile) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.closed {
+		return errors.New("client stopped")
+	}
 	old := c.config.Profile
 	if old.AccountID != "" && old.AccountID != p.AccountID {
 		return errors.New("смена аккаунта запрещена")
@@ -440,6 +454,10 @@ func (c *Client) target(ip netip.Addr) (string, error) {
 }
 func (c *Client) Dial(ctx context.Context, network, target string, port uint16) (net.Conn, error) {
 	c.mu.RLock()
+	if c.closed {
+		c.mu.RUnlock()
+		return nil, errors.New("client stopped")
+	}
 	route := policy.Decide(c.effectiveRules(), target, c.ready)
 	c.mu.RUnlock()
 	addr := net.JoinHostPort(target, fmt.Sprint(port))
@@ -472,7 +490,7 @@ func (c *Client) Dial(ctx context.Context, network, target string, port uint16) 
 	}
 	c.mu.Lock()
 	current := policy.Decide(c.effectiveRules(), target, c.ready)
-	if current != route {
+	if current != route || c.closed {
 		c.mu.Unlock()
 		conn.Close()
 		return nil, errors.New("policy changed during connection")

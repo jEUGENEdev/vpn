@@ -50,7 +50,12 @@ func (c *Client) StartTunnel(ctx context.Context, options tun.Options) (*Tunnel,
 	c.SetTunnel(true)
 	return &Tunnel{dev, st, c}, nil
 }
-func (t *Tunnel) Close() { t.c.SetTunnel(false); t.stack.Close(); t.device.Close() }
+func (t *Tunnel) Close() {
+	t.c.SetTunnel(false)
+	// Wake device readers before the network stack waits for them to stop.
+	t.device.Close()
+	t.stack.Close()
+}
 func (c *Client) JudgeFlow(network uint8, source, dest netip.AddrPort, first []byte) tun.FlowVerdict {
 	if network != 6 && network != 17 {
 		return tun.FlowVerdict{Action: tun.ActionReject}
