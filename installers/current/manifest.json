@@ -1,7 +1,7 @@
 {
   "version": "0.1.0-preview",
-  "source_commit": "bb1852c2e93da5f9e36be2d4d0502d1076f8e51a",
-  "built_at": "2026-11-16T11:46:32.495784+00:00",
+  "source_commit": "853cdf5af0cc416282ffb8b218698e12eacf2fae",
+  "built_at": "2026-11-16T12:08:52.118512+00:00",
   "status": "preview-native-acceptance-required",
   "signing": {
     "android": "development key; stable release signing not configured",
@@ -11,23 +11,23 @@
   "files": [
     {
       "name": "LineVPN-0.1.0-android-preview.apk",
-      "size": 85873938,
-      "sha256": "416072fa0c71cb66b6d77a66bc91a4abec363b1b28ea4cc1fd1e82afc02b3fd5"
+      "size": 85874066,
+      "sha256": "b7de51d34c8a11f595952ef9ff16f3c80530ab55dedf35106c23c5788440bdfb"
     },
     {
       "name": "LineVPN-0.1.0-macos-arm64.dmg",
-      "size": 146516634,
-      "sha256": "295bd8d54c534d0455e7ed457e8c5dbaba25f883349331f4eeabfcf4425ad25e"
+      "size": 146516665,
+      "sha256": "d93b5ae065eeb699e27cbf8c2da163d950bb06bdf9d8b32dbf6f66e6de885b63"
     },
     {
       "name": "LineVPN-0.1.0-macos-x64.dmg",
-      "size": 152752156,
-      "sha256": "1b18c7cd5a1a237e79de78d3ce8081d099bc37e22e3c5deff77d3a20a35d62b9"
+      "size": 152752026,
+      "sha256": "603c2007cac53236725cdd57ab9c9556743b8139179960dc40ac0929c5623897"
     },
     {
       "name": "LineVPN-0.1.0-windows-x64.msi",
-      "size": 138297344,
-      "sha256": "6581456c65c1eba0e4643bd160da7e7209e351cd8ac3e0d6e01aaf2baed98373"
+      "size": 138305536,
+      "sha256": "2f8fe4d1a0d1c157bffae7d600cbf61c153421bec35580ec404a2c902577b5d1"
     }
   ]
 }
