@@ -81,6 +81,42 @@ public class VpnSmokeTest {
             }
         });
     }
+    private android.graphics.Bitmap captureNativeUI(Activity activity) throws Exception {
+        awaitNativeUI(activity);
+        CountDownLatch visualReady = new CountDownLatch(1);
+        getInstrumentation().runOnMainSync(() -> {
+            WebView web = findWeb(activity.getWindow().getDecorView());
+            web.postVisualStateCallback(1, new WebView.VisualStateCallback() {
+                @Override public void onComplete(long id) {
+                    web.invalidate();
+                    visualReady.countDown();
+                }
+            });
+        });
+        assertTrue("WebView compositor did not prepare the loaded page", visualReady.await(20, TimeUnit.SECONDS));
+        long deadline = System.currentTimeMillis() + 30000;
+        while (System.currentTimeMillis() < deadline) {
+            getInstrumentation().waitForIdleSync();
+            android.graphics.Bitmap capture = getInstrumentation().getUiAutomation().takeScreenshot();
+            assertNotNull("Native UI screenshot unavailable", capture);
+            android.graphics.Bitmap frame = capture.copy(android.graphics.Bitmap.Config.ARGB_8888, false);
+            capture.recycle();
+            int colored = 0;
+            // Exclude system bars. A blank WebView cannot pass merely because its
+            // DOM loaded: the client's purple controls must reach the display.
+            for (int y = frame.getHeight()/12; y < frame.getHeight()*11/12; y += 12) {
+                for (int x = 12; x < frame.getWidth()-12; x += 12) {
+                    int pixel = frame.getPixel(x,y);
+                    int red = android.graphics.Color.red(pixel), green = android.graphics.Color.green(pixel), blue = android.graphics.Color.blue(pixel);
+                    if (Math.max(red,Math.max(green,blue))-Math.min(red,Math.min(green,blue)) > 45) colored++;
+                }
+            }
+            if (colored > 50 && activity.hasWindowFocus()) return frame;
+            frame.recycle();
+            Thread.sleep(250);
+        }
+        throw new AssertionError("Client DOM loaded but its visible WebView remained blank");
+    }
     @Test public void testNativeTunnelDNSAndFailClosedApproval() throws Exception {
         Intent intent = new Intent(getInstrumentation().getTargetContext(), MainActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -121,11 +157,8 @@ public class VpnSmokeTest {
         assertTrue(new JSONObject(Mobile.snapshot()).getJSONArray("pending_protection").toString().contains("10.0.2.2"));
         try { request("http://10.0.2.2:8765/probe",null,null); fail("Approved address escaped directly"); }
         catch (IOException expected) { }
-        // Require the real foreground WebView, not a launcher/system dialog screenshot.
-        awaitNativeUI(activity);
-        getInstrumentation().waitForIdleSync();
-        android.graphics.Bitmap preview = getInstrumentation().getUiAutomation().takeScreenshot();
-        assertNotNull("Native UI screenshot unavailable", preview);
+        // Wait for compositor output as well as DOM readiness and foreground focus.
+        android.graphics.Bitmap preview = captureNativeUI(activity);
         try (FileOutputStream out = new FileOutputStream(new File(getInstrumentation().getTargetContext().getFilesDir(), "native-preview.png"))) {
             assertTrue(preview.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out));
         } finally { preview.recycle(); }
