@@ -27,7 +27,7 @@ func Guard(name string) error {
 			return fmt.Errorf("PF config: %s: %w", b, err)
 		}
 	}
-	rules := "pass out quick on lo0 all\npass out quick proto { tcp udp } from any to any user _linevpn\npass out quick inet proto udp from any port 68 to 255.255.255.255 port 67\npass out quick inet6 proto icmp6 icmp6-type { routersol, neighbrsol, neighbradv }\n"
+	rules := "pass out quick on lo0 all flags any no state\npass out quick proto { tcp udp } from any to any user _linevpn\npass out quick inet proto udp from any port 68 to 255.255.255.255 port 67\npass out quick inet6 proto icmp6 icmp6-type { routersol, neighbrsol, neighbradv }\n"
 	if name != "" {
 		rules += "pass out quick on " + name + " all\n"
 	}

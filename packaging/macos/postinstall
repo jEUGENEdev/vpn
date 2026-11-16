@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euxo pipefail
+set -euo pipefail
 # Called by Apple's Installer as root; no credentials are stored here.
 if ! /usr/bin/id _linevpn >/dev/null 2>&1; then
   vpn_uid=399
