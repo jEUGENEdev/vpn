@@ -1,33 +1,50 @@
 {
   "version": "0.2.0-preview",
-  "source_commit": "f4e48dc62c719b62a1944c0d4a3b76cfafdc0690",
-  "built_at": "2026-11-16T18:23:20.134277+00:00",
+  "built_date": "2026-11-17",
+  "build_method": "manual-linux-cross-build",
+  "base_main_commit": "69b0ee245bb31727d881b09d73b8c0aa988f870d",
+  "android_fix_commit": "4499b313dfeb7c7e25f2757d354733c7dbb10c1a",
+  "android_fix_pr": "https://github.com/jEUGENEdev/vpn/pull/13",
   "status": "preview-native-acceptance-required",
+  "native_platform_tests": false,
   "signing": {
-    "android": "development key; stable release signing not configured",
-    "macos": "not notarized",
+    "android": "debug certificate; APK v2 verified",
+    "macos": "ad-hoc application and agent; unsigned PKG; not notarized",
     "windows": "not Authenticode signed"
   },
   "files": [
     {
-      "name": "LineVPN-0.2.0-android-preview.apk",
-      "size": 86073166,
-      "sha256": "3dc77918bcb6d5cb3d3f05e6975493d0bc20a760804386f66733c8e8ce48009b"
+      "name": "LineVPN-0.2.0-4499b31-android-preview.apk",
+      "size": 86227790,
+      "sha256": "1e2713dd4f5a80aadd8b8f64a5d93bdaa96ce99e1ce1590a8a85a7ac64c6cb85",
+      "source_commit": "4499b313dfeb7c7e25f2757d354733c7dbb10c1a",
+      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.2.0-preview.20261117/LineVPN-0.2.0-4499b31-android-preview.apk"
     },
     {
-      "name": "LineVPN-0.2.0-macos-arm64.dmg",
-      "size": 146587108,
-      "sha256": "cdd3209d62e4fc91fe17f464bd878f308406709456353456a07a743be332e9d5"
+      "name": "LineVPN-0.2.0-69b0ee2-windows-x64.msi",
+      "size": 183352832,
+      "sha256": "ba0dcaf75e902f95acd5a2ce1d35194af6e54a2359431be755489ccd7c9cddff",
+      "source_commit": "69b0ee245bb31727d881b09d73b8c0aa988f870d",
+      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.2.0-preview.20261117/LineVPN-0.2.0-69b0ee2-windows-x64.msi"
     },
     {
-      "name": "LineVPN-0.2.0-macos-x64.dmg",
-      "size": 152860026,
-      "sha256": "5b86bc1b1f2c564087036dc3ce369795f7afd4c1ae5af7a8acf89882b516d8ec"
+      "name": "LineVPN-0.2.0-69b0ee2-macos-arm64.dmg",
+      "size": 149787687,
+      "sha256": "75de92fa29605e019b71f03e521aa09407ab5b89e183c3dca83ae17f3250d3e4",
+      "source_commit": "69b0ee245bb31727d881b09d73b8c0aa988f870d",
+      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.2.0-preview.20261117/LineVPN-0.2.0-69b0ee2-macos-arm64.dmg"
     },
     {
-      "name": "LineVPN-0.2.0-windows-x64.msi",
-      "size": 138338304,
-      "sha256": "619aece277b6871e0bd6ae4b76acfd67e17c52d631c87dedeedd88655319c6cd"
+      "name": "LineVPN-0.2.0-69b0ee2-macos-x64.dmg",
+      "size": 157170186,
+      "sha256": "5d4e057d648bc1b8b623f01c1117bb30c1778cadcec1c28a209d81056a8b5ba2",
+      "source_commit": "69b0ee245bb31727d881b09d73b8c0aa988f870d",
+      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.2.0-preview.20261117/LineVPN-0.2.0-69b0ee2-macos-x64.dmg"
     }
-  ]
+  ],
+  "storage": "github-release-assets",
+  "release_tag": "v0.2.0-preview.20261117",
+  "release_url": "https://github.com/jEUGENEdev/vpn/releases/tag/v0.2.0-preview.20261117",
+  "source_commit": "4499b313dfeb7c7e25f2757d354733c7dbb10c1a",
+  "integrated_main_commit": "f72738a87c94a12a4760eaf8f392972a5f23242d"
 }
