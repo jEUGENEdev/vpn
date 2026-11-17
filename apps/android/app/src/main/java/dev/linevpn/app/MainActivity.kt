@@ -30,18 +30,23 @@ class MainActivity : Activity() {
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         systemTheme(false)
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 100)
-        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(40, 70, 40, 30) }
-        box.addView(TextView(this).apply { text = "Линия VPN"; textSize = 34f })
-        box.addView(TextView(this).apply { text = "Включите постоянный VPN и «Блокировать соединения без VPN» в системных настройках. Это сохраняет защиту при падении службы. Неодобренные адреса выходят напрямую через работающую службу."; textSize = 16f; setPadding(0, 30, 0, 30) })
-        box.addView(Button(this).apply { text = "Включить защиту"; setOnClickListener { prepareVPN() } })
-        box.addView(Button(this).apply { text = "Настройки постоянного VPN"; setOnClickListener { startActivity(Intent(Settings.ACTION_VPN_SETTINGS)) } })
-        pageContent(box)
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(32), dp(24), dp(24)) }
+        box.addView(TextView(this).apply { text = "Линия VPN"; textSize = 32f; setTextColor(0xFF172341.toInt()); isAccessibilityHeading = true })
+        box.addView(TextView(this).apply { text = "Включите постоянный VPN и «Блокировать соединения без VPN» в системных настройках. Это сохраняет защиту при падении службы. Неодобренные адреса выходят напрямую через работающую службу."; textSize = 16f; setTextColor(0xFF58657B.toInt()); setPadding(0, dp(24), 0, dp(24)) })
+        box.addView(Button(this).apply { text = "Включить защиту"; minHeight = dp(48); setOnClickListener { prepareVPN() } })
+        box.addView(Button(this).apply { text = "Настройки постоянного VPN"; minHeight = dp(48); setOnClickListener { startActivity(Intent(Settings.ACTION_VPN_SETTINGS)) } })
+        // Large system fonts and landscape must not push either action off screen.
+        pageContent(ScrollView(this).apply {
+            isFillViewport = true
+            addView(box, ScrollView.LayoutParams(ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT))
+        })
         systemTheme(false)
         handler.post(poll)
         prepareVPN()
     }
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
     private fun systemTheme(dark: Boolean) {
-        val color = if (dark) 0xFF10162A.toInt() else 0xFFF4F5F8.toInt()
+        val color = if (dark) 0xFF141D30.toInt() else 0xFFF4F5F8.toInt()
         contentRoot?.setBackgroundColor(color)
         web?.setBackgroundColor(color)
         if (Build.VERSION.SDK_INT >= 30) {

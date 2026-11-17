@@ -1,5 +1,5 @@
 'use strict';
-const {app,BrowserWindow,ipcMain,Notification,dialog,shell,Tray,Menu,nativeImage}=require('electron');
+const {app,BrowserWindow,ipcMain,Notification,dialog,shell,Tray,Menu,nativeImage,screen}=require('electron');
 const fs=require('node:fs');const path=require('node:path');
 let win,tray,quitting=false,failures=0,lastFailure=0;const noticeTimes=new Map();const seenEvents=new Set();
 const base='http://127.0.0.1:17891';
@@ -11,7 +11,8 @@ app.on('before-quit',()=>{quitting=true});
 app.on('second-instance',()=>{win?.show();win?.focus()});
 app.whenReady().then(async()=>{
  if(app.isPackaged){const marker=path.join(app.getPath('userData'),'background-enabled');if(!fs.existsSync(marker)){app.setLoginItemSettings({openAtLogin:true,openAsHidden:true,args:["--background"]});fs.mkdirSync(path.dirname(marker),{recursive:true});fs.writeFileSync(marker,'1')}}
- win=new BrowserWindow({show:!process.argv.includes("--background")&&!app.getLoginItemSettings().wasOpenedAtLogin,width:1240,height:850,minWidth:760,minHeight:620,title:'Линия VPN',backgroundColor:'#f4f5f8',webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});win.removeMenu();win.on('close',e=>{if(!quitting){e.preventDefault();win.hide()}});
+ const workArea=screen.getPrimaryDisplay().workAreaSize;
+ win=new BrowserWindow({show:!process.argv.includes("--background")&&!app.getLoginItemSettings().wasOpenedAtLogin,width:Math.min(1240,workArea.width),height:Math.min(850,workArea.height),minWidth:Math.min(640,workArea.width),minHeight:Math.min(480,workArea.height),title:'Линия VPN',backgroundColor:'#f4f5f8',webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});win.removeMenu();win.on('close',e=>{if(!quitting){e.preventDefault();win.hide()}});
  tray=new Tray(nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAtElEQVR4nO2XwQ2AIAxF28YFdRUdQ1aREfWkQRGoSNuY+I/U9D/6e0AAY2GuOPbr2sLEeUz63BZaGXNASMs81ZtKH0hDUKqgBRFFoC0E4N9+XuqNpiE+cx7RfALfAWg9/scAUjIH6N42CMdbExNrAlL5swE4zWshzXfgBygCpLLl5F9aQBaAtH6ALIB0/kUADRFA/t0upd3zMNZ8lIYAdD3QND8BaEFcPaIllIS4623+c2quDfEDQLbzghHNAAAAAElFTkSuQmCC'));tray.setToolTip('Линия VPN · уведомления работают в фоне');tray.on('click',()=>{win.show();win.focus()});tray.setContextMenu(Menu.buildFromTemplate([{label:'Открыть Линию',click:()=>{win.show();win.focus()}},{type:'separator'},{label:'Завершить интерфейс и уведомления',click:()=>{quitting=true;app.quit()}}]));
  win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',(event,url)=>{if(!url.startsWith(base+'/'))event.preventDefault()});
  ipcMain.on('network-event',(event,value)=>{if(event.senderFrame?.url.startsWith(base+'/'))notify(value)});
