@@ -35,10 +35,11 @@ class LineVpnService : VpnService() {
                 status == "network_error" -> "VPN не запущен. Используется обычная сеть; откройте приложение для повтора."
                 snapshot.optBoolean("power_transition") -> "Переключаем VPN и сетевые настройки…"
                 !snapshot.optBoolean("vpn_enabled", true) -> "VPN выключен. Трафик идёт напрямую."
-                snapshot.optBoolean("partial_fallback") -> "Часть адресов временно напрямую. Остальные разрешённые соединения — через VPN."
-                snapshot.optBoolean("direct_fallback") -> "VPN недоступен. Трафик идёт напрямую, без VPN-защиты."
+                snapshot.optBoolean("partial_outage") -> "Ошибки отдельных соединений. Повторные попытки — только через VPN."
+                snapshot.optString("status") != "ready" -> "VPN недоступен. Разрешённые соединения ждут восстановления."
+                snapshot.optBoolean("sync_pending") -> "Не удалось обновить правила. Работающие VPN-соединения сохранены."
                 isLockdownEnabled -> "В Android включена блокировка без VPN. Для доступности сети отключите её."
-                else -> "VPN работает. При сбое соединения смогут идти напрямую."
+                else -> "VPN работает. Разрешённые соединения — только через VPN."
             }
 
             getSystemService(NotificationManager::class.java).notify(1, notification(text))
@@ -58,7 +59,7 @@ class LineVpnService : VpnService() {
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (destroyed) return START_NOT_STICKY
-        val n = notification("Запускаем VPN. Приоритет — доступность сети.")
+        val n = notification("Запускаем VPN. Проверяем подключение.")
         if (Build.VERSION.SDK_INT >= 34) startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) else startForeground(1, n)
         if (starting || Mobile.status() == "running") return START_STICKY
         starting = true

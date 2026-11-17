@@ -151,7 +151,7 @@ func (c *Client) routeLocked(target, appID string) policy.Route {
 	if _, err := policy.Normalize(target); err != nil {
 		return policy.Block
 	}
-	if c.config.Disabled || !c.ready {
+	if c.config.Disabled {
 		return policy.Direct
 	}
 	route := policy.Decide(c.effectiveRules(), target, c.ready)
@@ -160,7 +160,7 @@ func (c *Client) routeLocked(target, appID string) policy.Route {
 	}
 	if app, ok := c.apps[appID]; ok && app.Decision == "trusted" {
 		if !c.ready || c.config.Profile.AppUUID == "" {
-			return policy.Direct
+			return policy.Block
 		}
 		return policy.AppVPN
 	}

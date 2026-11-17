@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-func TestApprovedFallsBackToDirectWhenOffline(t *testing.T) {
+func TestApprovedRemainsBlockedWhenOffline(t *testing.T) {
 	c, e := New(t.TempDir(), &transport.Dialer{})
 	if e != nil {
 		t.Fatal(e)
@@ -25,18 +25,15 @@ func TestApprovedFallsBackToDirectWhenOffline(t *testing.T) {
 	}
 	defer ln.Close()
 	conn, e := c.Dial(context.Background(), "tcp", "127.0.0.1", uint16(ln.Addr().(*net.TCPAddr).Port))
-	if e != nil {
-		t.Fatal("offline VPN blocked direct networking", e)
+	if e == nil {
+		conn.Close()
+		t.Fatal("offline VPN used direct networking")
 	}
-	conn.Close()
-	if c.routeLocked("api.example.com", "") != policy.Direct {
-		t.Fatal("subdomain unavailable")
+	if c.routeLocked("api.example.com", "") != policy.Block {
+		t.Fatal("subdomain escaped VPN protection")
 	}
 	if _, e = c.target(netip.MustParseAddr("198.18.4.4")); e == nil {
 		t.Fatal("unknown synthetic IP escaped")
-	}
-	if len(c.Events.List()) != 1 {
-		t.Fatal("fallback was silent")
 	}
 }
 func TestUnapprovedDirect(t *testing.T) {
@@ -60,7 +57,7 @@ func TestUnapprovedDirect(t *testing.T) {
 	}
 }
 
-func TestPendingApprovalPersistsWithoutBlockingDirect(t *testing.T) {
+func TestPendingApprovalPersistsAndBlocksDirect(t *testing.T) {
 	dir := t.TempDir()
 	c, e := New(dir, &transport.Dialer{})
 	if e != nil {
@@ -70,8 +67,8 @@ func TestPendingApprovalPersistsWithoutBlockingDirect(t *testing.T) {
 	if e == nil {
 		t.Fatal("server absent")
 	}
-	if c.routeLocked("a.example.com", "") != policy.Direct || len(c.config.Pinned) != 1 {
-		t.Fatal("pending approval blocked direct or was lost")
+	if c.routeLocked("a.example.com", "") != policy.Block || len(c.config.Pinned) != 1 {
+		t.Fatal("pending approval allowed direct or was lost")
 	}
 	c.Close()
 	c, e = New(dir, &transport.Dialer{})
@@ -79,12 +76,12 @@ func TestPendingApprovalPersistsWithoutBlockingDirect(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer c.Close()
-	if c.routeLocked("a.example.com", "") != policy.Direct || len(c.config.Pinned) != 1 {
-		t.Fatal("restart lost pending rule or direct fallback")
+	if c.routeLocked("a.example.com", "") != policy.Block || len(c.config.Pinned) != 1 {
+		t.Fatal("restart lost pending protection")
 	}
 }
 
-func TestAuthenticationExpiryPreservesRulesAndDirectAccess(t *testing.T) {
+func TestAuthenticationExpiryPreservesProtection(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
@@ -106,8 +103,8 @@ func TestAuthenticationExpiryPreservesRulesAndDirectAccess(t *testing.T) {
 	if c.status != "auth_required" {
 		t.Fatal(c.status)
 	}
-	if c.routeLocked("example.com", "") != policy.Direct {
-		t.Fatal("expired account blocked network")
+	if c.routeLocked("example.com", "") != policy.Block {
+		t.Fatal("expired account allowed protected traffic directly")
 	}
 }
 

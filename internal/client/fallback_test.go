@@ -21,12 +21,13 @@ func TestFailedPeerDoesNotBypassOtherVPNPermissions(t *testing.T) {
 	defer right.Close()
 	c.active[left] = activeFlow{Target: "media.example", AppID: app.ID, Route: policy.VPN}
 	flow := &tracked{Conn: left, c: c, source: app}
-	flow.reportResponseTimeout()
+	flow.reportVPNFailure("test read failure")
+	defer flow.Close()
 	for _, tc := range []struct {
 		target, app string
 		route       policy.Route
 	}{
-		{"media.example", app.ID, policy.Direct},
+		{"media.example", app.ID, policy.VPN},
 		{"other.example", app.ID, policy.VPN},
 		{"media.example", other.ID, policy.VPN},
 		{"cdn.example", app.ID, policy.AppVPN},
@@ -38,7 +39,7 @@ func TestFailedPeerDoesNotBypassOtherVPNPermissions(t *testing.T) {
 	}
 }
 
-func TestRecoveryIsScopedAndFallbackMemoryIsBounded(t *testing.T) {
+func TestRecoveryIsScopedAndFailureMemoryIsBounded(t *testing.T) {
 	c := testTrafficClient(t)
 	c.ready = true
 	c.config.Profile.Rules = []string{"first.example", "second.example"}
@@ -49,7 +50,7 @@ func TestRecoveryIsScopedAndFallbackMemoryIsBounded(t *testing.T) {
 	if !c.vpnFailed {
 		t.Fatal("one reply concealed another failing peer")
 	}
-	if c.routeFlowLocked(flowKey{Target: "first.example"}) != policy.VPN || c.routeFlowLocked(flowKey{Target: "second.example"}) != policy.Direct {
+	if c.routeFlowLocked(flowKey{Target: "first.example"}) != policy.VPN || c.routeFlowLocked(flowKey{Target: "second.example"}) != policy.VPN {
 		t.Fatal("recovery changed unrelated route")
 	}
 	c.recoverVPNLocked(flowKey{Target: "second.example"})
@@ -66,7 +67,7 @@ func TestRecoveryIsScopedAndFallbackMemoryIsBounded(t *testing.T) {
 		c.vpnFailures[key] = time.Now().Add(-time.Second)
 	}
 	c.recoverVPNLocked(flowKey{})
-	if len(c.vpnFailures) != 0 {
-		t.Fatal("expired fallback entries retained")
+	if len(c.vpnFailures) != 1000 || !c.vpnFailed {
+		t.Fatal("elapsed time or unrelated data falsely proved recovery")
 	}
 }
