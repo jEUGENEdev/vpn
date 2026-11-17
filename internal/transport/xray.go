@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"sort"
 	"strconv"
 	"sync"
 	"syscall"
@@ -19,6 +20,7 @@ import (
 	"github.com/xtls/xray-core/core"
 	_ "github.com/xtls/xray-core/main/distro/all"
 	"github.com/xtls/xray-core/transport/internet"
+	"google.golang.org/protobuf/proto"
 )
 
 type ServerOptions struct {
@@ -36,7 +38,13 @@ type obj = map[string]any
 func ServerConfig(s store.State, o ServerOptions, now time.Time) obj {
 	clients := []obj{}
 	rules := []obj{}
-	for _, d := range s.Devices {
+	deviceIDs := make([]string, 0, len(s.Devices))
+	for id := range s.Devices {
+		deviceIDs = append(deviceIDs, id)
+	}
+	sort.Strings(deviceIDs)
+	for _, id := range deviceIDs {
+		d := s.Devices[id]
 		a, ok := s.Accounts[d.AccountID]
 		if !ok || a.Status != "active" || d.Revoked || !now.Before(d.Expires) {
 			continue
@@ -63,7 +71,7 @@ func ServerConfig(s store.State, o ServerOptions, now time.Time) obj {
 		}
 	}
 	// Blackhole is also the default outbound. No permissive catch-all exists.
-	return obj{"log": obj{"loglevel": "none"}, "inbounds": []obj{{"listen": o.Listen, "port": o.Port, "protocol": "vless", "settings": obj{"clients": clients, "decryption": "none"}, "streamSettings": obj{"network": "xhttp", "security": "reality", "realitySettings": obj{"show": false, "dest": o.Target, "serverNames": []string{o.SNI}, "privateKey": o.PrivateKey, "shortIds": []string{o.ShortID}}, "xhttpSettings": obj{"path": o.Path, "mode": "auto"}}}}, "outbounds": []obj{{"tag": "deny", "protocol": "blackhole"}, {"tag": "allowed", "protocol": "freedom", "settings": obj{}, "streamSettings": obj{"sockopt": obj{"domainStrategy": "UseIP"}}}}, "routing": obj{"domainStrategy": "AsIs", "rules": rules}}
+	return obj{"log": obj{"loglevel": "none"}, "inbounds": []obj{{"tag": serverInboundTag, "listen": o.Listen, "port": o.Port, "protocol": "vless", "settings": obj{"clients": clients, "decryption": "none"}, "streamSettings": obj{"network": "xhttp", "security": "reality", "realitySettings": obj{"show": false, "dest": o.Target, "serverNames": []string{o.SNI}, "privateKey": o.PrivateKey, "shortIds": []string{o.ShortID}}, "xhttpSettings": obj{"path": o.Path, "mode": "auto"}}}}, "outbounds": []obj{{"tag": "deny", "protocol": "blackhole"}, {"tag": "allowed", "protocol": "freedom", "settings": obj{}, "streamSettings": obj{"sockopt": obj{"domainStrategy": "UseIP"}}}}, "routing": obj{"domainStrategy": "AsIs", "rules": rules}}
 }
 
 func ClientConfig(p model.Profile) obj {
@@ -74,27 +82,32 @@ type Runtime struct {
 	mu       sync.RWMutex
 	instance *core.Instance
 	cancel   context.CancelFunc
+	config   *core.Config
 }
 
 func (r *Runtime) Apply(config obj) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.cancel != nil {
-		r.cancel()
-		r.cancel = nil
-	}
-	if r.instance != nil {
-		r.instance.Close()
-		r.instance = nil
-	}
 	raw, e := json.Marshal(config)
 	if e != nil {
+		r.closeLocked()
 		return e
 	}
 	parsed, e := core.LoadConfig("json", bytes.NewReader(raw))
 	if e != nil {
+		r.closeLocked()
 		return e
 	}
+	if r.instance != nil {
+		if proto.Equal(r.config, parsed) {
+			return nil
+		}
+		if r.extendServer(parsed) {
+			r.config = parsed
+			return nil
+		}
+	}
+	r.closeLocked()
 	// Closing listeners alone leaves accepted XHTTP streams running. Cancel
 	// the instance's inbound contexts as well when access/policy changes.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -110,11 +123,17 @@ func (r *Runtime) Apply(config obj) error {
 	}
 	r.instance = v
 	r.cancel = cancel
+	r.config = parsed
 	return nil
 }
 func (r *Runtime) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.closeLocked()
+}
+
+func (r *Runtime) closeLocked() error {
+	r.config = nil
 	if r.cancel != nil {
 		r.cancel()
 		r.cancel = nil

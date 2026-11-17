@@ -267,7 +267,13 @@ async function testCombinedAuthentication() {
     assert.match($('hero-description').textContent,/без VPN-защиты/);
     assert.equal($('guard-warning').hidden,true,'client asked to enable lockdown');
     assert.match($('vpn-mode-note').textContent,/доступность сети/);
-    Object.assign(state,{direct_fallback:false,guard:true});
+    Object.assign(state,{status:'degraded',partial_fallback:true});
+    await w.eval('update()');
+    assert.equal($('status-label').textContent,'ЧАСТИЧНЫЙ СБОЙ VPN');
+    assert.match($('hero-description').textContent,/Остальные.*через VPN/);
+    assert.equal($('address-route-tag').textContent,'Частичный резерв');
+    assert.match(w.eval("powerRouteNote('Разрешение')"),/Часть адресов временно напрямую/);
+    Object.assign(state,{status:'ready',direct_fallback:false,partial_fallback:false,guard:true});
     await w.eval('update()');
     assert.equal($('guard-warning').hidden,false,'existing Android lockdown was hidden');
     assert.match($('guard-description').textContent,/отключите/);

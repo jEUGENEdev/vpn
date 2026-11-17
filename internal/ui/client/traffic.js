@@ -177,6 +177,7 @@ function powerRouteNote(noun) {
   if(state.power_transition)return 'Переключаем сеть · '+noun+' сохранено';
   if(state.power_error)return 'Ошибка настройки сети · '+noun+' сохранено';
   if(state.status==='system_blocked')return 'Android блокирует интернет · '+noun+' сохранено';
+  if(state.partial_fallback)return 'Часть адресов временно напрямую · '+noun+' сохранено';
   if(state.direct_fallback)return 'VPN недоступен · напрямую; '+noun.toLowerCase()+' сохранено';
   return state.vpn_enabled===false&&state.status==='disabled'?'VPN выключен · напрямую; '+noun.toLowerCase()+' сохранено':'';
 }
