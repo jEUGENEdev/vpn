@@ -27,7 +27,7 @@ class LineVpnService : VpnService() {
                 val id = e.getString("at") + ":" + e.getString("id")
                 if (seenEvents.add(id)) { NativeNotifications.show(this@LineVpnService, e.getString("kind"), e.getString("title"), e.getString("message")); if (seenEvents.size > 300) seenEvents.remove(seenEvents.first()) }
             }
-            val text = if (!isAlwaysOn || !isLockdownEnabled) "Включите постоянный VPN и блокировку без VPN в настройках." else if (status == "stopped") "Служба не запущена. Системная блокировка сохраняет защиту." else if (status == "setup" || status == "auth_required") "Войдите в аккаунт для подключения VPN." else if (status == "blocked" || status == "degraded") "Сервер недоступен. Одобренные соединения заблокированы." else "Защита включена. Одобренные адреса — только через VPN."
+            val text = if (!snapshot.optBoolean("vpn_enabled", true)) "VPN выключен. Весь трафик идёт напрямую." else if (!isAlwaysOn || !isLockdownEnabled) "Включите постоянный VPN и блокировку без VPN в настройках." else if (status == "stopped") "Служба не запущена. Системная блокировка сохраняет защиту." else if (status == "setup" || status == "auth_required") "Войдите в аккаунт для подключения VPN." else if (status == "blocked" || status == "degraded") "Сервер недоступен. Одобренные соединения заблокированы." else "Защита включена. Одобренные адреса — только через VPN."
             getSystemService(NotificationManager::class.java).notify(1, notification(text))
         } catch (_: Exception) { }
         main.postDelayed(this, 5000)
@@ -60,7 +60,7 @@ class LineVpnService : VpnService() {
                     override fun protect(fd: Long): Boolean = this@LineVpnService.protect(fd.toInt())
                     override fun resolveApplication(network: String, source: String, sourcePort: Long, destination: String, destinationPort: Long): String = applicationResolver.resolve(network, source, sourcePort, destination, destinationPort)
                 })
-                getSystemService(NotificationManager::class.java).notify(1, notification("Защита включена. Одобренные адреса — только через VPN."))
+                getSystemService(NotificationManager::class.java).notify(1, notification("Служба запущена. Проверяем выбранный режим VPN."))
             } catch (e: Exception) {
                 android.util.Log.e("LineVPN", "Native service startup failed", e)
                 Mobile.stop()

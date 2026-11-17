@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,10 +27,12 @@ import (
 )
 
 type Config struct {
-	Pinned  []string      `json:"pending_protection,omitempty"`
-	API     string        `json:"api"`
-	Pin     string        `json:"pin"`
-	Profile model.Profile `json:"profile"`
+	Disabled     bool          `json:"vpn_disabled,omitempty"`
+	BootstrapKey string        `json:"bootstrap_key,omitempty"`
+	Pinned       []string      `json:"pending_protection,omitempty"`
+	API          string        `json:"api"`
+	Pin          string        `json:"pin"`
+	Profile      model.Profile `json:"profile"`
 }
 type Client struct {
 	sent        map[string]time.Time
@@ -58,6 +61,7 @@ type Client struct {
 	tunnel      bool
 	guard       bool
 	vpnFailed   bool
+	routeEpoch  uint64
 	closed      bool
 }
 
@@ -159,6 +163,9 @@ func (c *Client) request(ctx context.Context, method, path string, in any, out a
 		return e
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if cfg.BootstrapKey != "" {
+		req.Header.Set("X-LineVPN-Profile", cfg.BootstrapKey)
+	}
 	if cfg.Profile.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+cfg.Profile.Token)
 	}
@@ -191,14 +198,27 @@ func (c *Client) SetBootstrap(uri string) error {
 	defer c.change.Unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.config.Profile.Token != "" {
-		return errors.New("устройство уже привязано; смена аккаунта требует удаления локального профиля администратором")
+	if c.closed {
+		return errors.New("client stopped")
 	}
-	c.config.API = api
-	c.config.Pin = pin
+	u, _ := url.Parse(strings.TrimSpace(uri))
+	key := u.Query().Get("access")
+	decoded, keyErr := base64.RawURLEncoding.DecodeString(key)
+	if keyErr != nil || len(key) != 43 || len(decoded) != 32 {
+		return errors.New("нужен новый профиль с ключом подключения: получите его в админке")
+	}
+	if c.config.Profile.Token != "" && (api != c.config.API || pin != c.config.Pin) {
+		return errors.New("связанное устройство может обновить профиль только того же сервера и сертификата")
+	}
+	next := c.config
+	next.API, next.Pin, next.BootstrapKey = api, pin, key
+	raw, _ := json.Marshal(next)
+	if e = secure.Save(filepath.Join(c.dir, "profile.json"), raw); e != nil {
+		return e
+	}
+	c.config = next
 	c.configureHTTP()
-	raw, _ := json.Marshal(c.config)
-	return secure.Save(filepath.Join(c.dir, "profile.json"), raw)
+	return nil
 }
 func (c *Client) Auth(ctx context.Context, action string, data any) (any, error) {
 	c.change.Lock()
@@ -267,6 +287,14 @@ func (c *Client) apply(p model.Profile) error {
 		flow.Close()
 	}
 	c.config = next
+	c.routeEpoch++
+	if next.Disabled {
+		c.vpn.Close()
+		c.appVPN.Close()
+		c.status = "disabled"
+		c.lastSync = time.Now()
+		return nil
+	}
 	if e = c.vpn.Apply(transport.ClientConfig(p)); e != nil {
 		c.status = "blocked"
 		return e
@@ -319,14 +347,17 @@ func (c *Client) Sync(ctx context.Context) error {
 			}
 		}
 		c.mu.Unlock()
-		c.Events.Outage(time.Now(), "Связь с сервером потеряна. Одобренные адреса заблокированы; прямого обхода нет.")
+		if !c.disabled() {
+			c.Events.Outage(time.Now(), "Связь с сервером потеряна. Одобренные адреса заблокированы; прямого обхода нет.")
+		}
 		return e
 	}
 	c.mu.RLock()
 	old := c.config.Profile
 	ready := c.ready
+	disabled := c.config.Disabled
 	c.mu.RUnlock()
-	if !ready || old.Revision != s.Profile.Revision || old.UUID != s.Profile.UUID || old.AppUUID != s.Profile.AppUUID {
+	if (!ready && !disabled) || old.Revision != s.Profile.Revision || old.UUID != s.Profile.UUID || old.AppUUID != s.Profile.AppUUID || old.Login != s.Profile.Login {
 		if e := c.apply(s.Profile); e != nil {
 			return e
 		}
@@ -395,7 +426,7 @@ func (c *Client) Sync(ctx context.Context) error {
 	c.mu.RLock()
 	vpnFailed := c.vpnFailed
 	c.mu.RUnlock()
-	if !vpnFailed {
+	if !vpnFailed && !disabled {
 		c.Events.Recovered(time.Now())
 	}
 	return c.ensureApplicationTunnel(ctx)
@@ -420,11 +451,44 @@ func (c *Client) State() any {
 	if c.ready && c.vpnFailed {
 		status = "degraded"
 	}
+	if c.config.Disabled {
+		status = "disabled"
+	}
 	requests := c.requestsLocked()
 	apps, pendingApps := c.applicationSnapshotLocked()
-	return map[string]any{"status": status, "tunnel": c.tunnel, "guard": c.guard, "account_id": c.config.Profile.AccountID, "device_id": c.config.Profile.DeviceID, "server": c.config.API, "rules": c.effectiveRules(), "pending_protection": c.config.Pinned, "requests": requests, "request_groups": groupRequests(requests), "applications": apps, "pending_applications": pendingApps, "app_tunnel": c.ready && c.config.Profile.AppUUID != "", "attribution_available": c.ownerLookup != nil, "devices": c.devices, "events": c.Events.List(), "last_sync": c.lastSync, "revision": c.config.Profile.Revision}
+	return map[string]any{"status": status, "vpn_enabled": !c.config.Disabled, "auth_required": c.status == "auth_required", "login": c.config.Profile.Login, "tunnel": c.tunnel, "guard": c.guard, "account_id": c.config.Profile.AccountID, "device_id": c.config.Profile.DeviceID, "server": c.config.API, "rules": c.effectiveRules(), "pending_protection": c.config.Pinned, "requests": requests, "request_groups": groupRequests(requests), "applications": apps, "pending_applications": pendingApps, "app_tunnel": c.ready && c.config.Profile.AppUUID != "", "attribution_available": c.ownerLookup != nil, "devices": c.devices, "events": c.Events.List(), "last_sync": c.lastSync, "revision": c.config.Profile.Revision}
 }
 func (c *Client) Action(ctx context.Context, path string, data any) (any, error) {
+	if path == "vpn" {
+		fields, ok := data.(map[string]any)
+		if !ok {
+			return nil, errors.New("укажите enabled")
+		}
+		enabled, ok := fields["enabled"].(bool)
+		if !ok {
+			return nil, errors.New("укажите enabled: true или false")
+		}
+		if !enabled && fields["confirm"] != true {
+			return nil, errors.New("подтвердите прямое подключение без VPN")
+		}
+		if err := c.SetVPNEnabled(enabled); err != nil {
+			return nil, err
+		}
+		// The mode has already been persisted. An offline server leaves enabled
+		// protection blocked; never roll it back to direct routing on failure.
+		if enabled {
+			_ = c.Sync(ctx)
+		}
+		return c.State(), nil
+	}
+	if path == "access-key/rotate" {
+		var out map[string]string
+		if err := c.request(ctx, "POST", "/api/access-key/rotate", data, &out); err != nil {
+			return nil, err
+		}
+		_ = c.Sync(ctx) // Our old device session is now revoked. Preserve the one-time key response.
+		return out, nil
+	}
 	if path == "applications" {
 		return c.applicationAction(ctx, data)
 	}
@@ -510,6 +574,7 @@ func (c *Client) dialApplication(ctx context.Context, network, target string, po
 	}
 	c.observeLocked(target, app, time.Now())
 	route := c.routeLocked(target, app.ID)
+	epoch := c.routeEpoch
 	c.mu.Unlock()
 	addr := net.JoinHostPort(target, fmt.Sprint(port))
 	if route == policy.Block {
@@ -540,7 +605,7 @@ func (c *Client) dialApplication(ctx context.Context, network, target string, po
 	}
 	c.mu.Lock()
 	current := c.routeLocked(target, app.ID)
-	if current != route || c.closed {
+	if current != route || c.closed || c.routeEpoch != epoch {
 		c.mu.Unlock()
 		conn.Close()
 		return nil, errors.New("policy changed during connection")

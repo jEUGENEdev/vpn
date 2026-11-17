@@ -2,11 +2,11 @@
 const fs=require('node:fs'),http=require('node:http'),path=require('node:path');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 const root=path.resolve(__dirname,'../internal/ui/client');
-const state={account_id:'test-account',device_id:'test-device',status:'ready',tunnel:true,guard:true,rules:['example.com','example.org','8.8.8.8'],requests:[{target:'api.example.net',direct_failed:true,count:4,last_seen:new Date().toISOString()}],devices:[{id:'test-device',name:'Личный ноутбук',platform:'darwin',expires:'2027-02-01',revoked:false},{id:'phone',name:'Мой телефон',platform:'android',expires:'2027-02-01',revoked:false}],revision:1,events:[]};
-const bootstrapProfile='linevpn://8.8.8.8:8443?pin='+'A'.repeat(43);let bootstrapFailure=false;
+const state={login:'eugene',vpn_enabled:true,account_id:'test-account',device_id:'test-device',status:'ready',tunnel:true,guard:true,rules:['example.com','example.org','8.8.8.8'],requests:[{target:'api.example.net',direct_failed:true,count:4,last_seen:new Date().toISOString()}],devices:[{id:'test-device',name:'Личный ноутбук',platform:'darwin',expires:'2027-02-01',revoked:false},{id:'phone',name:'Мой телефон',platform:'android',expires:'2027-02-01',revoked:false}],revision:1,events:[]};
+let bootstrapProfile='linevpn://8.8.8.8:8443?pin='+'A'.repeat(43)+'&access='+'B'.repeat(43);let bootstrapFailure=false,powerChanges=0,profileRotations=0;const issuedKey='lnv_'+'C'.repeat(43),clientCalls=[];
 const admin={accounts:[{id:'pending-user',login:'new-user',status:'pending',created:new Date().toISOString(),rules:[]}],devices:[]};
-const server=http.createServer(async(req,res)=>{if(req.url.startsWith('/api/admin/')){let raw='';for await(const b of req)raw+=b;const data=raw?JSON.parse(raw):{};res.setHeader('Content-Type','application/json');if(req.url==='/api/admin/login'){res.end(JSON.stringify({token:'admin-test'}));return}if(req.headers.authorization!=='Bearer admin-test')throw Error('admin auth missing');if(req.url==='/api/admin/bootstrap'){res.statusCode=bootstrapFailure?503:200;res.end(JSON.stringify(bootstrapFailure?{error:'Профиль временно недоступен'}:{profile:bootstrapProfile}));return}if(req.url==='/api/admin/account')admin.accounts[0].status=data.status;res.end(JSON.stringify(req.url==='/api/admin/accounts'?admin:{ok:true}));return}if(req.url.startsWith('/local/')){if(req.headers.authorization!=='Bearer ui-test')throw Error('auth missing');let data='';for await(const chunk of req)data+=chunk;if(req.url==='/local/applications'){const body=JSON.parse(data);const application=state.applications.find(a=>a.id===body.id);if(!application)throw Error('unknown app');application.decision=body.decision;state.pending_applications=state.pending_applications.filter(a=>a.id!==body.id);state.app_tunnel=state.applications.some(a=>a.decision==='trusted')}if(req.url==='/local/dismiss'){const body=JSON.parse(data);state.request_groups=(state.request_groups||[]).filter(g=>g.target!==body.target)}if(req.url==='/local/rules'){const body=JSON.parse(data);if(body.action==='approve'){state.rules.push(body.target);state.requests=[]}else state.rules=state.rules.filter(x=>x!==body.target);state.revision++}res.setHeader('Content-Type','application/json');res.end(JSON.stringify(req.url==='/local/state'?state:{ok:true}));return}const file=req.url.startsWith('/admin/')?path.join(root,'../admin',req.url==='/admin/'?'index.html':req.url.slice(7)):path.join(root,req.url==='/'?'index.html':req.url);res.setHeader('Content-Type',file.endsWith('.css')?'text/css':file.endsWith('.js')?'text/javascript':'text/html');res.end(fs.readFileSync(file))});
-(async()=>{await new Promise(r=>server.listen(0,'127.0.0.1',r));const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||undefined,headless:true,args:['--no-sandbox']});const page=await browser.newPage({viewport:{width:1440,height:1000}});const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto(`http://127.0.0.1:${server.address().port}/#token=ui-test`);await page.locator('#dashboard').waitFor({state:'visible'});await page.screenshot({path:'build/ui-desktop.png',fullPage:true});await page.getByRole('button',{name:'Разобрать запросы'}).click();await page.locator('#requests-list').getByRole('button',{name:'Разрешить VPN'}).click();await page.locator('#confirm').getByRole('button',{name:'Подтвердить'}).click();await page.waitForFunction(()=>document.getElementById('approved-count').textContent==='4');await page.locator('[data-view="rules"]').click();await page.locator('#rule-input').fill('<img src=x onerror=alert(1)>.example.com');await page.locator('#rule-form .primary').click();if(await page.locator('#confirm img').count())throw Error('HTML injection');await page.getByRole('button',{name:'Отмена',exact:true}).click();await page.locator('[data-view="overview"]').click();await page.setViewportSize({width:390,height:844});await page.screenshot({path:'build/ui-android.png',fullPage:true});if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1))throw Error('mobile overflow');await page.locator('#theme').click();await page.screenshot({path:'build/ui-dark.png',fullPage:true});await testTraffic(page);await page.setViewportSize({width:1440,height:1000});await page.goto(`http://127.0.0.1:${server.address().port}/admin/`);await page.locator('#password').fill('test-only-password');await page.getByRole('button',{name:'Войти →',exact:true}).click();await page.locator('#content').waitFor({state:'visible'});await page.screenshot({path:'build/ui-admin.png',fullPage:true});await page.getByRole('button',{name:'Одобрить ↗',exact:true}).click();await page.locator('#confirm').getByRole('button',{name:'Подтвердить'}).click();await page.waitForFunction(()=>document.getElementById('pending-count').textContent==='0');if(admin.accounts[0].status!=='active')throw Error('admin approval failed');await testAdminProfile(page);if(errors.length)throw Error(errors.join('\n'));await browser.close();server.close();console.log('UI approval, stable grouped traffic, application consent, exports and responsive layout checks passed')})().catch(e=>{console.error(e);server.close();process.exit(1)});
+const server=http.createServer(async(req,res)=>{if(req.url.startsWith('/api/admin/')){let raw='';for await(const b of req)raw+=b;const data=raw?JSON.parse(raw):{};res.setHeader('Content-Type','application/json');if(req.url==='/api/admin/login'){res.end(JSON.stringify({token:'admin-test'}));return}if(req.headers.authorization!=='Bearer admin-test')throw Error('admin auth missing');if(req.url==='/api/admin/access-key'){if(!data.confirm)throw Error('key rotation not confirmed');res.end(JSON.stringify({access_key:issuedKey,login:'new-user'}));return}if(req.url==='/api/admin/bootstrap/rotate'){if(!data.confirm)throw Error('profile rotation not confirmed');profileRotations++;bootstrapProfile='linevpn://8.8.8.8:8443?pin='+'A'.repeat(43)+'&access='+'D'.repeat(43);res.end(JSON.stringify({profile:bootstrapProfile}));return}if(req.url==='/api/admin/bootstrap'){res.statusCode=bootstrapFailure?503:200;res.end(JSON.stringify(bootstrapFailure?{error:'Профиль временно недоступен'}:{profile:bootstrapProfile}));return}if(req.url==='/api/admin/account')admin.accounts[0].status=data.status;res.end(JSON.stringify(req.url==='/api/admin/accounts'?admin:{ok:true}));return}if(req.url.startsWith('/local/')){if(req.headers.authorization!=='Bearer ui-test')throw Error('auth missing');let data='';for await(const chunk of req)data+=chunk;clientCalls.push({path:req.url,data:data?JSON.parse(data):null});if(req.url==='/local/vpn'){const body=JSON.parse(data);if(!body.enabled&&!body.confirm)throw Error('unconfirmed VPN off');powerChanges++;state.vpn_enabled=body.enabled;state.status=body.enabled?'ready':'disabled'}if(req.url==='/local/register'){const body=JSON.parse(data);if(body.password||body.access_key||!body.login)throw Error('wrong registration contract');res.setHeader('Content-Type','application/json');res.end(JSON.stringify({status:'pending',login:body.login,access_key:issuedKey}));return}if(req.url==='/local/login'){const body=JSON.parse(data);if(body.password||body.login||body.access_key!==issuedKey)throw Error('wrong key login contract');Object.assign(state,{account_id:'test-account',login:'eugene',status:'ready',auth_required:false})}if(req.url==='/local/access-key/rotate'){state.status='auth_required';state.auth_required=true;res.setHeader('Content-Type','application/json');res.end(JSON.stringify({access_key:issuedKey,login:'eugene'}));return}if(req.url==='/local/applications'){const body=JSON.parse(data);const application=state.applications.find(a=>a.id===body.id);if(!application)throw Error('unknown app');application.decision=body.decision;state.pending_applications=state.pending_applications.filter(a=>a.id!==body.id);state.app_tunnel=state.applications.some(a=>a.decision==='trusted')}if(req.url==='/local/dismiss'){const body=JSON.parse(data);state.request_groups=(state.request_groups||[]).filter(g=>g.target!==body.target)}if(req.url==='/local/rules'){const body=JSON.parse(data);if(body.action==='approve'){state.rules.push(body.target);state.requests=[]}else state.rules=state.rules.filter(x=>x!==body.target);state.revision++}res.setHeader('Content-Type','application/json');res.end(JSON.stringify(req.url==='/local/state'?state:{ok:true}));return}const file=req.url.startsWith('/admin/')?path.join(root,'../admin',req.url==='/admin/'?'index.html':req.url.slice(7)):path.join(root,req.url==='/'?'index.html':req.url);res.setHeader('Content-Type',file.endsWith('.css')?'text/css':file.endsWith('.js')?'text/javascript':'text/html');res.end(fs.readFileSync(file))});
+(async()=>{await new Promise(r=>server.listen(0,'127.0.0.1',r));const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||undefined,headless:true,args:['--no-sandbox']});const page=await browser.newPage({viewport:{width:1440,height:1000}});const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto(`http://127.0.0.1:${server.address().port}/#token=ui-test`);await page.locator('#dashboard').waitFor({state:'visible'});await page.screenshot({path:'build/ui-desktop.png',fullPage:true});await page.getByRole('button',{name:'Разобрать запросы'}).click();await page.locator('#requests-list').getByRole('button',{name:'Разрешить VPN'}).click();await page.locator('#confirm').getByRole('button',{name:'Подтвердить'}).click();await page.waitForFunction(()=>document.getElementById('approved-count').textContent==='4');await page.locator('[data-view="rules"]').click();await page.locator('#rule-input').fill('<img src=x onerror=alert(1)>.example.com');await page.locator('#rule-form .primary').click();if(await page.locator('#confirm img').count())throw Error('HTML injection');await page.getByRole('button',{name:'Отмена',exact:true}).click();await page.locator('[data-view="overview"]').click();await page.setViewportSize({width:390,height:844});await page.screenshot({path:'build/ui-android.png',fullPage:true});if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1))throw Error('mobile overflow');await page.locator('#theme').click();await page.screenshot({path:'build/ui-dark.png',fullPage:true});await testPower(page);await testTraffic(page);await page.setViewportSize({width:1440,height:1000});await page.goto(`http://127.0.0.1:${server.address().port}/admin/`);await page.locator('#password').fill('test-only-password');await page.getByRole('button',{name:'Войти →',exact:true}).click();await page.locator('#content').waitFor({state:'visible'});await page.screenshot({path:'build/ui-admin.png',fullPage:true});await page.getByRole('button',{name:'Одобрить ↗',exact:true}).click();await page.locator('#confirm').getByRole('button',{name:'Подтвердить'}).click();await page.waitForFunction(()=>document.getElementById('pending-count').textContent==='0');if(admin.accounts[0].status!=='active')throw Error('admin approval failed');await testAdminProfile(page);await testKeyAuth(page);if(errors.length)throw Error(errors.join('\n'));await browser.close();server.close();console.log('UI approval, stable grouped traffic, application consent, exports and responsive layout checks passed')})().catch(e=>{console.error(e);server.close();process.exit(1)});
 async function testAdminProfile(page) {
   await page.locator('[data-filter="profile"]').click();
   await page.waitForFunction(expected => document.getElementById('server-profile').value === expected, bootstrapProfile);
@@ -45,6 +45,7 @@ async function testAdminProfile(page) {
   bootstrapFailure = false;
   await page.locator('#profile-refresh').click();
   await page.waitForFunction(expected => document.getElementById('server-profile').value === expected, bootstrapProfile);
+  await testAdminRotation(page);
   await page.locator('#logout').click();
   await page.locator('#login-card').waitFor({state:'visible'});
   if (await page.locator('#server-profile').inputValue() || await page.locator('#profile-view').isVisible()) {
@@ -123,4 +124,72 @@ async function testTraffic(page) {
   state.pending_applications=[];
   await page.evaluate(() => update());
   await page.locator('#application-prompt').waitFor({state:'hidden'});
+}
+
+async function saveIssuedKey(page) {
+  await page.locator('#key-result').waitFor({state:'visible'});
+  if(await page.locator('#issued-key').inputValue()!==issuedKey)throw Error('one-time key missing');
+  if(await page.locator('#issued-key').getAttribute('type')!=='password')throw Error('key not masked');
+  await page.keyboard.press('Escape');
+  if(!await page.locator('#key-result').isVisible())throw Error('Escape discarded the only key');
+  await page.locator('#key-done').click();
+  if(!await page.locator('#key-result').isVisible())throw Error('key closed without save acknowledgement');
+  await page.locator('#key-reveal').click();
+  if(await page.locator('#issued-key').getAttribute('type')!=='text')throw Error('reveal did not work');
+  await page.locator('#key-copy').click();
+  await page.locator('#key-saved').check();await page.locator('#key-done').click();
+  await page.locator('#key-result').waitFor({state:'hidden'});
+  if(await page.locator('#issued-key').inputValue())throw Error('key retained in DOM');
+  if(await page.evaluate(key => JSON.stringify(localStorage).includes(key)||JSON.stringify(sessionStorage).includes(key),issuedKey))throw Error('account key persisted in browser storage');
+}
+async function testPower(page) {
+  if(await page.locator('#account-chip').textContent()!=='eugene')throw Error('account name not visible');
+  const count=powerChanges;
+  await page.locator('#vpn-toggle').click();await page.locator('#confirm').getByRole('button',{name:'Отмена',exact:true}).click();
+  if(powerChanges!==count)throw Error('cancel switched off VPN');
+  await page.locator('#vpn-toggle').click();await page.locator('#confirm').getByRole('button',{name:'Подтвердить',exact:true}).click();
+  await page.waitForFunction(()=>document.getElementById('vpn-toggle').textContent==='Включить VPN');
+  if(state.vpn_enabled!==false||!await page.locator('#vpn-mode-note').isVisible())throw Error('off state not reflected');
+  await page.screenshot({path:'build/ui-vpn-off-mobile.png',fullPage:true});
+  await page.reload();await page.waitForFunction(()=>document.getElementById('vpn-toggle').textContent==='Включить VPN');
+  await page.locator('#vpn-toggle').click();await page.waitForFunction(()=>document.getElementById('vpn-toggle').textContent==='Выключить VPN');
+  if(state.vpn_enabled!==true||powerChanges!==count+2)throw Error('on/off commands not applied once');
+}
+async function testAdminRotation(page) {
+  const before=bootstrapProfile;
+  await page.locator('#profile-rotate').click();await page.locator('#confirm').getByRole('button',{name:'Отмена',exact:true}).click();
+  if(profileRotations)throw Error('cancel rotated the profile');
+  await page.locator('#profile-revoke-devices').check();
+  await page.locator('#profile-rotate').click();
+  if(!(await page.locator('#confirm-description').textContent()).includes('Все подключённые устройства'))throw Error('revocation consequence missing');
+  await page.locator('#confirm').getByRole('button',{name:'Подтвердить',exact:true}).click();
+  await page.waitForFunction(old=>document.getElementById('server-profile').value!==old&&document.getElementById('server-profile').value.startsWith('linevpn://'),before);
+  if(profileRotations!==1)throw Error('rotation submitted twice');
+  await page.locator('[data-filter="all"]').click();
+  await page.getByRole('button',{name:'Выдать новый ключ',exact:true}).click();
+  await page.locator('#confirm').getByRole('button',{name:'Подтвердить',exact:true}).click();
+  await saveIssuedKey(page);
+}
+async function testKeyAuth(page) {
+  state.account_id='';state.status='setup';state.auth_required=false;
+  await page.goto(`http://127.0.0.1:${server.address().port}/#token=ui-test`);
+  await page.locator('#setup').waitFor({state:'visible'});
+  if(await page.locator('#password').count())throw Error('client still asks for password');
+  await page.locator('#bootstrap').fill(bootstrapProfile);await page.locator('#import-profile').click();
+  await page.waitForFunction(()=>document.getElementById('bootstrap').value==='');
+  await page.locator('#tab-register').click();await page.locator('#login').fill('eugene');
+  await page.locator('#auth-submit').click();await saveIssuedKey(page);
+  await page.screenshot({path:'build/ui-key-login-mobile.png',fullPage:true});
+  await page.locator('#access-key').fill(issuedKey);await page.locator('#auth-submit').click();
+  await page.locator('#dashboard').waitFor({state:'visible'});
+  if(await page.locator('#access-key').inputValue())throw Error('login key retained after submission');
+  await page.locator('[data-view="devices"]').click();
+  await page.locator('#rotate-access-key').click();await page.locator('#confirm').getByRole('button',{name:'Подтвердить',exact:true}).click();
+  await saveIssuedKey(page);await page.locator('#setup').waitFor({state:'visible'});
+  if(!await page.locator('#tab-register').isDisabled())throw Error('revoked account allowed accidental replacement');
+  await page.locator('#bootstrap').fill(bootstrapProfile);await page.locator('#import-profile').click();
+  await page.waitForFunction(()=>document.getElementById('bootstrap').value==='');
+  await page.locator('#access-key').fill(issuedKey);await page.locator('#auth-submit').click();
+  await page.locator('#dashboard').waitFor({state:'visible'});
+  if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1))throw Error('key auth mobile overflow');
 }

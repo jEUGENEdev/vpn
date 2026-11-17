@@ -55,7 +55,7 @@
       register: vpn_bootstrap
       no_log: true
       notify: Restart LineVPN
-    - name: Save public bootstrap profile
+    - name: Save public API identity without enrollment key
       ansible.builtin.copy:
         content: "{{ vpn_bootstrap.stdout | trim }}\n"
         dest: /etc/linevpn/bootstrap.txt
@@ -120,7 +120,7 @@
         port: 8443
         host: 127.0.0.1
         timeout: 30
-    - name: Fetch public bootstrap profile over SSH
+    - name: Fetch public API identity over SSH (full profile is issued by admin)
       ansible.builtin.fetch:
         src: /etc/linevpn/bootstrap.txt
         dest: "{{ playbook_dir }}/generated/{{ inventory_hostname }}-bootstrap.txt"

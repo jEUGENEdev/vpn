@@ -13,7 +13,8 @@ import (
 // Persisted representations keep secret fields out of the public JSON models.
 type Account struct {
 	model.Account
-	Hash string `json:"password_hash"`
+	Hash    string `json:"password_hash,omitempty"` // Legacy only; password authentication is disabled.
+	KeyHash string `json:"access_key_hash,omitempty"`
 }
 type Device struct {
 	model.Device
@@ -26,14 +27,15 @@ type Pair struct {
 	Expires   time.Time
 }
 type State struct {
-	Accounts map[string]Account
-	Devices  map[string]Device
-	Requests map[string]model.Request
-	Pairs    map[string]Pair
+	BootstrapKey string `json:"bootstrap_key"`
+	Accounts     map[string]Account
+	Devices      map[string]Device
+	Requests     map[string]model.Request
+	Pairs        map[string]Pair
 }
 
 func Empty() State {
-	return State{map[string]Account{}, map[string]Device{}, map[string]model.Request{}, map[string]Pair{}}
+	return State{Accounts: map[string]Account{}, Devices: map[string]Device{}, Requests: map[string]model.Request{}, Pairs: map[string]Pair{}}
 }
 
 type Store struct{ DB *bbolt.DB }

@@ -146,6 +146,9 @@ func (c *Client) observeLocked(target string, app model.ApplicationInfo, now tim
 // Address rules always win. Trust extends routing only for an OS-identified
 // application, and requires a separate device credential acknowledged by API.
 func (c *Client) routeLocked(target, appID string) policy.Route {
+	if c.config.Disabled {
+		return policy.Direct
+	}
 	route := policy.Decide(c.effectiveRules(), target, c.ready)
 	if route != policy.Direct {
 		return route
@@ -170,11 +173,12 @@ func (c *Client) hasTrustedAppsLocked() bool {
 // Caller holds c.change, but not c.mu.
 func (c *Client) ensureApplicationTunnel(ctx context.Context) error {
 	c.mu.RLock()
+	disabled := c.config.Disabled
 	enabled := c.hasTrustedAppsLocked()
 	configured := c.config.Profile.AppUUID != ""
 	logged := c.config.Profile.Token != ""
 	c.mu.RUnlock()
-	if enabled == configured || !logged {
+	if disabled || enabled == configured || !logged {
 		return nil
 	}
 	var profile model.Profile
@@ -378,7 +382,7 @@ func (c *Client) directFailure(target, appID string, now time.Time) {
 	c.directFailureLocked(target, appID, now)
 }
 func (c *Client) directFailureLocked(target, appID string, now time.Time) {
-	if c.closed || c.routeLocked(target, appID) != policy.Direct || c.isDismissedLocked(target) {
+	if c.closed || c.config.Disabled || c.routeLocked(target, appID) != policy.Direct || c.isDismissedLocked(target) {
 		return
 	}
 	o := c.observed[target]

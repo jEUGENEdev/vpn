@@ -35,6 +35,7 @@ type Request struct {
 	Unknown       bool                 `json:"unknown_source,omitempty"`
 }
 type Profile struct {
+	Login     string   `json:"login"`
 	DeviceID  string   `json:"device_id"`
 	AccountID string   `json:"account_id"`
 	Token     string   `json:"token,omitempty"`

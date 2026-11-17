@@ -63,7 +63,7 @@ function renderTraffic() {
 async function decideApplication(app, decision) {
   if (decision === 'trusted' && !await confirmChange('Доверить VPN приложению «' + app.name + '»?', 'Весь трафик этого приложения пойдёт через VPN. При сбое VPN он будет заблокирован. Правила адресов для остальных приложений не изменятся.\n' + app.path)) return;
   const result = await act('applications', {id:app.id, decision});
-  toast(result.message || (decision === 'trusted' ? 'Приложение использует VPN' : 'Для приложения действуют правила адресов'));
+  toast(result.message || (state.vpn_enabled === false ? 'Решение сохранено. Оно начнёт действовать после включения VPN.' : decision === 'trusted' ? 'Приложение использует VPN' : 'Для приложения действуют правила адресов'));
 }
 function renderApplications() {
   const apps = state.applications || [];
@@ -77,7 +77,7 @@ function renderApplications() {
     },
     (card, app) => {
       setText(card.querySelector('.row-copy strong'), app.name);
-      setText(card.querySelector('.row-copy p'), app.decision === 'trusted' ? (state.app_tunnel ? 'Доверенное · весь трафик через VPN' : 'Доверенное · ждём сервер, прямого обхода нет') : app.decision === 'addresses' ? 'VPN только для разрешённых адресов' : 'Вы ещё не выбирали маршрут для приложения');
+      setText(card.querySelector('.row-copy p'), state.vpn_enabled === false ? 'VPN выключен · напрямую; решение сохранено' : app.decision === 'trusted' ? (state.app_tunnel ? 'Доверенное · весь трафик через VPN' : 'Доверенное · ждём сервер, прямого обхода нет') : app.decision === 'addresses' ? 'VPN только для разрешённых адресов' : 'Вы ещё не выбирали маршрут для приложения');
       setText(card.querySelector('.application-target'), 'Последний адрес: ' + app.target);
       card.querySelector('.primary').disabled = app.decision === 'trusted';
       card.querySelector('.secondary').disabled = app.decision === 'addresses';
@@ -90,7 +90,7 @@ function maybePromptApplication() {
 		$('application-prompt').close('later');
 		return;
 	}
-  if (!state.account_id || state.status === 'auth_required' || document.hidden || Date.now() < nextApplicationPrompt || document.querySelector('dialog[open]')) return;
+  if (state.vpn_enabled === false || !state.account_id || state.status === 'auth_required' || document.hidden || Date.now() < nextApplicationPrompt || document.querySelector('dialog[open]')) return;
   const app = (state.pending_applications || []).find(a => !promptedApplications.has(a.id));
   if (!app) return;
   promptedApplication = app;
@@ -105,7 +105,7 @@ function renderStableRules() {
   const pending = state.pending_protection || [];
   reconcileRows($('rules-list'), state.rules || [], target => target, ruleRows,
     target => row(target, '', [button('Повторить', 'primary', () => approve(target)), button('Удалить', 'secondary danger', async () => { if (await confirmChange('Убрать ' + target + '?', 'Адрес и не покрытые другими правилами поддомены смогут подключаться напрямую. Доверенные приложения продолжат использовать VPN.')) await act('rules', {target, action:'remove', revision:state.revision}); })]),
-    (node, target) => { setText(node.querySelector('.row-copy p'), pending.includes(target) ? 'Локальная защита включена · сервер ещё не подтвердил' : 'Только VPN · включая поддомены'); node.querySelector('.primary').hidden = !pending.includes(target); });
+    (node, target) => { setText(node.querySelector('.row-copy p'), state.vpn_enabled === false ? 'VPN выключен · напрямую; правило сохранено' : pending.includes(target) ? 'Локальная защита включена · сервер ещё не подтвердил' : 'Только VPN · включая поддомены'); node.querySelector('.primary').hidden = !pending.includes(target); });
   empty($('rules-list'), 'Адреса ещё не разрешены. Доверенные приложения могут использовать VPN отдельно.');
 }
 function renderStableDevices() {
