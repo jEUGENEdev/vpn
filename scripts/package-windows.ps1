@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
+$vpnVersion = (Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json).version
 New-Item -ItemType Directory -Force apps/desktop/assets | Out-Null
 Copy-Item packaging/windows/recover-network.ps1 apps/desktop/assets/recover-network.ps1
 python scripts/collect-licenses.py apps/desktop/assets/THIRD_PARTY_NOTICES.txt
@@ -17,5 +18,5 @@ python packaging/windows/package.py apps/desktop/dist/win-unpacked build/LineVPN
 if ($LASTEXITCODE -ne 0) { throw 'MSI source generation failed' }
 dotnet tool install --global wix --version 5.0.2
 if ($LASTEXITCODE -ne 0) { throw 'WiX installation failed' }
-wix build build/LineVPN.wxs -arch x64 -o build/LineVPN-0.2.0-windows-x64.msi
+wix build build/LineVPN.wxs -arch x64 -o "build/LineVPN-$vpnVersion-windows-x64.msi"
 if ($LASTEXITCODE -ne 0) { throw 'MSI build failed' }

@@ -2,7 +2,8 @@
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Use an isolated CI runner for this network test' }
 Set-Location (Join-Path $PSScriptRoot '..')
-$msi = (Resolve-Path build/LineVPN-0.2.0-windows-x64.msi).Path
+$vpnVersion = (Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json).version
+$msi = (Resolve-Path "build/LineVPN-$vpnVersion-windows-x64.msi").Path
 $agent = Join-Path $env:ProgramFiles 'LineVPN/resources/agent/linevpn-agent.exe'
 $log = Join-Path (Get-Location) 'build/windows-install.log'
 $nativeOK = $false
@@ -45,6 +46,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Offline approved address lost direct connectivity' }
     python scripts/test-desktop-power.py
     if ($LASTEXITCODE -ne 0) { throw 'Native power cycle regression failed' }
+    python scripts/test-desktop-update.py $msi
+    if ($LASTEXITCODE -ne 0) { throw 'Native MSI update regression failed' }
     Write-Output 'Checking abrupt process termination and direct connectivity'
     Set-Service LineVPN -StartupType Disabled
     $vpnProcess = (Get-CimInstance Win32_Service -Filter "Name='LineVPN'").ProcessId

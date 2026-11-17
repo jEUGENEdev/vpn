@@ -17,6 +17,16 @@ codesign --verify --deep --strict --verbose=2 "$vpn_mount/LineVPN.app"
 lipo "$vpn_mount/LineVPN.app/Contents/MacOS/LineVPN" -verify_arch "$vpn_macho_arch"
 rm -rf build/macos-expanded build/macos-smoke
 pkgutil --expand-full "$vpn_mount/Install-LineVPN-Service.pkg" build/macos-expanded
+cmp packaging/macos/preinstall build/macos-expanded/Scripts/preinstall
+cmp packaging/macos/postinstall build/macos-expanded/Scripts/postinstall
+python3 - "$vpn_mount" <<'PY'
+import json, pathlib, plistlib, sys, xml.etree.ElementTree as ET
+version = json.loads(pathlib.Path('apps/desktop/package.json').read_text())['version']
+package = ET.parse('build/macos-expanded/PackageInfo').getroot()
+assert package.get('identifier') == 'dev.linevpn.service' and package.get('version') == version
+app = plistlib.loads((pathlib.Path(sys.argv[1]) / 'LineVPN.app/Contents/Info.plist').read_bytes())
+assert app['CFBundleIdentifier'] == 'dev.linevpn.desktop' and app['CFBundleShortVersionString'] == version
+PY
 vpn_agent="build/macos-expanded/Payload/Library/Application Support/LineVPN/linevpn-agent"
 codesign --verify --strict "$vpn_agent"
 lipo "$vpn_agent" -verify_arch "$vpn_macho_arch"

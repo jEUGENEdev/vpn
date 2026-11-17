@@ -1,6 +1,10 @@
 {
   "name": "linevpn-desktop",
-  "version": "0.2.0",
+  "version": "0.2.1",
+  "linevpn": {
+    "androidVersionCode": 3,
+    "androidCertificateSha256": "b13dfe366940dc70d27e244c8bf17ed18ff3dfdad93713bdbc1b91cbfa85f0b1"
+  },
   "private": true,
   "description": "Линия — VPN с разрешениями для адресов",
   "author": "jEUGENEdev",

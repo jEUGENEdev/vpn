@@ -57,6 +57,7 @@ curl --noproxy '*' -fsS --max-time 2 -H "Authorization: Bearer $vpn_token" http:
 python3 -c 'import json; assert "1.1.1.1" in json.load(open("build/macos-state.json"))["pending_protection"]'
 curl --noproxy '*' -fsS --output /dev/null --connect-timeout 4 --max-time 8 http://1.1.1.1/cdn-cgi/trace
 python3 scripts/test-desktop-power.py
+sudo env GITHUB_ACTIONS=true python3 scripts/test-desktop-update.py build/macos-tested-service.pkg
 # Abrupt worker death must release the native interface and permit direct traffic.
 sudo /usr/bin/pkill -KILL -x linevpn-agent
 sleep 2

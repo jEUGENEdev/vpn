@@ -58,6 +58,21 @@ for ((vpn_run=1; vpn_run<=vpn_smoke_runs; vpn_run++)); do
   adb exec-out run-as dev.linevpn.app cat files/native-preview.png > build/android-native.png
 done
 
+# Reinstall over populated application data; never clear it in this scenario.
+adb shell am force-stop dev.linevpn.app
+for vpn_file in profile.json applications.json; do
+  adb exec-out run-as dev.linevpn.app cat "files/$vpn_file" > "build/android-before-$vpn_file"
+  test -s "build/android-before-$vpn_file"
+done
+for vpn_reinstall in 1 2; do
+  adb install -r apps/android/app/build/outputs/apk/debug/app-debug.apk
+  for vpn_file in profile.json applications.json; do
+    adb exec-out run-as dev.linevpn.app cat "files/$vpn_file" > "build/android-after-$vpn_file"
+    cmp "build/android-before-$vpn_file" "build/android-after-$vpn_file"
+  done
+done
+printf 'PASS: repeated APK installation preserves profile and application decisions\n' > build/android-update.txt
+
 # Package removal must leave ordinary networking without recovery commands.
 adb uninstall dev.linevpn.app
 adb shell ping -c 1 -W 5 10.0.2.2

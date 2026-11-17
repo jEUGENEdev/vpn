@@ -21,6 +21,7 @@ jobs:
       - run: go test -race -tags with_gvisor ./...
       - run: go vet -tags with_gvisor ./...
       - run: python3 scripts/test-network-packaging.py
+      - run: python3 scripts/test-installer-update.py
       - uses: actions/setup-node@v4
         with: {node-version: '24'}
       - name: Test client UI and capture layouts
@@ -63,7 +64,25 @@ jobs:
         with:
           path: ~/.cache/go-build
           key: ${{ runner.os }}-android-go1.27.4-ndk28-${{ hashFiles('go.sum') }}
+      - name: Restore the existing preview signing key for published updates
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          ANDROID_PREVIEW_KEYSTORE_BASE64: ${{ secrets.ANDROID_PREVIEW_KEYSTORE_BASE64 }}
+        run: |
+          python3 - <<'PY'
+          import base64, os, pathlib
+          encoded = os.environ.get('ANDROID_PREVIEW_KEYSTORE_BASE64')
+          if not encoded:
+              raise SystemExit('Configure ANDROID_PREVIEW_KEYSTORE_BASE64 with the EXISTING preview key. A new key cannot update installed APKs.')
+          path = pathlib.Path(os.environ['RUNNER_TEMP']) / 'linevpn-preview.keystore'
+          path.write_bytes(base64.b64decode(encoded, validate=True))
+          path.chmod(0o600)
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write(f'ANDROID_DEBUG_KEYSTORE={path}\n')
+          PY
       - run: scripts/package-android.sh
+        env:
+          LINEVPN_ANDROID_TEST_ONLY: ${{ (github.event_name == 'pull_request' || github.ref != 'refs/heads/main') && '1' || '0' }}
       - uses: actions/cache/save@v4
         if: steps.android_go_cache.outputs.cache-hit != 'true'
         with:
@@ -95,7 +114,8 @@ jobs:
       - name: Collect explicitly marked preview APK
         run: |
           mkdir -p build/installers
-          cp apps/android/app/build/outputs/apk/debug/app-debug.apk build/installers/LineVPN-0.2.0-android-preview.apk
+          vpn_version="$(python3 -c 'import json; print(json.load(open("apps/desktop/package.json"))["version"])')"
+          cp apps/android/app/build/outputs/apk/debug/app-debug.apk "build/installers/LineVPN-$vpn_version-android-preview.apk"
       - uses: actions/upload-artifact@v4
         with:
           name: installer-android
@@ -127,6 +147,7 @@ jobs:
           path: |
             build/windows-native.txt
             build/windows-install.log
+            build/windows-update.log
       - uses: actions/upload-artifact@v4
         with:
           name: installer-windows
@@ -175,7 +196,7 @@ jobs:
           if-no-files-found: error
   publish-current:
     timeout-minutes: 15
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: [android, windows, macos]
     runs-on: ubuntu-24.04
     permissions:
@@ -193,6 +214,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with: {name: android-native-check, path: build/native-preview}
       - run: cp build/native-preview/android-native.png docs/screenshots/android-native.png
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'build-tools;35.0.0'
+          log-accepted-android-sdk-licenses: false
       - name: Verify and publish complete installer set
         env:
           SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
