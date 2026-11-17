@@ -11,6 +11,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.os.SystemClock;
+import android.util.Log;
 import androidx.test.platform.app.InstrumentationRegistry;
 import org.junit.Test;
 import static org.junit.Assert.*;
@@ -22,10 +24,16 @@ import java.nio.charset.StandardCharsets;
 
 /** Uses the emulator's actual VpnService/TUN; the host echo server has no secrets. */
 public class VpnSmokeTest {
+    private static final String PROBE_URL = "http://10.0.2.2:8765/probe";
+    private static final String PROBE_BODY = "linevpn-native-ok";
     private android.app.Instrumentation getInstrumentation() { return InstrumentationRegistry.getInstrumentation(); }
     private Network vpnNetwork;
     private String request(String address, String token, String body) throws Exception {
-        HttpURLConnection conn = (HttpURLConnection) (token == null ? vpnNetwork.openConnection(new URL(address)) : new URL(address).openConnection());
+        if (token == null) assertNotNull("Data-plane requests must use the VPN network", vpnNetwork);
+        return requestOnNetwork(token == null ? vpnNetwork : null, address, token, body);
+    }
+    private String requestOnNetwork(Network network, String address, String token, String body) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) (network != null ? network.openConnection(new URL(address)) : new URL(address).openConnection());
         conn.setConnectTimeout(4000); conn.setReadTimeout(4000);
         if (token != null) conn.setRequestProperty("Authorization", "Bearer " + token);
         if (body != null) {
@@ -41,6 +49,33 @@ public class VpnSmokeTest {
                 return out.toString("UTF-8");
             }
         } finally { conn.disconnect(); }
+    }
+    private Network awaitHostBeforeVPN(ConnectivityManager connectivity) throws Exception {
+        // sys.boot_completed and an established TUN do not mean the emulator's
+        // underlying network is ready. Verify the fixture before starting VPN;
+        // never retry the routing or fail-closed assertions below.
+        assertEquals("Preflight must run before the VPN service", "stopped", Mobile.status());
+        long deadline = SystemClock.elapsedRealtime() + 30000;
+        IOException lastError = null;
+        while (SystemClock.elapsedRealtime() < deadline) {
+            for (Network network : connectivity.getAllNetworks()) {
+                NetworkCapabilities capabilities = connectivity.getNetworkCapabilities(network);
+                if (capabilities == null || capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+                        || !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) continue;
+                try {
+                    assertEquals("Host fixture returned unexpected content", PROBE_BODY,
+                            requestOnNetwork(network, PROBE_URL, null, null).trim());
+                    Log.i("LineVpnSmoke", "Host fixture reachable before VPN on network " + network);
+                    return network;
+                } catch (IOException error) {
+                    lastError = error;
+                    Log.i("LineVpnSmoke", "Waiting for emulator host connectivity on " + network, error);
+                }
+                if (SystemClock.elapsedRealtime() >= deadline) break;
+            }
+            Thread.sleep(250);
+        }
+        throw new AssertionError("Emulator cannot reach the host fixture before VPN startup", lastError);
     }
     private WebView findWeb(View view) {
         if (view instanceof WebView) return (WebView) view;
@@ -118,6 +153,8 @@ public class VpnSmokeTest {
         throw new AssertionError("Client DOM loaded but its visible WebView remained blank");
     }
     @Test public void testNativeTunnelDNSAndFailClosedApproval() throws Exception {
+        ConnectivityManager connectivity = getInstrumentation().getTargetContext().getSystemService(ConnectivityManager.class);
+        Network underlyingNetwork = awaitHostBeforeVPN(connectivity);
         Intent intent = new Intent(getInstrumentation().getTargetContext(), MainActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         Activity activity = getInstrumentation().startActivitySync(intent);
@@ -125,7 +162,6 @@ public class VpnSmokeTest {
         while (!"running".equals(Mobile.status()) && System.currentTimeMillis() < deadline) Thread.sleep(200);
         assertEquals("Native VPN service did not start", "running", Mobile.status());
         assertTrue(new JSONObject(Mobile.snapshot()).getBoolean("tunnel"));
-        ConnectivityManager connectivity = getInstrumentation().getTargetContext().getSystemService(ConnectivityManager.class);
         deadline = System.currentTimeMillis() + 10000;
         while (vpnNetwork == null && System.currentTimeMillis() < deadline) {
             for (Network network : connectivity.getAllNetworks()) {
@@ -135,6 +171,10 @@ public class VpnSmokeTest {
             if (vpnNetwork == null) Thread.sleep(100);
         }
         assertNotNull("VPN network missing",vpnNetwork);
+        // Finish the cold WebView/Activity startup before timing packet probes.
+        // UI readiness is a required assertion, not a fixed boot delay.
+        awaitNativeUI(activity);
+        Log.i("LineVpnSmoke", "VPN and client UI ready; starting strict data-plane assertions");
 
         byte[] query = new byte[]{0x12,0x34,1,0,0,1,0,0,0,0,0,0,7,'e','x','a','m','p','l','e',3,'c','o','m',0,0,1,0,1};
         try (DatagramSocket socket = new DatagramSocket()) {
@@ -146,7 +186,7 @@ public class VpnSmokeTest {
             assertEquals("Fake IPv4 prefix",198,b[response.getLength()-4]&255);
             assertEquals("Fake IPv4 prefix",18,b[response.getLength()-3]&255);
         }
-        assertEquals("linevpn-native-ok",request("http://10.0.2.2:8765/probe",null,null).trim());
+        assertEquals(PROBE_BODY,request(PROBE_URL,null,null).trim());
         String local = Mobile.url(); int hash = local.indexOf("#token=");
         assertTrue(hash > 0);
         String base = local.substring(0,hash), token = URLDecoder.decode(local.substring(hash+7),"UTF-8");
@@ -161,16 +201,23 @@ public class VpnSmokeTest {
         }
         assertNotNull("VpnService must identify the UID/package owning the probe", applicationID);
         request(base+"local/applications",token,new JSONObject().put("id",applicationID).put("decision","trusted").toString());
-        try { request("http://10.0.2.2:8765/probe",null,null); fail("Trusted application escaped without VPN"); }
+        try { request(PROBE_URL,null,null); fail("Trusted application escaped without VPN"); }
         catch (IOException expected) { }
         request(base+"local/applications",token,new JSONObject().put("id",applicationID).put("decision","addresses").toString());
+        assertEquals("Revoking application trust must restore the direct route", PROBE_BODY,
+                request(PROBE_URL,null,null).trim());
         // No server has been configured. Approval must nevertheless protect locally
         // before the API returns an error and retain that protection on disk.
         try { request(base+"local/rules",token,"{\"action\":\"approve\",\"target\":\"10.0.2.2\",\"revision\":0}"); fail("Missing server must fail approval sync"); }
         catch (IOException expected) { }
         assertTrue(new JSONObject(Mobile.snapshot()).getJSONArray("pending_protection").toString().contains("10.0.2.2"));
-        try { request("http://10.0.2.2:8765/probe",null,null); fail("Approved address escaped directly"); }
+        try { request(PROBE_URL,null,null); fail("Approved address escaped directly"); }
         catch (IOException expected) { }
+        // A dead fixture must not make the negative routing checks pass. This
+        // control request is explicitly outside the VPN and belongs only to CI.
+        assertEquals("Host fixture must remain reachable after blocking checks", PROBE_BODY,
+                requestOnNetwork(underlyingNetwork,PROBE_URL,null,null).trim());
+        Log.i("LineVpnSmoke", "DNS, direct, application trust, restoration and address blocking passed");
         // Wait for compositor output as well as DOM readiness and foreground focus.
         android.graphics.Bitmap preview = captureNativeUI(activity);
         try (FileOutputStream out = new FileOutputStream(new File(getInstrumentation().getTargetContext().getFilesDir(), "native-preview.png"))) {
