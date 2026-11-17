@@ -74,7 +74,7 @@ async function testTraffic(page) {
   await page.locator('[data-view="requests"]').click();
   await page.setViewportSize({width:1440,height:1000});
   const first = page.locator('#requests-list > .request-group').first();
-  await first.locator('summary').click();
+  await first.locator(':scope > details > summary').click();
   await first.locator('.target-list button').first().focus();
   const order = await page.locator('#requests-list > .request-group').evaluateAll(nodes => nodes.map(n => n.dataset.key));
   await page.evaluate(() => { window.savedGroup=document.querySelector('#requests-list > .request-group');window.savedFocus=document.activeElement; });
@@ -231,6 +231,10 @@ async function testListSearch(page) {
 async function testAdminSearch(page) {
   admin.accounts.push({id:'alice-id',login:'alice',status:'active',created:'2026-01-01',rules:[]});
   admin.devices.push({id:'alice-phone',account_id:'alice-id',name:'Рабочий телефон',platform:'android',expires:'2027-02-01'});
+  // The profile scenario ends with logout; establish this scenario's session.
+  await page.locator('#password').fill('test-only-password');
+  await page.getByRole('button',{name:'Войти →',exact:true}).click();
+  await page.locator('#content').waitFor({state:'visible'});
   await page.locator('[data-filter="all"]').click();
   await page.locator('#refresh').click();
   await page.locator('#accounts-search').fill(' ALICE ');
@@ -265,7 +269,8 @@ async function saveIssuedKey(page) {
   await page.locator('#key-copy').click();
   await page.locator('#key-saved').check();await page.locator('#key-done').click();
   await page.locator('#key-result').waitFor({state:'hidden'});
-  if(await page.locator('#issued-key').inputValue())throw Error('key retained in DOM');
+  // Native dialog close handlers run after visibility changes.
+  await page.waitForFunction(() => document.getElementById('issued-key').value === '', null, {timeout:5000});
   if(await page.evaluate(key => JSON.stringify(localStorage).includes(key)||JSON.stringify(sessionStorage).includes(key),issuedKey))throw Error('account key persisted in browser storage');
 }
 async function testPower(page) {

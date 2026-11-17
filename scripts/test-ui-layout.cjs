@@ -85,9 +85,14 @@ async function testClientLayout(page, state) {
     await page.locator('#confirm').waitFor({state:'visible'});
     await check('short confirmation');
     await page.locator('#confirm [value="cancel"]').click();
+    await page.locator('#confirm').waitFor({state:'hidden'});
     await remove.waitFor({state:'visible'});
-    await page.waitForFunction(() => !document.querySelector('#rules-list .danger').disabled);
-    if (!await remove.evaluate(el => el === document.activeElement)) throw Error('dialog did not return keyboard focus');
+    // The dialog close event and the async button handler settle after click.
+    // Wait for the actual focus contract, not the independently rendered flag.
+    await page.waitForFunction(() => {
+      const button = document.querySelector('#rules-list .danger');
+      return button && !button.disabled && document.activeElement === button;
+    }, null, {timeout:5000});
 
     state.pending_applications = [{...state.applications[0], id:'layout-prompt', decision:'pending'}];
     await page.evaluate(() => { nextApplicationPrompt=0; return update(); });

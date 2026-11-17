@@ -1,0 +1,29 @@
+title = "LineVPN source secret scanning"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "linevpn-access-key"
+description = "LineVPN account access key (32 random bytes, base64url)"
+regex = '''(?:^|[^A-Za-z0-9_-])(lnv_[A-Za-z0-9_-]{43})(?:[^A-Za-z0-9_-]|$)'''
+secretGroup = 1
+keywords = ["lnv_"]
+
+[[rules]]
+id = "linevpn-profile-access"
+description = "Secret enrollment key in an exported LineVPN profile"
+regex = '''linevpn://[^\s"'<>`]+[?&]access=([A-Za-z0-9_-]{43})(?:[^A-Za-z0-9_-]|$)'''
+secretGroup = 1
+keywords = ["linevpn://"]
+
+[[allowlists]]
+description = "Generated outputs and downloaded dependencies; never source/test directories"
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)\.git/''',
+  '''^build/''',
+  '''^toolchain/''',
+  '''^apps/desktop/(dist|assets)/''',
+  '''^apps/android/(\.gradle|build|app/build|app/libs)/''',
+]

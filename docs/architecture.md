@@ -25,13 +25,16 @@ scripts/build-server.sh
 Проверки интерфейса без системного браузера и полный браузерный прогон:
 
 ```bash
-npm install --prefix build/ui-test playwright@1.56.1 jsdom@26.1.0
-JSDOM_MODULE="$PWD/build/ui-test/node_modules/jsdom" node scripts/test-ui-dom.cjs
-build/ui-test/node_modules/.bin/playwright install chromium
-PLAYWRIGHT_MODULE="$PWD/build/ui-test/node_modules/playwright" node scripts/test-ui.cjs
+npm ci --prefix tools/ui-tests --ignore-scripts --no-audit --no-fund
+tools/ui-tests/node_modules/.bin/playwright install chromium
+bash scripts/check.sh ui
 ```
 
 DOM-проверки исполняют настоящий код клиента и админки с тестовыми данными: источники событий, поиск, сохранение состояния строк и адреса действий. Они не проверяют визуальную раскладку; для неё нужен полный прогон Playwright.
+
+Общий локальный прогон, security checks и правила ревью описаны в
+[проверках безопасности и качества](security-quality.md); инструкции для агентов
+находятся в корневом `AGENTS.md`.
 
 Интеграционный тест транспортного слоя поднимает настоящий Xray-клиент и сервер с XHTTP/REALITY и проверяет TCP/UDP round trip, затем удаляет разрешение и проверяет отсутствие соединений к целевому listener. Интернет и реальный VPS для этого теста не нужны.
 
