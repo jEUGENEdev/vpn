@@ -1,24 +1,24 @@
-# Актуальные установщики
+# Актуальные установщики LineVPN
 
-Комплект **0.2.0 preview с исправлением восстановления сети**, 17 ноября 2026: [открыть релиз](https://github.com/jEUGENEdev/vpn/releases/tag/v0.2.0-preview.20261117.2). Все четыре файла собраны из `main` на `66e60336a053a3f0f058cab6bc41eb31bbef0373` и содержат [PR #14](https://github.com/jEUGENEdev/vpn/pull/14).
+Комплект после объединения PR #16/#17/#18 через #19. Все бинарники собраны из `d067d97f1fcd86aa00b74aa4c3f74ee1176a58bb`.
 
-| Платформа | Скачать | Размер, байт |
-|---|---|---:|
-| Android 10+ · ARM64 / x86_64 | [LineVPN-0.2.0-66e6033-android-preview.apk](https://github.com/jEUGENEdev/vpn/releases/download/v0.2.0-preview.20261117.2/LineVPN-0.2.0-66e6033-android-preview.apk) | 86 267 830 |
-| Windows · x64 | [LineVPN-0.2.0-66e6033-windows-x64.msi](https://github.com/jEUGENEdev/vpn/releases/download/v0.2.0-preview.20261117.2/LineVPN-0.2.0-66e6033-windows-x64.msi) | 183 362 048 |
-| macOS · Apple Silicon | [LineVPN-0.2.0-66e6033-macos-arm64.dmg](https://github.com/jEUGENEdev/vpn/releases/download/v0.2.0-preview.20261117.2/LineVPN-0.2.0-66e6033-macos-arm64.dmg) | 149 813 874 |
-| macOS · Intel | [LineVPN-0.2.0-66e6033-macos-x64.dmg](https://github.com/jEUGENEdev/vpn/releases/download/v0.2.0-preview.20261117.2/LineVPN-0.2.0-66e6033-macos-x64.dmg) | 157 206 355 |
+[Релиз v0.2.0-preview.20261117.4](https://github.com/jEUGENEdev/vpn/releases/tag/v0.2.0-preview.20261117.4).
 
-APK, MSI и оба DMG находятся в **Assets релиза этого приватного репозитория**. Для скачивания нужен доступ к репозиторию. Git clone и ZIP исходников не содержат установщики.
+| Платформа | Скачать | Размер |
+|---|---|---|
+| Android 10+ · ARM64 / x86_64 | [LineVPN-0.2.0-d067d97-android-preview.apk](https://github.com/jEUGENEdev/vpn/releases/download/v0.2.0-preview.20261117.4/LineVPN-0.2.0-d067d97-android-preview.apk) | 82.3 MiB |
+| Windows · x64 | [LineVPN-0.2.0-d067d97-windows-x64.msi](https://github.com/jEUGENEdev/vpn/releases/download/v0.2.0-preview.20261117.4/LineVPN-0.2.0-d067d97-windows-x64.msi) | 174.9 MiB |
+| macOS · Apple Silicon | [LineVPN-0.2.0-d067d97-macos-arm64.dmg](https://github.com/jEUGENEdev/vpn/releases/download/v0.2.0-preview.20261117.4/LineVPN-0.2.0-d067d97-macos-arm64.dmg) | 142.9 MiB |
+| macOS · Intel | [LineVPN-0.2.0-d067d97-macos-x64.dmg](https://github.com/jEUGENEdev/vpn/releases/download/v0.2.0-preview.20261117.4/LineVPN-0.2.0-d067d97-macos-x64.dmg) | 149.9 MiB |
+| Сервер Linux · amd64 | [linevpn-server-d067d97-linux-amd64](https://github.com/jEUGENEdev/vpn/releases/download/v0.2.0-preview.20261117.4/linevpn-server-d067d97-linux-amd64) | 31.5 MiB |
+| Генератор профиля Linux · amd64 | [linevpn-keygen-d067d97-linux-amd64](https://github.com/jEUGENEdev/vpn/releases/download/v0.2.0-preview.20261117.4/linevpn-keygen-d067d97-linux-amd64) | 30.8 MiB |
 
-В этом комплекте: полное выключение VPN, восстановление старых DNS/WFP/PF, очистка при удалении и прямой резерв при недоступном VPN. Приоритет — доступность сети; при сбое соединения могут идти напрямую, без VPN-защиты. Правила и серверная авторизация сохраняются.
+Нужно обновить сервер и клиенты. Существующие база, профиль, сертификаты и ключи сохраняются; повторная генерация профиля не требуется.
 
-Ошибка **«500: очередь адресов заполнена»** у кнопки «Оставить напрямую» относится к бэкенду. Для неё подготовлен [PR #15](https://github.com/jEUGENEdev/vpn/pull/15); замена установщика сама по себе серверную ошибку не устраняет.
+[Отчёт о сборке и проверках](../../docs/manual-build-media-integration-2026-11-17.md), [сверка PR](../../docs/pr-16-17-integration.md), [обновление сервера](../../docs/deployment.md), [восстановление сети](../../docs/network-recovery.md).
 
-Android подписан тем же сертификатом, что предыдущий ручной APK: совместимость подписей проверена. MSI имеет новый ProductCode, прежний UpgradeCode и настройки обновления сборки 0.2.0. macOS DMG включают сервисный PKG, Install-Service.command и Uninstall-LineVPN.command. Инструкции: [macOS](../../docs/macos-installation.md), [восстановление сети](../../docs/network-recovery.md).
+manifest.json содержит SHA-256 и размеры бинарников. SHA256SUMS включает бинарники, manifest, отчёт и архив рецепта из Assets. Проверяйте суммы в каталоге со всеми скачанными файлами: `sha256sum -c SHA256SUMS`.
 
-Это **preview**: Android использует debug-подпись, macOS — ad-hoc без нотарификации и с неподписанным PKG, Windows — без Authenticode. Проверены сборка, содержимое, контрольные суммы и структура пакетов; установка, служба и восстановление сети на целевых ОС ещё не проверены. См. [приёмку](../../docs/acceptance.md).
+**Preview:** установка и работа на физических устройствах и VPS не проверены. Android подписан прежним debug-ключом; Windows без Authenticode; macOS ad-hoc без нотарификации, сервисный PKG не подписан. Версии приложения остаются 0.2.0 preview; комплекты различаются по SHA и тегу.
 
-[manifest.json](manifest.json) фиксирует исходный коммит, точные размеры, SHA-256 и подписи. Проверка скачанных файлов: `sha256sum -c SHA256SUMS` или `shasum -a 256 -c SHA256SUMS`; в Windows — `Get-FileHash <файл> -Algorithm SHA256`.
-
-[Отчёт сборки](../../docs/manual-build-network-fix-2026-11-17.md); рецепт и журналы — `LineVPN-manual-build-66e6033-recipe.zip` в Assets релиза. Предыдущий релиз сохранён для истории. Изменение исходников не обновляет установщики автоматически: сверяйте `source_commit` в manifest. Штатный CI при успешном запуске может опубликовать новый комплект через Git LFS; актуальный способ скачивания указан в manifest.
+Автодеплой d067d97 остановлен до запуска из-за ошибки оплаты/лимита GitHub Actions. Публикация файлов сама по себе не обновляет VPS. Отзыв/сужение доступа может кратковременно прерывать остальные устройства.
