@@ -1,0 +1,15 @@
+go.mod
+go.sum
+cmd/linevpn-server
+cmd/linevpn-keygen
+internal
+deploy/requirements.txt
+deploy/remote-requirements.txt
+deploy/ansible/ansible.cfg
+deploy/ansible/deploy.yml
+deploy/ansible/group_vars/all.yml
+deploy/ansible/requirements.yml
+deploy/ansible/templates
+scripts/build-server.sh
+scripts/deploy-actions.py
+scripts/deploy-remote.py
