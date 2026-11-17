@@ -3,19 +3,57 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p build/native-probe
 printf 'linevpn-native-ok\n' > build/native-probe/probe
-python3 -m http.server 8765 --bind 0.0.0.0 --directory build/native-probe > build/native-probe/server.log 2>&1 &
+vpn_logcat_pid=''
+vpn_probe_pid=''
+cleanup() {
+  local status=$?
+  trap - EXIT
+  set +e
+  timeout 10s adb shell dumpsys connectivity > build/android-connectivity.txt 2>&1
+  timeout 10s adb shell 'ip addr; ip rule; ip route show table all' > build/android-network.txt 2>&1
+  if [[ -n "$vpn_logcat_pid" ]]; then
+    kill "$vpn_logcat_pid" 2>/dev/null
+    wait "$vpn_logcat_pid" 2>/dev/null
+  fi
+  if [[ -n "$vpn_probe_pid" ]]; then
+    kill "$vpn_probe_pid" 2>/dev/null
+    wait "$vpn_probe_pid" 2>/dev/null
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+# Stream from the start: a final `logcat -t 600` loses the actual failure
+# while instrumentation is shutting down a busy cold-boot emulator.
+adb logcat -c
+adb logcat -v threadtime > build/android-logcat.txt 2>&1 &
+vpn_logcat_pid=$!
+python3 -u -m http.server 8765 --bind 0.0.0.0 --directory build/native-probe > build/android-probe-server.txt 2>&1 &
 vpn_probe_pid=$!
-trap 'kill "$vpn_probe_pid" 2>/dev/null || true' EXIT
+# Fail as a fixture error if the host server never became ready.
+curl --noproxy '*' --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1 --max-time 2 \
+  http://127.0.0.1:8765/probe > build/native-probe/host-response
+cmp build/native-probe/probe build/native-probe/host-response
+kill -0 "$vpn_probe_pid"
 adb install -r apps/android/app/build/outputs/apk/debug/app-debug.apk
 adb install -r apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-adb shell pm grant dev.linevpn.app android.permission.POST_NOTIFICATIONS
-adb shell appops set dev.linevpn.app ACTIVATE_VPN allow
-# Stop the unrelated Pixel launcher on this disposable emulator; cold-boot ANRs
-# must not cover the Activity under test. The test asserts its own window focus.
-adb shell am force-stop com.google.android.apps.nexuslauncher
-adb shell am instrument -w dev.linevpn.app.test/androidx.test.runner.AndroidJUnitRunner | tee build/android-instrumentation.txt
-if ! grep -q 'OK (1 test)' build/android-instrumentation.txt; then
-  adb logcat -d -t 600 > build/android-logcat.txt
-  exit 1
-fi
-adb exec-out run-as dev.linevpn.app cat files/native-preview.png > build/android-native.png
+vpn_smoke_runs="${ANDROID_SMOKE_RUNS:-3}"
+[[ "$vpn_smoke_runs" =~ ^[1-9][0-9]*$ ]] || { echo 'ANDROID_SMOKE_RUNS must be a positive integer' >&2; exit 1; }
+for ((vpn_run=1; vpn_run<=vpn_smoke_runs; vpn_run++)); do
+  echo "Android native scenario $vpn_run/$vpn_smoke_runs (fresh app state)"
+  # Every run must pass. Never retry a failed scenario or retain its approvals.
+  adb shell pm clear dev.linevpn.app
+  adb shell pm grant dev.linevpn.app android.permission.POST_NOTIFICATIONS
+  adb shell appops set dev.linevpn.app ACTIVATE_VPN allow
+  # Stop the unrelated Pixel launcher on this disposable emulator; cold-boot ANRs
+  # must not cover the Activity under test. The test asserts its own window focus.
+  adb shell am force-stop com.google.android.apps.nexuslauncher
+  adb shell am instrument -w dev.linevpn.app.test/androidx.test.runner.AndroidJUnitRunner | tee "build/android-instrumentation-$vpn_run.txt"
+  grep -q '^OK (1 test)' "build/android-instrumentation-$vpn_run.txt"
+  kill -0 "$vpn_probe_pid"
+  # Check fixture health outside Android after each scenario. A fixture outage
+  # must not make fail-closed assertions pass; do not retry this control probe.
+  curl --noproxy '*' --fail --silent --show-error --max-time 2 \
+    http://127.0.0.1:8765/probe > build/native-probe/host-response
+  cmp build/native-probe/probe build/native-probe/host-response
+  adb exec-out run-as dev.linevpn.app cat files/native-preview.png > build/android-native.png
+done
