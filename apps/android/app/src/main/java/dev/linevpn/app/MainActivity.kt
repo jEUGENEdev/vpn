@@ -38,7 +38,7 @@ class MainActivity : Activity() {
         // Large system fonts and landscape must not push either action off screen.
         pageContent(ScrollView(this).apply {
             isFillViewport = true
-            addView(box, ScrollView.LayoutParams(ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT))
+            addView(box, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
         })
         systemTheme(false)
         handler.post(poll)
