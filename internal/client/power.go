@@ -13,7 +13,7 @@ import (
 var ErrNetworkRestart = errors.New("network service restart required")
 
 // NetworkController owns the OS interface, DNS and guard. Check must not change
-// the network: Android's system lockdown can veto a request to turn VPN off.
+// the network: a platform may reject a transition before intent is persisted.
 type NetworkController interface {
 	Check(enabled bool) error
 	Apply(enabled bool) error

@@ -90,9 +90,10 @@
 </div>
 </section>
 <div id="dashboard" hidden="">
+<p id="policy-sync-status" class="card small" role="status" hidden=""></p>
 <div id="guard-warning" class="card" hidden="">
-<strong id="guard-title">Android может блокировать интернет</strong>
-<p id="guard-description" class="small">Для доступности сети отключите «Блокировать соединения без VPN» в настройках Android.</p>
+<strong id="guard-title">Защита при остановке приложения</strong>
+<p id="guard-description" class="small">Для защиты при остановке приложения включите «Постоянная VPN» и «Блокировать соединения без VPN» в Android.</p>
 <button id="guard-settings" class="primary">Открыть настройки VPN</button>
 </div>
 <section id="view-overview" class="view">
@@ -107,6 +108,11 @@
 <em>Ваш выбор.</em>
 </h2>
 <p id="hero-description">Разрешённые адреса и доверенные приложения — через VPN. Остальное — напрямую.</p>
+<p id="sync-warning" class="small" role="status" hidden></p>
+<details id="vpn-issues" hidden>
+<summary id="vpn-issues-summary">Ошибки соединений</summary>
+<ul id="vpn-issues-list" class="vpn-issues-list"></ul>
+</details>
 <button id="open-requests" class="white-button">Разобрать запросы <span aria-hidden="true">↗</span>
 </button>
 </div>
@@ -220,7 +226,7 @@
 <section id="view-applications" class="view" hidden="">
 <div class="section-intro">
 <h2>Кто выходит в сеть.</h2>
-<p>По умолчанию VPN включается только для разрешённых адресов. Доверив приложению весь трафик, вы меняете маршрут только для него на этом устройстве.</p>
+<p>По умолчанию VPN включается только для разрешённых адресов. Решения для приложений сохраняются в аккаунте и восстанавливаются после переустановки при совпадении приложения и платформы.</p>
 </div>
 <p id="attribution-note" class="small" hidden="">Служба сейчас не может определять приложения. Правила адресов продолжают работать.</p>
 <label class="sr-only" for="applications-search">Приложение, путь, домен или IP</label>
@@ -284,7 +290,7 @@
 </p>
 <p id="application-identity" class="application-path">
 </p>
-<p>Если доверяете приложению, направьте весь его трафик через VPN. Или продолжайте выбирать отдельные адреса — это основной режим.</p>
+<p>Если доверяете приложению, направьте весь его трафик через VPN. Или продолжайте выбирать отдельные адреса — это основной режим. Решение сохраняется в аккаунте для этого приложения и платформы.</p>
 <div class="dialog-actions">
 <button class="secondary" value="addresses" autofocus="">Только выбранные адреса</button>
 <button class="primary" value="trusted">Доверяю — использовать VPN</button>

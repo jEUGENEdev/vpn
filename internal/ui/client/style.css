@@ -288,3 +288,5 @@ dialog p { font-size: .9375rem; color: var(--muted); line-height: 1.65; }
   .header-controls { width: 100%; justify-content: space-between; }
   .header-controls .chip { max-width: 100%; }
 }
+
+.vpn-issues-list{max-height:12rem;overflow:auto;padding-left:1.25rem;font-size:.85rem;overflow-wrap:anywhere}.vpn-issues-list li{margin:.5rem 0}

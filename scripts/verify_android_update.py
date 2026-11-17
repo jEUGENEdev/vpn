@@ -35,25 +35,39 @@ def check_keystore():
         raise ValueError("Android signing certificate differs from the published app; update would be rejected")
 
 
-def check_apk(apk):
+def inspect_apk(apk):
     build_tools = Path(os.environ["ANDROID_HOME"]) / "build-tools/35.0.0"
     signed = subprocess.check_output([str(build_tools / "apksigner"), "verify", "--print-certs", str(apk)], text=True)
     certificates = re.findall(r"Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]+)", signed)
-    if [v.lower() for v in certificates] != [expected_certificate()]:
-        raise ValueError("APK signer does not match the installed release")
+    if len(certificates) != 1 or not re.fullmatch(r"[0-9a-fA-F]{64}", certificates[0]):
+        raise ValueError("Expected one verified APK signing certificate")
     badging = subprocess.check_output([str(build_tools / "aapt"), "dump", "badging", str(apk)], text=True)
     package = re.search(r"^package: name='([^']+)' versionCode='([0-9]+)' versionName='([^']+)'", badging, re.M)
-    expected = ("dev.linevpn.app", str(android_code(product_version())), product_version())
-    if not package or package.groups() != expected:
-        raise ValueError("APK identity/version does not match this release")
+    if not package:
+        raise ValueError("APK identity/version cannot be read")
+    return (*package.groups(), certificates[0].lower())
+
+
+def check_apk(apk, previous=None):
+    info = inspect_apk(apk)
+    expected = ("dev.linevpn.app", str(android_code(product_version())), product_version(), expected_certificate())
+    if info != expected:
+        raise ValueError("APK signer or identity/version does not match this release")
+    if previous:
+        old = inspect_apk(previous)
+        if old[0] != info[0] or old[3] != info[3] or int(old[1]) > int(info[1]):
+            raise ValueError("APK cannot update the previous package/signature/version")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("apk", nargs="?", type=Path)
+    parser.add_argument("--previous", type=Path, help="Compare with a previous installed APK")
     args = parser.parse_args()
     try:
-        check_apk(args.apk) if args.apk else check_keystore()
+        if args.previous and not args.apk:
+            raise ValueError("--previous requires a new APK")
+        check_apk(args.apk, args.previous) if args.apk else check_keystore()
     except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
         raise SystemExit(str(error)) from None
     print("PASS: Android update signing" + (", package ID and version" if args.apk else " key"))

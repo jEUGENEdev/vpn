@@ -28,8 +28,8 @@ type Desktop struct {
 }
 
 func Start(ctx context.Context, dir string) (*Desktop, error) {
-	// Migrate legacy DNS/firewall state even when the profile or TUN cannot start.
-	recoveryError := Recover(dir)
+	// A worker restart is not a request to turn protection off.
+	networkError := prepareNetwork(dir, Guard, Recover)
 	finder := control.NewDefaultInterfaceFinder()
 	network, e := tun.NewNetworkUpdateMonitor(logger.NOP())
 	if e != nil {
@@ -69,15 +69,18 @@ func Start(ctx context.Context, dir string) (*Desktop, error) {
 		d.owner = resolver
 		c.SetOwnerLookup(resolver.Lookup)
 	}
-	if recoveryError != nil {
-		c.SetNetworkError(recoveryError)
+	if networkError != nil {
+		c.SetNetworkError(networkError)
 	} else if c.VPNEnabled() {
 		name := tun.CalculateInterfaceName("linevpn")
 		monitor.RegisterMyInterface(name)
-		// No global kill switch and no persistent DNS changes. Closing the TUN
-		// restores the underlying network, including after process termination.
+		// The persistent guard survives TUN/process loss. Only the agent can
+		// egress directly; it applies address/application policy to every flow.
 		t, err := c.StartTunnel(ctx, tun.Options{Name: name, AutoRoute: true, StrictRoute: false, InterfaceFinder: finder, InterfaceMonitor: monitor})
 		if err != nil {
+			c.SetNetworkError(err)
+		} else if err = Guard(name); err != nil {
+			t.Close()
 			c.SetNetworkError(err)
 		} else {
 			dns, err := startTunnelDNS()
@@ -90,6 +93,7 @@ func Start(ctx context.Context, dir string) (*Desktop, error) {
 			}
 		}
 	}
+	c.SetGuard(c.VPNEnabled() && networkError == nil)
 	if e = DropPrivileges(dir); e != nil {
 		d.Close()
 		return nil, e

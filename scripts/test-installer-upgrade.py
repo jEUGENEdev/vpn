@@ -45,6 +45,10 @@ class VersionTests(unittest.TestCase):
             p = first.find('w:Package', ns)
             self.assertEqual(p.attrib['Version'], product_version())
             self.assertEqual(p.attrib['ProductCode'], second.find('w:Package', ns).attrib['ProductCode'])
+            subprocess.run([sys.executable, str(ROOT / 'packaging/windows/package.py'), str(payload), str(output), '--version', '0.2.0'], check=True)
+            previous = ET.parse(output).find('w:Package', ns)
+            self.assertNotEqual(p.attrib['ProductCode'], previous.attrib['ProductCode'])
+            self.assertEqual(p.attrib['UpgradeCode'], previous.attrib['UpgradeCode'])
             self.assertEqual(p.attrib['UpgradeCode'], '{0ACF9EA2-83F8-4EE0-8877-E3BAE8A42E91}')
             self.assertEqual(p.find('w:MajorUpgrade', ns).attrib['Schedule'], 'afterInstallInitialize')
             self.assertNotIn('AllowSameVersionUpgrades', p.find('w:MajorUpgrade', ns).attrib)
@@ -91,6 +95,35 @@ class AndroidTests(unittest.TestCase):
                         android.check_apk(Path('test.apk'))
 
 
+    def test_previous_apk_cannot_be_downgraded_or_replaced_by_another_key(self):
+        current = ("dev.linevpn.app", str(android_code(product_version())), product_version(), 'a' * 64)
+        good = (current[0], '2', '0.2.0-preview', current[3])
+        for previous in [good, current, (current[0], str(int(current[1]) + 1), 'next', current[3]),
+                         (current[0], '2', 'old', 'b' * 64)]:
+            with patch.object(android, 'inspect_apk', side_effect=[current, previous]), patch.object(android, 'expected_certificate', return_value='a' * 64):
+                if previous in (good, current):
+                    android.check_apk(Path('new.apk'), Path('old.apk'))
+                else:
+                    with self.assertRaises(ValueError):
+                        android.check_apk(Path('new.apk'), Path('old.apk'))
+
+    def test_invalid_publication_preserves_existing_installers(self):
+        import runpy
+        with tempfile.TemporaryDirectory() as directory:
+            source, dest = Path(directory) / 'incoming', Path(directory) / 'current'
+            source.mkdir(); dest.mkdir()
+            for name in ('client.apk', 'client.msi', 'arm64.dmg', 'x64.dmg'):
+                (source / name).write_bytes(b'incomplete')
+            (dest / 'existing.msi').write_bytes(b'previous installer')
+            (dest / 'manifest.json').write_bytes(b'previous manifest')
+            before = {p.name: p.read_bytes() for p in dest.iterdir()}
+            for error in (ValueError('bad signature'), None):
+                with patch.object(sys, 'argv', ['publish-installers.py', str(source), str(dest)]), patch.dict(os.environ, SOURCE_COMMIT='fixture'), patch.object(android, 'check_apk', side_effect=error):
+                    with self.assertRaises((ValueError, SystemExit)):
+                        runpy.run_path(str(ROOT / 'scripts/publish-installers.py'), run_name='__main__')
+                self.assertEqual({p.name: p.read_bytes() for p in dest.iterdir()}, before)
+
+
 # These commands never operate on the real host. Their calls form an execution
 # trace so tests can check both successful and failed installer paths.
 FAKE_COMMAND = r'''
@@ -118,6 +151,8 @@ elif name == 'launchctl':
         if left:
             counter.write_text(str(left - 1))
         sys.exit(0 if left or os.environ.get('STUCK_SERVICE') == '1' else 1)
+    if sys.argv[1] == 'bootstrap' and os.environ.get('FAIL_BOOTSTRAP') == '1':
+        sys.exit(1)
     if sys.argv[1] == 'bootout':
         (root/'stopping').write_text(os.environ.get('STOP_POLLS', '0'))
         sys.exit(int(os.environ.get('BOOTOUT_CODE', '0')))
@@ -135,7 +170,7 @@ class MacOSScriptTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.commands = self.root / 'commands'
         self.commands.mkdir()
-        names = ['pkgutil', 'PlistBuddy', 'pgrep', 'pkill', 'launchctl', 'id', 'dscl', 'sleep', 'linevpn-agent']
+        names = ['pkgutil', 'PlistBuddy', 'pgrep', 'pkill', 'launchctl', 'id', 'dscl', 'sleep', 'linevpn-agent', 'pfctl']
         for name in names:
             file = self.commands / name
             file.write_text('#!' + sys.executable + '\n' + FAKE_COMMAND)
@@ -153,11 +188,13 @@ class MacOSScriptTests(unittest.TestCase):
             source = (ROOT / 'packaging/macos' / name).read_text()
             # Privilege/root paths are substituted in the temporary test copy.
             source = source.replace('"$EUID"', '"0"').replace('/var/lib/linevpn', str(self.data))
+            source = source.replace('/etc/pf.conf', str(self.root / 'pf.conf'))
             source = source.replace("'/Library/Application Support/LineVPN/linevpn-agent'", str(self.commands / 'linevpn-agent'))
             for command in names:
-                for prefix in ('/usr/bin/', '/usr/sbin/', '/bin/', '/usr/libexec/'):
+                for prefix in ('/usr/bin/', '/usr/sbin/', '/bin/', '/sbin/', '/usr/libexec/'):
                     source = source.replace(prefix + command, str(self.commands / command))
             (self.root / name).write_text(source)
+        (self.root / 'pf.conf').write_text('# fixture system PF configuration\n')
         (self.root / 'version').write_text(product_version() + '\n')
         self.env = dict(os.environ, FIXTURE_ROOT=str(self.root), PATH=str(self.commands) + os.pathsep + os.environ['PATH'])
 
@@ -179,6 +216,8 @@ class MacOSScriptTests(unittest.TestCase):
                 result = self.run_script('postinstall')
                 self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn('dscl', [call[0] for call in self.trace()])
+        self.assertFalse(any('-recover-network' in call for call in self.trace()), 'upgrade removed protection')
+        self.assertEqual((self.root / 'pf.conf').read_text().count('anchor "linevpn"'), 1)
         self.assertTrue(any(call[:2] == ['launchctl', 'bootstrap'] for call in self.trace()))
 
     def test_downgrade_rejected_before_stopping_anything(self):
@@ -200,6 +239,8 @@ class MacOSScriptTests(unittest.TestCase):
     def test_postinstall_will_not_start_a_duplicate_service(self):
         self.assertNotEqual(self.run_script('postinstall', STUCK_SERVICE='1').returncode, 0)
         self.assertFalse(any(call[:2] == ['launchctl', 'bootstrap'] for call in self.trace()))
+        self.assertNotEqual(self.run_script('postinstall', STUCK_WORKER='1').returncode, 0)
+        self.assertNotEqual(self.run_script('postinstall', FAIL_BOOTSTRAP='1').returncode, 0)
 
 
 if __name__ == '__main__':

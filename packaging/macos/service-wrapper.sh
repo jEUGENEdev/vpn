@@ -1,6 +1,6 @@
 #!/bin/bash
 # launchd owns this root supervisor; the network worker still drops its UID.
-# Recovery also runs when the worker crashes, before launchd restarts it.
+# A crash/restart preserves protection. Recovery requires explicit off/removal.
 set -u
 vpn_base='/Library/Application Support/LineVPN'
 vpn_agent="$vpn_base/linevpn-agent"
@@ -17,7 +17,6 @@ stop_worker() {
   fi
   exit 0
 }
-trap cleanup EXIT
 trap stop_worker TERM INT HUP
 "$vpn_agent" -data /var/lib/linevpn &
 vpn_pid=$!
@@ -32,6 +31,8 @@ while kill -0 "$vpn_pid" 2>/dev/null; do
     # leave a hidden daemon capturing traffic forever, including after reboot.
     if [[ "$vpn_missing" -ge 15 ]]; then
       /bin/launchctl disable system/dev.linevpn.agent || true
+      # Deleting the installed app is an explicit removal, not a VPN outage.
+      trap cleanup EXIT
       stop_worker
     fi
   fi

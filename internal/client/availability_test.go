@@ -14,7 +14,7 @@ import (
 	"github.com/jEUGENEdev/vpn/internal/secure"
 )
 
-func TestVPNDialFailureFallsBackAndCanRetryVPN(t *testing.T) {
+func TestVPNDialFailureKeepsProtectedRoute(t *testing.T) {
 	c := testTrafficClient(t)
 	c.SetTunnel(true)
 	c.config.Profile.Rules = []string{"127.0.0.1"}
@@ -26,16 +26,16 @@ func TestVPNDialFailureFallsBackAndCanRetryVPN(t *testing.T) {
 	defer ln.Close()
 	for i := 0; i < 3; i++ {
 		conn, err := c.Dial(context.Background(), "tcp", "127.0.0.1", uint16(ln.Addr().(*net.TCPAddr).Port))
-		if err != nil {
-			t.Fatal("failed VPN prevented working direct dial", err)
+		if err == nil {
+			conn.Close()
+			t.Fatal("failed VPN escaped directly")
 		}
-		conn.Close()
 	}
-	if !c.vpnFailed || c.State().(map[string]any)["direct_fallback"] != true {
-		t.Fatal("fallback hidden")
+	if !c.vpnFailed || c.State().(map[string]any)["partial_outage"] != true {
+		t.Fatal("failure hidden")
 	}
 	if len(c.Events.List()) != 1 {
-		t.Fatal("fallback notifications spammed", c.Events.List())
+		t.Fatal("failure notifications spammed", c.Events.List())
 	}
 	for key := range c.vpnFailures {
 		c.vpnFailures[key] = time.Now().Add(-time.Second)
@@ -48,7 +48,7 @@ func TestVPNDialFailureFallsBackAndCanRetryVPN(t *testing.T) {
 	}
 }
 
-func TestVPNFallbackIsScopedToEndpointProtocolAndApplication(t *testing.T) {
+func TestVPNFailureIsScopedToEndpointProtocolAndApplication(t *testing.T) {
 	c := testTrafficClient(t)
 	c.ready = true
 	c.config.Profile.AppUUID = "app-key"
@@ -57,8 +57,8 @@ func TestVPNFallbackIsScopedToEndpointProtocolAndApplication(t *testing.T) {
 	c.apps[other.ID] = model.Application{ApplicationInfo: other, Decision: "trusted"}
 	failed := flowKey{Target: "media.example.com", AppID: app.ID, Network: "udp", Port: 443}
 	c.failVPNLocked(failed)
-	if c.routeFlowLocked(failed) != policy.Direct {
-		t.Fatal("failed endpoint lost availability fallback")
+	if c.routeFlowLocked(failed) != policy.AppVPN {
+		t.Fatal("failed endpoint lost VPN route")
 	}
 	for _, key := range []flowKey{
 		{Target: failed.Target, AppID: app.ID, Network: "tcp", Port: 443},
@@ -70,7 +70,7 @@ func TestVPNFallbackIsScopedToEndpointProtocolAndApplication(t *testing.T) {
 			t.Fatalf("unrelated media route lost VPN: %+v", key)
 		}
 		c.recoverVPNLocked(key)
-		if !c.vpnFailed || c.routeFlowLocked(failed) != policy.Direct {
+		if !c.vpnFailed || c.routeFlowLocked(failed) != policy.AppVPN {
 			t.Fatal("another flow hid the failed endpoint")
 		}
 	}
@@ -102,26 +102,6 @@ func TestIdleMediaTimeoutDoesNotDisableVPN(t *testing.T) {
 	flow.Read(make([]byte, 1))
 	if c.vpnFailed || len(c.vpnFailures) != 0 {
 		t.Fatal("normal idle UDP cleanup triggered direct fallback")
-	}
-}
-
-func TestSilentVPNClosesWithoutReplayingAndNextConnectionIsDirect(t *testing.T) {
-	c := testTrafficClient(t)
-	c.ready = true
-	c.config.Profile.Rules = []string{"example.com"}
-	left, right := net.Pipe()
-	defer right.Close()
-	c.active[left] = activeFlow{Target: "example.com", Route: policy.VPN}
-	flow := &tracked{Conn: left, c: c}
-	flow.reportResponseTimeout()
-	if _, err := right.Read(make([]byte, 1)); err != io.EOF {
-		t.Fatal("stalled flow was not closed", err)
-	}
-	if c.routeFlowLocked(flowKey{Target: "example.com"}) != policy.Direct {
-		t.Fatal("retry remained on broken VPN")
-	}
-	if len(c.active) != 0 {
-		t.Fatal("stalled flow retained")
 	}
 }
 
@@ -162,7 +142,7 @@ func TestBrokenVPNRefreshKeepsExistingDirectConnection(t *testing.T) {
 	}
 }
 
-func TestVPNWriteFailureEnablesFallbackWithoutARead(t *testing.T) {
+func TestVPNWriteFailureRecordsOutageWithoutARead(t *testing.T) {
 	c := testTrafficClient(t)
 	c.ready = true
 	c.config.Profile.Rules = []string{"example.com"}
@@ -174,8 +154,8 @@ func TestVPNWriteFailureEnablesFallbackWithoutARead(t *testing.T) {
 	if _, err := flow.Write([]byte("not replayed")); err == nil {
 		t.Fatal("expected write failure")
 	}
-	if c.routeFlowLocked(flowKey{Target: "example.com"}) != policy.Direct {
-		t.Fatal("write-only failure kept selecting VPN")
+	if !c.vpnFailed || c.routeFlowLocked(flowKey{Target: "example.com"}) != policy.VPN {
+		t.Fatal("write failure was hidden or bypassed VPN")
 	}
 }
 

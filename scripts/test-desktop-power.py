@@ -36,7 +36,7 @@ def ready(enabled):
             continue
         assert not state.get("power_error"), state.get("power_error")
         if not state.get("power_transition") and state["vpn_enabled"] == enabled:
-            assert state["tunnel"] == enabled and state["guard"] is False, state
+            assert state["tunnel"] == enabled and state["guard"] == enabled, state
             return
         time.sleep(.25)
     raise AssertionError("Native power transition did not finish")
@@ -79,6 +79,10 @@ for cycle in range(2):
     ready(True)
     tunnel_dns_works()
     # The calling platform test pinned this IP without a configured server.
-    with opener.open("http://1.1.1.1/cdn-cgi/trace", timeout=8) as response:
-        assert response.status == 200
-print("PASS: full off/on, restored DNS, off survives restart, offline enable keeps direct access")
+    try:
+        opener.open("http://1.1.1.1/cdn-cgi/trace", timeout=4)
+    except OSError:
+        pass
+    else:
+        raise AssertionError("Protected address bypassed offline VPN")
+print("PASS: full off/on, restored DNS, off survives restart, offline enable blocks protected access")

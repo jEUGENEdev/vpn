@@ -38,25 +38,32 @@ for(const b of document.querySelectorAll('[data-view]'))b.onclick=()=>view(b.dat
 $('open-requests').onclick=()=>view('requests');
 
 function confirmChange(title,description){$('confirm-title').textContent=title;$('confirm-description').textContent=description;const d=$('confirm');d.returnValue='';d.showModal();return new Promise(resolve=>d.addEventListener('close',()=>resolve(d.returnValue==='ok'),{once:true}))}
-async function approve(target){if(!await confirmChange('Разрешить '+target+'?','Домен и его поддомены будут использовать VPN. При сбое соединения смогут идти напрямую, без VPN-защиты.'+(state.status==='disabled'?' Сейчас VPN выключен: до включения трафик идёт напрямую.':'')))return;await act('rules',{target,action:'approve',revision:state.revision});toast('Разрешение сохранено')}
+async function approve(target){if(!await confirmChange('Разрешить '+target+'?','Домен и его поддомены будут использовать VPN. При сбое соединения блокируются до восстановления VPN или ручного выключения.'+(state.status==='disabled'?' Сейчас VPN выключен: до включения трафик идёт напрямую.':'')))return;await act('rules',{target,action:'approve',revision:state.revision});toast('Разрешение сохранено')}
 function row(title,description,buttons){const e=element('div',undefined,'list-row'),copy=element('div',undefined,'row-copy');copy.append(element('strong',title),element('p',description));e.append(copy);const actions=element('div',undefined,'row-actions');actions.append(...buttons);e.append(actions);return e}
 function empty(list,text){if(!list.childElementCount)list.append(element('div',text,'empty'))}
 function renderDeviceIdentity(){const identity=state.device||{};$('device-detected').hidden=mode==='register';$('device-detected').textContent=identity.name?'Устройство: '+identity.name+' · определено автоматически':'Имя не определено. После входа выберите устройство или добавьте текущее.'}
+function renderPolicySync(){const pending=state.policy_sync_pending||0,node=$('policy-sync-status');node.hidden=pending===0;node.textContent=pending?'Ещё не сохранено в аккаунте: '+pending+'. Перед переустановкой дождитесь синхронизации. '+(state.policy_sync_error||'Решения пока сохранены только на этом устройстве.'):'';}
 function resetDeviceChoice(){$('device-choice-label').hidden=true;$('device-choice-hint').hidden=true;$('device-choice').required=false;$('device-choice').replaceChildren()}
 function chooseDevice(devices){const field=$('device-choice');field.replaceChildren(new Option('Выберите устройство',''));for(const d of devices||[])field.add(new Option(d.name+' · '+d.platform,d.id));field.add(new Option('Добавить текущее устройство','new'));field.required=true;$('device-choice-label').hidden=false;$('device-choice-hint').hidden=false;field.focus()}
 function render(){renderDeviceIdentity();const bound=!!state.account_id,reauth=state.status==='auth_required'||state.auth_required,logged=bound&&!reauth;$('tab-register').disabled=bound;$('tab-pair').disabled=bound;$('bootstrap').disabled=false;$('import-profile').disabled=false;renderPower();$('auth-hint').textContent=reauth?'Срок доступа истёк или доступ отозван. Войдите в тот же аккаунт по актуальному ключу. При отзыве профиля сначала импортируйте новый.':mode==='register'?'Выберите имя. Сервер выдаст ключ, а администратор одобрит заявку.':'Вставьте ключ доступа. Имя аккаунта появится после входа.';if(reauth&&mode!=='login')authMode('login');$('setup').hidden=logged;$('dashboard').hidden=!logged;document.querySelectorAll('[data-view]').forEach(b=>b.disabled=!logged);if(!logged)return;const rules=state.rules||[],requests=requestGroups(),devices=state.devices||[];$('account-chip').textContent=state.login||'Аккаунт · '+state.account_id.slice(0,6);$('approved-count').textContent=rules.length;$('pending-count').textContent=requests.length;$('request-count').textContent=requests.length;$('device-count').textContent=devices.filter(d=>!d.revoked&&Date.parse(d.expires)>Date.now()).length;
-$('guard-warning').hidden=!window.LineBridge||!state.guard;$('guard-title').textContent='Android может блокировать интернет';$('guard-description').textContent='Для доступности сети при остановке VPN отключите «Блокировать соединения без VPN» в системных настройках.';const off=state.vpn_enabled===false&&state.status==='disabled'&&!powerBusy,ok=!off&&state.status==='ready'&&state.tunnel&&!state.direct_fallback;$('status-badge').dataset.status=ok?'ready':'warning';$('status-label').textContent=off?'VPN ВЫКЛЮЧЕН':ok?'ЗАЩИТА ВКЛЮЧЕНА':'ПРЯМОЕ ПОДКЛЮЧЕНИЕ БЕЗ VPN';$('hero-description').textContent=off?'Вы отключили VPN. Все адреса и приложения подключаются напрямую. Правила сохранены.':state.status==='degraded'?'VPN-соединение прервалось. Для сохранения доступа соединения могут идти напрямую, без VPN-защиты.':ok?'Разрешённые адреса и доверенные приложения — через VPN. Остальное — напрямую.':state.tunnel?'VPN недоступен. Соединения идут напрямую, без VPN-защиты.':'Туннель не запущен. Доступна обычная сеть; VPN-защиты нет.';
-if(state.partial_fallback){$('status-label').textContent='ЧАСТИЧНЫЙ СБОЙ VPN';$('hero-description').textContent='Часть адресов временно используется напрямую. Остальные разрешённые соединения продолжают идти через VPN.';}
+$('guard-warning').hidden=!window.LineBridge||state.guard||state.vpn_enabled===false;$('guard-title').textContent='Защита при остановке приложения';$('guard-description').textContent='Включите «Постоянная VPN» и «Блокировать соединения без VPN» в Android. Это предотвращает прямой доступ при остановке процесса приложения.';const off=state.vpn_enabled===false&&state.status==='disabled'&&!powerBusy,ok=!off&&state.status==='ready'&&state.tunnel&&!state.protection_blocked;$('status-badge').dataset.status=ok?'ready':'warning';$('status-label').textContent=off?'VPN ВЫКЛЮЧЕН':ok?'ЗАЩИТА ВКЛЮЧЕНА':'ОЖИДАЕМ VPN';$('hero-description').textContent=off?'Вы отключили VPN. Все адреса и приложения подключаются напрямую. Правила сохранены.':ok?'Разрешённые адреса и доверенные приложения — через VPN. Остальное — напрямую.':state.tunnel||state.guard?'VPN недоступен. Разрешённые адреса и доверенные приложения не переходят на прямое подключение.':'Туннель не запущен. Защита зависит от системной блокировки; откройте настройки VPN.';
+if(state.partial_outage){$('status-label').textContent='ОШИБКИ ОТДЕЛЬНЫХ СОЕДИНЕНИЙ';$('hero-description').textContent='Некоторые соединения завершились ошибкой. Повторные попытки идут через VPN; остальные соединения продолжают работать.';}
+$('sync-warning').hidden=off||!state.sync_pending;
+$('sync-warning').textContent='Не удалось обновить правила с сервера. Сохранённые правила и работающие VPN-соединения остаются активны.';
+const issues=off?[]:(state.vpn_issues||[]);
+$('vpn-issues').hidden=!issues.length;
+$('vpn-issues-summary').textContent='Соединения без подтверждённого восстановления: '+issues.length;
+$('vpn-issues-list').replaceChildren(...issues.map(issue=>element('li',issue.target+':'+issue.port+' · '+String(issue.network||'tcp').toUpperCase()+' · '+(issue.source?.name||'Источник не определён')+' · '+new Date(issue.at).toLocaleTimeString())));
 if(powerBusy||state.power_transition||state.power_error||state.status==='system_blocked'){
   $('status-badge').dataset.status='warning';
   $('status-label').textContent=(powerBusy||state.power_transition)?'ПЕРЕКЛЮЧАЕМ СЕТЬ':state.status==='system_blocked'?'ИНТЕРНЕТ ЗАБЛОКИРОВАН ANDROID':'ОШИБКА НАСТРОЙКИ СЕТИ';
   $('hero-description').textContent=(powerBusy||state.power_transition)?'Восстанавливаем сетевые настройки. Дождитесь завершения переключения.':state.power_error||'VPN выключен, но системная блокировка Android запрещает прямое подключение.';
 }
-$('address-route-description').textContent=off?'Правила сохранены. Пока VPN выключен, эти адреса тоже идут напрямую.':'Через VPN, когда он доступен. При сбое — напрямую, без VPN-защиты.';$('address-route-tag').textContent=state.partial_fallback?'Частичный резерв':off||state.direct_fallback?'Напрямую':'VPN с резервом';
-renderTraffic();renderStableRules();renderStableDevices();
+$('address-route-description').textContent=off?'Правила сохранены. Пока VPN выключен, эти адреса тоже идут напрямую.':'Только через VPN. При сбое — блокировка до восстановления или ручного выключения.';$('address-route-tag').textContent=off?'Напрямую':state.protection_blocked?'Ожидаем VPN':'Только VPN';
+renderPolicySync();renderTraffic();renderStableRules();renderStableDevices();
 renderActivity();
 for(const e of state.events||[]){if(Number(e.id)<=Number(lastEvent||0))continue;if(window.linevpn)window.linevpn.notify(e);lastEvent=e.id}}
-async function update(){const sequence=++updateSequence;try{const fresh=await api('state');if(sequence!==updateSequence)return;state=fresh;render()}catch(e){if(powerBusy||state.power_transition)return;$('vpn-toggle').disabled=true;$('status-badge').dataset.status='warning';$('status-label').textContent='СЛУЖБА НЕ ОТВЕЧАЕТ';$('hero-description').textContent='VPN-защита недоступна. Сеть должна работать напрямую; при включённой блокировке Android отключите её в настройках VPN.'}}
+async function update(){const sequence=++updateSequence;try{const fresh=await api('state');if(sequence!==updateSequence)return;state=fresh;render()}catch(e){if(powerBusy||state.power_transition)return;$('vpn-toggle').disabled=true;$('status-badge').dataset.status='warning';$('status-label').textContent='СЛУЖБА НЕ ОТВЕЧАЕТ';$('hero-description').textContent='Состояние службы неизвестно. Не отключайте системную защиту: дождитесь перезапуска службы или явно выключите VPN.'}}
 function authMode(m){
   mode=m;resetDeviceChoice();renderDeviceIdentity();
   ['login','register','pair'].forEach(x=>{$('tab-'+x).classList.toggle('selected',x===m);$('tab-'+x).setAttribute('aria-pressed',String(x===m))});
@@ -102,10 +109,10 @@ $('rotate-access-key').onclick=async()=>{
 };
 function renderPower(){
   const enabled=state.vpn_enabled!==false, pending=powerBusy||state.power_transition;
-  $('vpn-toggle').textContent=pending?'Переключаем…':state.power_error?'Повторить переключение':enabled?'Выключить VPN':'Включить VPN';
+  $('vpn-toggle').textContent=pending?'Переключаем…':!enabled&&state.power_error?'Повторить выключение':enabled?'Выключить VPN':'Включить VPN';
   $('vpn-toggle').disabled=!!pending;$('vpn-toggle').setAttribute('aria-pressed',String(enabled));
   $('vpn-mode-note').hidden=false;
-  $('vpn-mode-note').textContent=pending?'Переключаем сетевые настройки. Фоновая служба может кратковременно перезапуститься.':state.power_error?'Не удалось переключить сеть: '+state.power_error:state.status==='system_blocked'?'VPN выключен, но Android блокирует интернет. Отключите «Блокировать соединения без VPN» в настройках VPN.':enabled?'Приоритет — доступность сети. При сбое VPN соединения смогут идти напрямую, без VPN-защиты.':'VPN выключен. Системные DNS восстановлены, перехват трафика отключён. Правила сохранены.';
+  $('vpn-mode-note').textContent=pending?'Переключаем сетевые настройки. Фоновая служба может кратковременно перезапуститься.':state.power_error?'Не удалось переключить сеть: '+state.power_error:state.status==='system_blocked'?'Android блокирует интернет: прямой режим не запущен. Повторите переключение.':enabled?'Разрешённые адреса и доверенные приложения используют только VPN. При сбое ждут восстановления. Прямой доступ — после ручного выключения.':'VPN выключен. Все соединения идут напрямую, без VPN-сервера. Правила сохранены.';
 }
 async function waitForPower(enabled){
   const deadline=Date.now()+60000;
@@ -122,11 +129,7 @@ async function waitForPower(enabled){
 }
 $('vpn-toggle').onclick=async()=>{
   if(powerBusy||state.power_transition)return;
-  const enabled=state.power_error?state.vpn_enabled!==false:state.vpn_enabled===false;
-  if(!enabled&&window.LineBridge&&state.guard){
-    if(await confirmChange('Android блокирует соединения без VPN','Для выключения VPN сначала отключите «Блокировать соединения без VPN» в системных настройках. Открыть настройки?'))window.LineBridge.settings();
-    return;
-  }
+  const enabled=state.vpn_enabled===false&&!state.power_error;
   if(!enabled&&!await confirmChange('Выключить VPN?','Весь трафик этого устройства, включая разрешённые адреса и доверенные приложения, будет идти напрямую. Правила сохранятся.'))return;
   ++updateSequence;powerBusy=true;render();
   try{
@@ -135,7 +138,7 @@ $('vpn-toggle').onclick=async()=>{
     if(out.power_transition)await waitForPower(enabled);
     if(state.power_error)throw Error(state.power_error);
     if(state.status==='system_blocked')throw Error('Android блокирует интернет. Отключите блокировку без VPN в настройках.');
-    toast(enabled?'VPN включён. Проверяем соединение.':'VPN выключен. Сетевые настройки восстановлены.');
+    toast(enabled?'VPN включён. Проверяем соединение.':'VPN выключен. Все соединения идут напрямую.');
   }catch(e){toast(e.message);await update()}finally{powerBusy=false;render()}
 };
 $('rule-form').onsubmit=async e=>{e.preventDefault();try{await approve($('rule-input').value.trim());$('rule-input').value=''}catch(e){}};
