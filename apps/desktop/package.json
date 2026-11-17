@@ -1,13 +1,13 @@
 {
   "name": "linevpn-desktop",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Линия — VPN с разрешениями для адресов",
   "author": "jEUGENEdev",
   "main": "main.cjs",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder"
+    "dist": "node package.cjs"
   },
   "devDependencies": {
     "electron": "45.3.3",
@@ -37,38 +37,6 @@
       "hardenedRuntime": true,
       "artifactName": "LineVPN-${version}-macos-${arch}.${ext}",
       "notarize": false
-    },
-    "dmg": {
-      "contents": [
-        {
-          "x": 130,
-          "y": 180
-        },
-        {
-          "x": 410,
-          "y": 180,
-          "type": "link",
-          "path": "/Applications"
-        },
-        {
-          "x": 265,
-          "y": 290,
-          "type": "file",
-          "path": "assets/Install-Service.command"
-        },
-        {
-          "x": 130,
-          "y": 290,
-          "type": "file",
-          "path": "assets/Install-LineVPN-Service.pkg"
-        },
-        {
-          "x": 410,
-          "y": 290,
-          "type": "file",
-          "path": "assets/Uninstall-LineVPN.command"
-        }
-      ]
     },
     "win": {
       "target": [

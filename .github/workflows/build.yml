@@ -21,6 +21,8 @@ jobs:
       - run: go test -race -tags with_gvisor ./...
       - run: go vet -tags with_gvisor ./...
       - run: python3 scripts/test-network-packaging.py
+      - run: python3 scripts/package_version.py --check-newer
+      - run: python3 scripts/test-installer-upgrade.py
       - uses: actions/setup-node@v4
         with: {node-version: '24'}
       - name: Test client UI and capture layouts
@@ -43,6 +45,12 @@ jobs:
     timeout-minutes: 35
     needs: test
     runs-on: ubuntu-24.04
+    env:
+      LINEVPN_ANDROID_VARIANT: debug
+      ANDROID_KEYSTORE: ${{ github.workspace }}/build/android-signing.keystore
+      ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - name: Reserve space on the disposable Android runner
@@ -51,6 +59,21 @@ jobs:
         with: {go-version: '1.27.4', cache: true}
       - uses: actions/setup-java@v4
         with: {distribution: temurin, java-version: '17'}
+      - name: Restore the existing Android signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          python3 - <<'PY'
+          import base64, os, pathlib
+          encoded = os.environ.get('ANDROID_KEYSTORE_BASE64', '')
+          if not encoded:
+              raise SystemExit('Configure the existing Android signing key; a new debug key cannot update installed clients')
+          target = pathlib.Path(os.environ['ANDROID_KEYSTORE'])
+          target.parent.mkdir(parents=True, exist_ok=True)
+          target.write_bytes(base64.b64decode(encoded, validate=True))
+          target.chmod(0o600)
+          PY
+          python3 scripts/verify_android_update.py
       - uses: android-actions/setup-android@v3
         with:
           packages: platform-tools
@@ -95,12 +118,17 @@ jobs:
       - name: Collect explicitly marked preview APK
         run: |
           mkdir -p build/installers
-          cp apps/android/app/build/outputs/apk/debug/app-debug.apk build/installers/LineVPN-0.2.0-android-preview.apk
+          vpn_version="$(python3 scripts/package_version.py)"
+          python3 scripts/verify_android_update.py apps/android/app/build/outputs/apk/debug/app-debug.apk
+          cp apps/android/app/build/outputs/apk/debug/app-debug.apk "build/installers/LineVPN-$vpn_version-android-preview.apk"
       - uses: actions/upload-artifact@v4
         with:
           name: installer-android
           path: build/installers/*.apk
           if-no-files-found: error
+      - name: Remove temporary signing material
+        if: always()
+        run: rm -f "$ANDROID_KEYSTORE"
   windows:
     timeout-minutes: 25
     needs: test

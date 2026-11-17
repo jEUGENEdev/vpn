@@ -58,6 +58,16 @@ for ((vpn_run=1; vpn_run<=vpn_smoke_runs; vpn_run++)); do
   adb exec-out run-as dev.linevpn.app cat files/native-preview.png > build/android-native.png
 done
 
+# Replacing the APK must retain the configured application's private state.
+# This is deliberately outside the fresh-state smoke loop: no pm clear/uninstall.
+adb shell am force-stop dev.linevpn.app
+adb exec-out run-as dev.linevpn.app sha256sum files/profile.json files/applications.json > build/android-before-reinstall.sha256
+test -s build/android-before-reinstall.sha256
+adb install -r apps/android/app/build/outputs/apk/debug/app-debug.apk
+adb shell am force-stop dev.linevpn.app
+adb exec-out run-as dev.linevpn.app sha256sum files/profile.json files/applications.json > build/android-after-reinstall.sha256
+cmp build/android-before-reinstall.sha256 build/android-after-reinstall.sha256
+
 # Package removal must leave ordinary networking without recovery commands.
 adb uninstall dev.linevpn.app
 adb shell ping -c 1 -W 5 10.0.2.2

@@ -2,6 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [[ "$(uname -s)" == Darwin ]] || { echo 'Build macOS installers on a Mac.' >&2; exit 1; }
+vpn_version="$(python3 scripts/package_version.py --check-newer)"
 vpn_arch="${1:-arm64}"
 case "$vpn_arch" in arm64) vpn_electron_arch=arm64;; amd64) vpn_electron_arch=x64;; *) echo 'Use arm64 or amd64' >&2; exit 1;; esac
 export LINEVPN_MACOS_SIGNING="${LINEVPN_MACOS_SIGNING:-preview}"
@@ -24,36 +25,59 @@ case "$LINEVPN_MACOS_SIGNING" in
   *) echo 'LINEVPN_MACOS_SIGNING must be preview or release' >&2; exit 1;;
 esac
 # Eliminate stale architecture/signature artifacts before preparing this payload.
-rm -rf build/macos-root build/macos-scripts apps/desktop/assets apps/desktop/dist
+rm -rf build/macos-root build/macos-scripts build/macos-image apps/desktop/assets apps/desktop/dist
 mkdir -p build/macos-root/Library/LaunchDaemons 'build/macos-root/Library/Application Support/LineVPN' build/macos-scripts apps/desktop/assets
 python3 scripts/collect-licenses.py apps/desktop/assets/THIRD_PARTY_NOTICES.txt
 GOOS=darwin GOARCH="$vpn_arch" CGO_ENABLED=0 go build -tags with_gvisor -trimpath -ldflags='-s -w' -o 'build/macos-root/Library/Application Support/LineVPN/linevpn-agent' ./cmd/linevpn-agent
 cp packaging/macos/dev.linevpn.agent.plist build/macos-root/Library/LaunchDaemons/
-cp packaging/macos/postinstall build/macos-scripts/postinstall
+cp packaging/macos/preinstall packaging/macos/postinstall build/macos-scripts/
+printf '%s\n' "$vpn_version" > build/macos-scripts/version
 cp packaging/macos/recover-network.sh packaging/macos/service-wrapper.sh packaging/macos/uninstall.sh 'build/macos-root/Library/Application Support/LineVPN/'
 cp packaging/macos/Uninstall-LineVPN.command apps/desktop/assets/
 chmod 755 apps/desktop/assets/Uninstall-LineVPN.command
-chmod 755 build/macos-scripts/postinstall 'build/macos-root/Library/Application Support/LineVPN/'*
+chmod 755 build/macos-scripts/preinstall build/macos-scripts/postinstall 'build/macos-root/Library/Application Support/LineVPN/'*
 codesign "${vpn_sign_args[@]}" 'build/macos-root/Library/Application Support/LineVPN/linevpn-agent'
 codesign --verify --strict 'build/macos-root/Library/Application Support/LineVPN/linevpn-agent'
-pkgbuild --root build/macos-root --scripts build/macos-scripts --identifier dev.linevpn.service --version 0.2.0 --install-location / "${vpn_pkg_args[@]}" apps/desktop/assets/Install-LineVPN-Service.pkg
-if [[ "$LINEVPN_MACOS_SIGNING" == release ]]; then
-  pkgutil --check-signature apps/desktop/assets/Install-LineVPN-Service.pkg
-  xcrun notarytool submit apps/desktop/assets/Install-LineVPN-Service.pkg --keychain-profile "$LINEVPN_MACOS_NOTARY_PROFILE" --wait
-  xcrun stapler staple apps/desktop/assets/Install-LineVPN-Service.pkg
-  xcrun stapler validate apps/desktop/assets/Install-LineVPN-Service.pkg
-fi
-cat > apps/desktop/assets/Install-Service.command <<'COMMAND'
-#!/bin/bash
-open "$(dirname "$0")/Install-LineVPN-Service.pkg"
-COMMAND
-chmod 755 apps/desktop/assets/Install-Service.command
+# Sign/notarize the app first. The full PKG is kept outside its payload so that
+# installing the service cannot leave an older UI (or recursively embed itself).
 (
   cd apps/desktop
   npm ci
-  npx electron-builder --mac dmg --"$vpn_electron_arch" --publish never "${vpn_builder_args[@]}"
+  npx electron-builder --mac --dir --"$vpn_electron_arch" --publish never "${vpn_builder_args[@]}"
 )
-vpn_dmg="apps/desktop/dist/LineVPN-0.2.0-macos-$vpn_electron_arch.dmg"
+vpn_app_dir=apps/desktop/dist/mac
+[[ "$vpn_electron_arch" != arm64 ]] || vpn_app_dir=apps/desktop/dist/mac-arm64
+mkdir -p build/macos-root/Applications build/macos-image
+ditto "$vpn_app_dir/LineVPN.app" build/macos-root/Applications/LineVPN.app
+pkgbuild --analyze --root build/macos-root build/macos-components.plist
+python3 - <<'PY'
+import pathlib, plistlib
+path = pathlib.Path('build/macos-components.plist')
+components = plistlib.loads(path.read_bytes())
+for component in components:
+    component['BundleIsRelocatable'] = False
+    component['BundleIsVersionChecked'] = True
+    component['BundleHasStrictIdentifier'] = True
+    component['BundleOverwriteAction'] = 'upgrade'
+path.write_bytes(plistlib.dumps(components))
+PY
+vpn_pkg=build/macos-image/Install-LineVPN.pkg
+pkgbuild --root build/macos-root --scripts build/macos-scripts --component-plist build/macos-components.plist --identifier dev.linevpn.service --version "$vpn_version" --install-location / "${vpn_pkg_args[@]}" "$vpn_pkg"
+if [[ "$LINEVPN_MACOS_SIGNING" == release ]]; then
+  pkgutil --check-signature "$vpn_pkg"
+  xcrun notarytool submit "$vpn_pkg" --keychain-profile "$LINEVPN_MACOS_NOTARY_PROFILE" --wait
+  xcrun stapler staple "$vpn_pkg"
+  xcrun stapler validate "$vpn_pkg"
+fi
+cat > build/macos-image/Install-LineVPN.command <<'COMMAND'
+#!/bin/bash
+open "$(dirname "$0")/Install-LineVPN.pkg"
+COMMAND
+chmod 755 build/macos-image/Install-LineVPN.command
+cp packaging/macos/Uninstall-LineVPN.command build/macos-image/
+printf '%s\n' 'Откройте Install-LineVPN.pkg: он устанавливает или обновляет приложение и службу вместе.' 'Удалять предыдущую версию не нужно. Профиль и правила сохраняются.' 'После завершения откройте Линию VPN из Программ.' > build/macos-image/READ-ME.txt
+vpn_dmg="apps/desktop/dist/LineVPN-$vpn_version-macos-$vpn_electron_arch.dmg"
+hdiutil create -volname "LineVPN $vpn_version" -srcfolder build/macos-image -format UDZO -ov "$vpn_dmg"
 if [[ "$LINEVPN_MACOS_SIGNING" == release ]]; then
   codesign "${vpn_sign_args[@]}" "$vpn_dmg"
   xcrun notarytool submit "$vpn_dmg" --keychain-profile "$LINEVPN_MACOS_NOTARY_PROFILE" --wait

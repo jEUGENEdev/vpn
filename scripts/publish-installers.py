@@ -1,8 +1,13 @@
 """Publish only a complete four-installer set; never create placeholder binaries."""
 import hashlib,json,os,pathlib,shutil,sys,datetime
+from package_version import product_version, android_code, check_newer
+from verify_android_update import expected_certificate
+check_newer()
+version = product_version()
+certificate = expected_certificate()
 source,dest=map(pathlib.Path,sys.argv[1:]);files=sorted(p for p in source.iterdir() if p.suffix in {'.apk','.dmg','.msi'})
 if len([p for p in files if p.suffix=='.apk'])!=1 or len([p for p in files if p.suffix=='.msi'])!=1 or len([p for p in files if p.suffix=='.dmg'])!=2:raise SystemExit('A complete APK + MSI + two DMG set is required')
-manifest={'version':'0.2.0-preview','source_commit':os.environ['SOURCE_COMMIT'],'built_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'status':'preview-native-acceptance-required','signing':{'android':'development key; stable release signing not configured','macos':'ad-hoc signed app and agent; not Apple notarized; PKG unsigned','windows':'not Authenticode signed'},'files':[]}
+manifest={'version':version+'-preview','android_version_code':android_code(version),'android_certificate_sha256':certificate,'source_commit':os.environ['SOURCE_COMMIT'],'built_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'status':'preview-native-acceptance-required','signing':{'android':'persistent preview certificate, verified against the previous published APK','macos':'ad-hoc signed app and agent; not Apple notarized; PKG unsigned','windows':'not Authenticode signed'},'files':[]}
 dest.mkdir(parents=True,exist_ok=True)
 for old in dest.iterdir():
  if old.suffix in {'.apk','.msi','.dmg'}:old.unlink()

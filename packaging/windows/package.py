@@ -1,11 +1,21 @@
 """Generate WiX v4 package with a real, automatically installed Windows service."""
 import pathlib, uuid, xml.etree.ElementTree as ET, sys
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / 'scripts'))
+from package_version import product_version
+version = product_version()
 root=pathlib.Path(sys.argv[1]).resolve(); out=pathlib.Path(sys.argv[2])
 out.parent.mkdir(parents=True, exist_ok=True)
 ns='http://wixtoolset.org/schemas/v4/wxs'; ET.register_namespace('',ns)
 def node(parent,tag,**attrs):return ET.SubElement(parent,'{'+ns+'}'+tag,attrs)
-w=ET.Element('{'+ns+'}Wix'); p=node(w,'Package',Name='LineVPN',Manufacturer='jEUGENEdev',Version='0.2.0',UpgradeCode='{0ACF9EA2-83F8-4EE0-8877-E3BAE8A42E91}',Scope='perMachine',InstallerVersion='500',Codepage='1251',Language='1049')
-node(p,'MajorUpgrade',DowngradeErrorMessage='A newer LineVPN version is installed.',AllowSameVersionUpgrades='yes');node(p,'MediaTemplate',EmbedCab='yes',CompressionLevel='high')
+# The same release is maintenance/repair; a new version gets a new ProductCode.
+product_code = str(uuid.uuid5(uuid.NAMESPACE_URL, 'dev.linevpn.windows.x64:' + version))
+w=ET.Element('{'+ns+'}Wix'); p=node(w,'Package',Name='LineVPN',Manufacturer='jEUGENEdev',Version=version,ProductCode=product_code,UpgradeCode='{0ACF9EA2-83F8-4EE0-8877-E3BAE8A42E91}',Scope='perMachine',InstallerVersion='500',Codepage='1251',Language='1049')
+# Remove the previous product inside the transaction so a failed upgrade rolls back.
+node(p,'MajorUpgrade',DowngradeErrorMessage='A newer LineVPN version is installed.',Schedule='afterInstallInitialize');node(p,'MediaTemplate',EmbedCab='yes',CompressionLevel='high')
+# Opening the SAME MSI again repairs the existing product, including unversioned
+# Go/JS files. Explicit removal and major-upgrade removal never enter this path.
+node(p,'SetProperty',Id='REINSTALL',Value='ALL',Before='CostInitialize',Sequence='both',Condition='Installed AND NOT REMOVE AND NOT UPGRADINGPRODUCTCODE AND NOT REINSTALL')
+node(p,'SetProperty',Id='REINSTALLMODE',Value='amus',Before='CostInitialize',Sequence='both',Condition='Installed AND NOT REMOVE AND NOT UPGRADINGPRODUCTCODE AND NOT REINSTALLMODE')
 program=node(p,'StandardDirectory',Id='ProgramFiles64Folder');install=node(program,'Directory',Id='INSTALLFOLDER',Name='LineVPN')
 feature=node(p,'Feature',Id='Main',Title='LineVPN',Level='1');dirs={pathlib.Path('.'):install}
 for i,file in enumerate(sorted(root.rglob('*'))):

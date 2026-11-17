@@ -2,7 +2,9 @@
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Use an isolated CI runner for this network test' }
 Set-Location (Join-Path $PSScriptRoot '..')
-$msi = (Resolve-Path build/LineVPN-0.2.0-windows-x64.msi).Path
+$vpnVersion = python scripts/package_version.py
+if ($LASTEXITCODE -ne 0) { throw 'Invalid installer version' }
+$msi = (Resolve-Path "build/LineVPN-$vpnVersion-windows-x64.msi").Path
 $agent = Join-Path $env:ProgramFiles 'LineVPN/resources/agent/linevpn-agent.exe'
 $log = Join-Path (Get-Location) 'build/windows-install.log'
 $nativeOK = $false
@@ -45,6 +47,18 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Offline approved address lost direct connectivity' }
     python scripts/test-desktop-power.py
     if ($LASTEXITCODE -ne 0) { throw 'Native power cycle regression failed' }
+    # Same MSI = repair of the existing product, with the existing state intact.
+    Stop-Service LineVPN
+    $dataPath = Join-Path $env:ProgramData 'LineVPN'
+    python scripts/test-upgrade-state.py snapshot $dataPath build/windows-upgrade-state.json
+    if ($LASTEXITCODE -ne 0) { throw 'Could not snapshot configured client state' }
+    $repair = Start-Process msiexec.exe -ArgumentList @('/i', ('"' + $msi + '"'), '/qn', '/norestart') -Wait -PassThru
+    if ($repair.ExitCode -notin @(0, 3010)) { throw "MSI repeat installation failed: $($repair.ExitCode)" }
+    python scripts/test-upgrade-state.py check $dataPath build/windows-upgrade-state.json
+    if ($LASTEXITCODE -ne 0) { throw 'Repair changed saved client data' }
+    $products = @(Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' | Get-ItemProperty | Where-Object { $_.DisplayName -eq 'LineVPN' })
+    if ($products.Count -ne 1 -or $products[0].DisplayVersion -ne $vpnVersion) { throw 'Duplicate or stale installed product after repair' }
+    Start-Service LineVPN
     Write-Output 'Checking abrupt process termination and direct connectivity'
     Set-Service LineVPN -StartupType Disabled
     $vpnProcess = (Get-CimInstance Win32_Service -Filter "Name='LineVPN'").ProcessId
@@ -71,4 +85,4 @@ try {
     if (Test-Path $agent) { & $agent -recover-network }
     if (-not $nativeOK) { Start-Process msiexec.exe -ArgumentList @('/x', ('"' + $msi + '"'), '/qn', '/norestart') -Wait | Out-Null }
 }
-if ($nativeOK) { 'PASS: MSI install, DNS, direct fallback, off/on, process termination and automatic uninstall recovery' | Set-Content build/windows-native.txt }
+if ($nativeOK) { 'PASS: MSI install/repair preserves state and one product, DNS, direct fallback, off/on, process termination and automatic uninstall recovery' | Set-Content build/windows-native.txt }

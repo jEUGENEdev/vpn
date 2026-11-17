@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 # Called by Apple's Installer as root; no credentials are stored here.
+[[ "$EUID" -eq 0 && "${3:-/}" == / ]] || { echo 'Install on the running system volume as root.' >&2; exit 1; }
 if ! /usr/bin/id _linevpn >/dev/null 2>&1; then
   vpn_uid=399
   # The account and group share a number; it must be unused in BOTH namespaces.
@@ -21,9 +22,9 @@ if ! /usr/bin/id _linevpn >/dev/null 2>&1; then
 fi
 mkdir -p /var/lib/linevpn
 chmod 711 /var/lib/linevpn
-/bin/launchctl bootout system/dev.linevpn.agent 2>/dev/null || true
+# preinstall already stopped the old daemon before payload replacement.
 if /bin/launchctl print system/dev.linevpn.agent >/dev/null 2>&1; then
-  echo 'Cannot stop the previous LineVPN service.' >&2
+  echo 'Another LineVPN service started during installation. Retry the installer.' >&2
   exit 1
 fi
 '/Library/Application Support/LineVPN/linevpn-agent' -data /var/lib/linevpn -recover-network
