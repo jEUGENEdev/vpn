@@ -21,13 +21,11 @@ if ! /usr/bin/id _linevpn >/dev/null 2>&1; then
 fi
 mkdir -p /var/lib/linevpn
 chmod 711 /var/lib/linevpn
-if ! /usr/bin/grep -q 'anchor "linevpn"' /etc/pf.conf; then
-  cp -p /etc/pf.conf /etc/pf.conf.linevpn-backup
-  /usr/bin/awk '/^anchor "com.apple\/\*"/ && !done {print "anchor \"linevpn\" out quick"; done=1} {print} END {if (!done) print "anchor \"linevpn\" out quick"}' /etc/pf.conf > /etc/pf.conf.linevpn-new
-  /sbin/pfctl -nf /etc/pf.conf.linevpn-new
-  cat /etc/pf.conf.linevpn-new > /etc/pf.conf
-  rm /etc/pf.conf.linevpn-new
-fi
-/sbin/pfctl -f /etc/pf.conf
 /bin/launchctl bootout system/dev.linevpn.agent 2>/dev/null || true
+if /bin/launchctl print system/dev.linevpn.agent >/dev/null 2>&1; then
+  echo 'Cannot stop the previous LineVPN service.' >&2
+  exit 1
+fi
+'/Library/Application Support/LineVPN/linevpn-agent' -data /var/lib/linevpn -recover-network
+/bin/launchctl enable system/dev.linevpn.agent
 /bin/launchctl bootstrap system /Library/LaunchDaemons/dev.linevpn.agent.plist

@@ -36,7 +36,7 @@ def ready(enabled):
             continue
         assert not state.get("power_error"), state.get("power_error")
         if not state.get("power_transition") and state["vpn_enabled"] == enabled:
-            assert state["tunnel"] == enabled and state["guard"] == enabled, state
+            assert state["tunnel"] == enabled and state["guard"] is False, state
             return
         time.sleep(.25)
     raise AssertionError("Native power transition did not finish")
@@ -49,6 +49,13 @@ def direct_works():
     assert all(not any(ipaddress.ip_address(a[4][0]) in prefix for prefix in fake) for a in addresses), addresses
     with opener.open("http://1.1.1.1/cdn-cgi/trace", timeout=8) as response:
         assert response.status == 200
+
+
+def tunnel_dns_works():
+    # Use the OS resolver and an uncached name, not an explicit @TUN DNS query.
+    addresses = socket.getaddrinfo("linevpn-probe-%d.example.com" % time.time_ns(), 443,
+                                  family=socket.AF_INET, type=socket.SOCK_STREAM)
+    assert addresses and all(ipaddress.ip_address(a[4][0]) in ipaddress.ip_network("198.18.0.0/15") for a in addresses), addresses
 
 
 for cycle in range(2):
@@ -70,11 +77,8 @@ for cycle in range(2):
         direct_works()
     api({"enabled": True})
     ready(True)
+    tunnel_dns_works()
     # The calling platform test pinned this IP without a configured server.
-    try:
-        opener.open("http://1.1.1.1/cdn-cgi/trace", timeout=3)
-    except OSError:
-        pass
-    else:
-        raise AssertionError("Re-enable lost saved fail-closed protection")
-print("PASS: full off/on, restored DNS, off survives service stop/restart, re-enabled fail-closed")
+    with opener.open("http://1.1.1.1/cdn-cgi/trace", timeout=8) as response:
+        assert response.status == 200
+print("PASS: full off/on, restored DNS, off survives restart, offline enable keeps direct access")

@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
 New-Item -ItemType Directory -Force apps/desktop/assets | Out-Null
+Copy-Item packaging/windows/recover-network.ps1 apps/desktop/assets/recover-network.ps1
 python scripts/collect-licenses.py apps/desktop/assets/THIRD_PARTY_NOTICES.txt
 if ($LASTEXITCODE -ne 0) { throw 'Dependency notices failed' }
 $env:GOOS='windows'; $env:GOARCH='amd64'; $env:CGO_ENABLED='0'

@@ -64,9 +64,6 @@ func (c *Client) JudgeFlow(network uint8, source, dest netip.AddrPort, first []b
 	if network != 6 && network != 17 {
 		return tun.FlowVerdict{Action: tun.ActionReject}
 	}
-	if dest.Port() == 853 && !c.disabled() {
-		return tun.FlowVerdict{Action: tun.ActionReject}
-	}
 	if network == 17 && dest.Port() == 53 {
 		return tun.FlowVerdict{Action: tun.ActionHijackDNS}
 	}

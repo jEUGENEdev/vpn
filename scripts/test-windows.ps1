@@ -6,15 +6,10 @@ $msi = (Resolve-Path build/LineVPN-0.2.0-windows-x64.msi).Path
 $agent = Join-Path $env:ProgramFiles 'LineVPN/resources/agent/linevpn-agent.exe'
 $log = Join-Path (Get-Location) 'build/windows-install.log'
 $nativeOK = $false
-# Preserve only the CI control plane. Curl/DNS probes receive no exemption.
-$controllers = @(Get-Process -Name 'Runner.Listener','Runner.Worker' -ErrorAction SilentlyContinue | ForEach-Object { $_.Path } | Sort-Object -Unique)
-if ($controllers.Count -eq 0) { throw 'Actions controller processes not found' }
-$ciGuard = Join-Path (Get-Location) 'build/linevpn-ci-controller.exe'
-go build -tags linevpn_ci -o $ciGuard ./internal/citest/windowscontrol
-if ($LASTEXITCODE -ne 0) { throw 'CI controller helper failed to build' }
+$env:LINEVPN_NATIVE_RECOVERY_TEST = "1"
+go test ./internal/platform -run TestLegacyRecoveryAndStandaloneScript -v
+if ($LASTEXITCODE -ne 0) { throw "Legacy WFP migration failed" }
 try {
-    & $ciGuard @controllers
-    if ($LASTEXITCODE -ne 0) { throw 'Could not preserve the CI control channel' }
     $install = Start-Process msiexec.exe -ArgumentList @('/i', ('"' + $msi + '"'), '/qn', '/norestart', '/l*v', ('"' + $log + '"')) -Wait -PassThru
     if ($install.ExitCode -notin @(0, 3010)) { throw "MSI installation failed: $($install.ExitCode)" }
     Write-Output 'MSI installed; waiting for local service'
@@ -27,7 +22,7 @@ try {
             break
         } catch { Start-Sleep -Seconds 1 }
     }
-    if (-not $state.tunnel -or -not $state.guard) { throw 'TUN / persistent WFP did not start' }
+    if (-not $state.tunnel -or $state.guard) { throw 'TUN unavailable or persistent guard retained' }
     Write-Output 'Service ready; checking DNS and direct traffic'
     $answer = Resolve-DnsName example.com -Server 172.29.255.2 -Type A -DnsOnly -QuickTimeout
     if (-not ($answer.IPAddress -match '^198\.(18|19)\.')) { throw 'TUN DNS did not return a fake IP' }
@@ -40,41 +35,40 @@ try {
     $decision = @{id=$curlApp.id;decision='trusted'} | ConvertTo-Json
     Invoke-RestMethod -Uri http://127.0.0.1:17891/local/applications -Headers $headers -Method Post -ContentType 'application/json' -Body $decision -TimeoutSec 3 | Out-Null
     & curl.exe --silent --output NUL --connect-timeout 2 --max-time 3 http://1.1.1.1/cdn-cgi/trace
-    if ($LASTEXITCODE -eq 0) { throw 'Trusted application escaped without VPN' }
+    if ($LASTEXITCODE -ne 0) { throw 'Offline trusted app lost direct connectivity' }
     $decision = @{id=$curlApp.id;decision='addresses'} | ConvertTo-Json
     Invoke-RestMethod -Uri http://127.0.0.1:17891/local/applications -Headers $headers -Method Post -ContentType 'application/json' -Body $decision -TimeoutSec 3 | Out-Null
     try { Invoke-RestMethod -Uri http://127.0.0.1:17891/local/rules -Headers $headers -Method Post -ContentType 'application/json' -Body '{"target":"1.1.1.1","action":"approve","revision":0}' -TimeoutSec 3 | Out-Null } catch { }
     $state = Invoke-RestMethod -Uri http://127.0.0.1:17891/local/state -Headers $headers -TimeoutSec 2
     if ($state.pending_protection -notcontains '1.1.1.1') { throw 'Approval not protected locally' }
     & curl.exe --silent --output NUL --connect-timeout 2 --max-time 3 http://1.1.1.1/cdn-cgi/trace
-    if ($LASTEXITCODE -eq 0) { throw 'Approved IP escaped without VPN' }
+    if ($LASTEXITCODE -ne 0) { throw 'Offline approved address lost direct connectivity' }
     python scripts/test-desktop-power.py
     if ($LASTEXITCODE -ne 0) { throw 'Native power cycle regression failed' }
-    # Stop the service explicitly to suppress recovery while checking persistent rules.
-    Write-Output 'Checking bounded service stop and persistent WFP'
-    $service = Get-Service LineVPN
-    $service.Stop()
-    $service.WaitForStatus([System.ServiceProcess.ServiceControllerStatus]::Stopped, [TimeSpan]::FromSeconds(15))
-    & curl.exe --silent --output NUL --connect-timeout 2 --max-time 3 http://1.1.1.1/cdn-cgi/trace
-    if ($LASTEXITCODE -eq 0) { throw 'WFP guard disappeared with the service' }
-    Write-Output 'WFP remained active; restoring test machine'
+    Write-Output 'Checking abrupt process termination and direct connectivity'
+    Set-Service LineVPN -StartupType Disabled
+    $vpnProcess = (Get-CimInstance Win32_Service -Filter "Name='LineVPN'").ProcessId
+    Stop-Process -Id $vpnProcess -Force
+    Start-Sleep -Seconds 2
+    & curl.exe --silent --output NUL --connect-timeout 4 --max-time 8 http://1.1.1.1/cdn-cgi/trace
+    if ($LASTEXITCODE -ne 0) { throw 'Direct networking failed after process termination' }
+    Set-Service LineVPN -StartupType Automatic
+    Start-Service LineVPN
+    # An enabled service must stop cleanly before MSI removes its executable.
+    $remove = Start-Process msiexec.exe -ArgumentList @('/x', ('"' + $msi + '"'), '/qn', '/norestart') -Wait -PassThru
+    if ($remove.ExitCode -notin @(0,3010)) { throw "MSI removal failed: $($remove.ExitCode)" }
+    if (Get-Service LineVPN -ErrorAction SilentlyContinue) { throw 'Service survived uninstall' }
+    if (Test-Path $agent) { throw 'Agent survived uninstall' }
+    & curl.exe --silent --output NUL --connect-timeout 4 --max-time 8 http://1.1.1.1/cdn-cgi/trace
+    if ($LASTEXITCODE -ne 0) { throw 'Network failed after uninstall' }
+    Resolve-DnsName example.com -Type A -DnsOnly -QuickTimeout | Out-Null
     $nativeOK = $true
 } finally {
-    try {
-        if (Test-Path $agent) {
-            & sc.exe config LineVPN start= disabled | Out-Null
-            try {
-                $service = Get-Service LineVPN
-                if ($service.Status -ne 'Stopped') { $service.Stop(); $service.WaitForStatus([System.ServiceProcess.ServiceControllerStatus]::Stopped, [TimeSpan]::FromSeconds(15)) }
-            } catch {
-                $vpnProcess = (Get-CimInstance Win32_Service -Filter "Name='LineVPN'").ProcessId
-                if ($vpnProcess -gt 0) { Stop-Process -Id $vpnProcess -Force -ErrorAction SilentlyContinue }
-            }
-            & $agent -recover-network
-        }
-        Start-Process msiexec.exe -ArgumentList @('/x', ('"' + $msi + '"'), '/qn', '/norestart') -Wait | Out-Null
-    } finally {
-        & $ciGuard -remove @controllers
+    if (Get-Service LineVPN -ErrorAction SilentlyContinue) {
+        Set-Service LineVPN -StartupType Disabled
+        Stop-Service LineVPN -ErrorAction Continue
     }
+    if (Test-Path $agent) { & $agent -recover-network }
+    if (-not $nativeOK) { Start-Process msiexec.exe -ArgumentList @('/x', ('"' + $msi + '"'), '/qn', '/norestart') -Wait | Out-Null }
 }
-if ($nativeOK) { 'PASS: MSI install, TUN DNS, direct connection, process attribution, app trust, approval block and persistent WFP after service stop' | Set-Content build/windows-native.txt }
+if ($nativeOK) { 'PASS: MSI install, DNS, direct fallback, off/on, process termination and automatic uninstall recovery' | Set-Content build/windows-native.txt }

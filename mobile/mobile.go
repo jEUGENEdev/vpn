@@ -85,9 +85,9 @@ func Start(dir string, p Protector) (string, error) {
 	// Keep the local UI alive with no VPN interface when off, including after
 	// Android restarts an always-on service. Only explicit enable establishes it.
 	if e = s.Apply(c.VPNEnabled()); e != nil {
-		c.Close()
-		cancel()
-		return "", e
+		// Failed TUN creation must leave the UI available for off/retry. Apply
+		// has closed any descriptor it received, so ordinary networking remains.
+		c.SetNetworkError(e)
 	}
 	if !c.VPNEnabled() && p.CheckDisable() != nil {
 		c.SetGuard(true)

@@ -261,6 +261,16 @@ async function testCombinedAuthentication() {
     await w.eval('update()');
     assert.equal($('guard-warning').hidden,false);
     assert.match($('vpn-mode-note').textContent,/Android блокирует интернет/);
+    Object.assign(state,{status:'ready',vpn_enabled:true,tunnel:true,guard:false,direct_fallback:true,power_error:''});
+    await w.eval('update()');
+    assert.match($('status-label').textContent,/ПРЯМОЕ ПОДКЛЮЧЕНИЕ/,'fallback falsely showed VPN protection');
+    assert.match($('hero-description').textContent,/без VPN-защиты/);
+    assert.equal($('guard-warning').hidden,true,'client asked to enable lockdown');
+    assert.match($('vpn-mode-note').textContent,/доступность сети/);
+    Object.assign(state,{direct_fallback:false,guard:true});
+    await w.eval('update()');
+    assert.equal($('guard-warning').hidden,false,'existing Android lockdown was hidden');
+    assert.match($('guard-description').textContent,/отключите/);
     console.log('DOM integration passed: key login, device selection, pairing, one-time key and revoked-session power toggle.');
   } finally { w.close(); }
 }

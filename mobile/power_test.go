@@ -66,3 +66,26 @@ func TestAndroidOffStartupKeepsUIWithoutOpeningVPN(t *testing.T) {
 		t.Fatal("lockdown falsely reported direct access", Snapshot())
 	}
 }
+
+func TestAndroidStartupFailureLeavesControlUIAndNoTunnel(t *testing.T) {
+	p := &idleService{}
+	url, err := Start(t.TempDir(), p)
+	if err != nil {
+		t.Fatal("startup failure lost recovery UI", err)
+	}
+	defer Stop()
+	if url == "" || p.opens != 1 || !strings.Contains(Snapshot(), `"status":"network_error"`) || !strings.Contains(Snapshot(), `"tunnel":false`) {
+		t.Fatal(Snapshot(), url, p.opens)
+	}
+	if err := current.c.SetVPNEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(Snapshot(), `"status":"disabled"`) {
+		t.Fatal(Snapshot())
+	}
+	Stop()
+	Stop()
+	if URL() != "" || p.opens != 1 {
+		t.Fatal("shutdown recreated a tunnel")
+	}
+}

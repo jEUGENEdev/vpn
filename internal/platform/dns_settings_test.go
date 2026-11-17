@@ -99,25 +99,48 @@ func TestDNSFailureRetainsBackupForRetryAndUserChanges(t *testing.T) {
 	}
 }
 
-func TestDNSRejectsMissingOrCorruptRecoveryData(t *testing.T) {
-	m := &dnsMachine{values: map[string][]string{"Wi-Fi": {tunnelDNS}, "USB Ethernet": {"Empty"}}}
+func TestDNSOrphanAndCorruptBackupRestoreOnlyOwnedSettings(t *testing.T) {
+	for _, raw := range []string{"", "broken JSON", `{"Wi-Fi":["172.29.255.2"]}`} {
+		t.Run(raw, func(t *testing.T) {
+			m := &dnsMachine{values: map[string][]string{"Wi-Fi": {tunnelDNS}, "USB Ethernet": {"9.9.9.9"}}}
+			d := dnsSettings{filepath.Join(t.TempDir(), "dns-backup.json"), m.run}
+			if raw != "" {
+				os.WriteFile(d.path, []byte(raw), 0600)
+			}
+			if err := d.restore(); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(m.values["Wi-Fi"], []string{"Empty"}) {
+				t.Fatal("orphan DNS retained", m.values)
+			}
+			if !reflect.DeepEqual(m.values["USB Ethernet"], []string{"9.9.9.9"}) {
+				t.Fatal("user DNS overwritten")
+			}
+		})
+	}
+}
+
+func TestDNSRecoveryContinuesAfterFirstInterfaceFailure(t *testing.T) {
+	m := &dnsMachine{values: map[string][]string{"Wi-Fi": {tunnelDNS}, "USB Ethernet": {tunnelDNS, "9.9.9.9"}}, failSet: "Wi-Fi"}
 	d := dnsSettings{filepath.Join(t.TempDir(), "dns-backup.json"), m.run}
 	if err := d.restore(); err == nil {
-		t.Fatal("silently kept orphan fake DNS")
+		t.Fatal("failure hidden")
 	}
-	if err := d.configure(); err == nil {
-		t.Fatal("saved orphan fake DNS as original DNS")
+	if !reflect.DeepEqual(m.values["USB Ethernet"], []string{"9.9.9.9"}) {
+		t.Fatal("later interface not repaired", m.values)
 	}
-	if err := os.WriteFile(d.path, []byte(`{"Wi-Fi":["172.29.255.2"]}`), 0600); err != nil {
+}
+
+func TestDNSRecoveryPreservesAddedServerDespiteOldBackup(t *testing.T) {
+	m := &dnsMachine{values: map[string][]string{"Wi-Fi": {tunnelDNS, "1.0.0.1"}, "USB Ethernet": {"Empty"}}}
+	d := dnsSettings{filepath.Join(t.TempDir(), "dns-backup.json"), m.run}
+	if err := os.WriteFile(d.path, []byte(`{"Wi-Fi":["9.9.9.9"]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.restore(); err == nil {
-		t.Fatal("restored fake DNS as original DNS")
-	}
-	if err := os.WriteFile(d.path, []byte("broken JSON"), 0600); err != nil {
+	if err := d.restore(); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.configure(); err == nil {
-		t.Fatal("overwrote corrupt backup")
+	if !reflect.DeepEqual(m.values["Wi-Fi"], []string{"1.0.0.1"}) {
+		t.Fatal("overwrote DNS added by user", m.values)
 	}
 }

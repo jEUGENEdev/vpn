@@ -32,7 +32,7 @@ func (h handler) Execute(args []string, requests <-chan svc.ChangeRequest, chang
 				select {
 				case <-done:
 				case <-time.After(8 * time.Second):
-					// Returning ends the service process; persistent WFP stays active.
+					// Process exit releases the TUN; no persistent deny is installed.
 				}
 				return false, 0
 			case svc.Interrogate:

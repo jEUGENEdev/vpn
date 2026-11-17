@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"time"
 
 	"github.com/jEUGENEdev/vpn/internal/secure"
 )
@@ -77,6 +78,7 @@ func (c *Client) SetVPNEnabled(enabled bool) error {
 	c.powerPending, c.powerError = true, ""
 	c.routeEpoch++
 	c.ready, c.vpnFailed = false, false
+	c.fallbackUntil = time.Time{}
 	for flow := range c.active {
 		delete(c.active, flow)
 		flow.Close()

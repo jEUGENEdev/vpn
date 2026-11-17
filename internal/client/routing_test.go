@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"github.com/jEUGENEdev/vpn/internal/model"
+	"github.com/jEUGENEdev/vpn/internal/policy"
 	"github.com/jEUGENEdev/vpn/internal/transport"
 	"net"
 	"net/http"
@@ -11,29 +12,31 @@ import (
 	"testing"
 )
 
-func TestApprovedNeverDirectWhenOffline(t *testing.T) {
+func TestApprovedFallsBackToDirectWhenOffline(t *testing.T) {
 	c, e := New(t.TempDir(), &transport.Dialer{})
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer c.Close()
 	c.config.Profile = model.Profile{Rules: []string{"example.com", "127.0.0.1"}}
-	c.ready = false
 	ln, e := net.Listen("tcp", "127.0.0.1:0")
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer ln.Close()
-	port := uint16(ln.Addr().(*net.TCPAddr).Port)
-	if conn, e := c.Dial(context.Background(), "tcp", "127.0.0.1", port); e == nil {
-		conn.Close()
-		t.Fatal("approved IP leaked")
+	conn, e := c.Dial(context.Background(), "tcp", "127.0.0.1", uint16(ln.Addr().(*net.TCPAddr).Port))
+	if e != nil {
+		t.Fatal("offline VPN blocked direct networking", e)
 	}
-	if _, e = c.Dial(context.Background(), "tcp", "api.example.com", 443); e == nil {
-		t.Fatal("approved subdomain leaked")
+	conn.Close()
+	if c.routeLocked("api.example.com", "") != policy.Direct {
+		t.Fatal("subdomain unavailable")
 	}
 	if _, e = c.target(netip.MustParseAddr("198.18.4.4")); e == nil {
-		t.Fatal("unknown fake address bypass")
+		t.Fatal("unknown synthetic IP escaped")
+	}
+	if len(c.Events.List()) != 1 {
+		t.Fatal("fallback was silent")
 	}
 }
 func TestUnapprovedDirect(t *testing.T) {
@@ -57,7 +60,7 @@ func TestUnapprovedDirect(t *testing.T) {
 	}
 }
 
-func TestApprovalProtectedBeforeServerAcknowledges(t *testing.T) {
+func TestPendingApprovalPersistsWithoutBlockingDirect(t *testing.T) {
 	dir := t.TempDir()
 	c, e := New(dir, &transport.Dialer{})
 	if e != nil {
@@ -67,9 +70,8 @@ func TestApprovalProtectedBeforeServerAcknowledges(t *testing.T) {
 	if e == nil {
 		t.Fatal("server absent")
 	}
-	if conn, e := c.Dial(context.Background(), "tcp", "a.example.com", 443); e == nil {
-		conn.Close()
-		t.Fatal("pending approval fell back to direct")
+	if c.routeLocked("a.example.com", "") != policy.Direct || len(c.config.Pinned) != 1 {
+		t.Fatal("pending approval blocked direct or was lost")
 	}
 	c.Close()
 	c, e = New(dir, &transport.Dialer{})
@@ -77,13 +79,12 @@ func TestApprovalProtectedBeforeServerAcknowledges(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer c.Close()
-	if conn, e := c.Dial(context.Background(), "tcp", "a.example.com", 443); e == nil {
-		conn.Close()
-		t.Fatal("pending protection lost after restart")
+	if c.routeLocked("a.example.com", "") != policy.Direct || len(c.config.Pinned) != 1 {
+		t.Fatal("restart lost pending rule or direct fallback")
 	}
 }
 
-func TestAuthenticationExpiryRetainsProtection(t *testing.T) {
+func TestAuthenticationExpiryPreservesRulesAndDirectAccess(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
@@ -105,9 +106,8 @@ func TestAuthenticationExpiryRetainsProtection(t *testing.T) {
 	if c.status != "auth_required" {
 		t.Fatal(c.status)
 	}
-	if conn, e := c.Dial(context.Background(), "tcp", "example.com", 443); e == nil {
-		conn.Close()
-		t.Fatal("expired account fell back to direct")
+	if c.routeLocked("example.com", "") != policy.Direct {
+		t.Fatal("expired account blocked network")
 	}
 }
 

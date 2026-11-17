@@ -2,7 +2,9 @@ package platform
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -148,37 +150,51 @@ func (d dnsSettings) configure() error {
 }
 
 func (d dnsSettings) restore() error {
-	backup, err := d.backup()
-	if err != nil {
-		return err
+	backup, backupErr := d.backup()
+	if backupErr != nil {
+		// An old/corrupt/missing backup must never strand a physical NIC on
+		// tunnel DNS. Preserve the file, remove only our address, use DHCP if empty.
+		log.Printf("DNS backup unavailable; restoring owned settings to DHCP: %v", backupErr)
+		backup = map[string][]string{}
 	}
 	names, err := d.services()
 	if err != nil {
 		return err
 	}
+	var failures []error
 	for _, name := range names {
 		values, err := d.current(name)
 		if err != nil {
-			return err
+			failures = append(failures, err)
+			continue
 		}
-		// Do not overwrite DNS changed by the user or another VPN.
 		if !ownedDNS(values) {
 			continue
 		}
 		previous, ok := backup[name]
-		if !ok {
-			return fmt.Errorf("нет исходных DNS для %s; восстановите DNS в настройках сети", name)
+		if !ok || len(values) > 1 {
+			previous = nil
+			for _, value := range values {
+				if value != tunnelDNS {
+					previous = append(previous, value)
+				}
+			}
+			if len(previous) == 0 {
+				previous = []string{"Empty"}
+			}
 		}
 		if err = d.set(name, previous); err != nil {
-			return err
+			failures = append(failures, err)
 		}
 	}
-	if err = d.flush(); err != nil {
+	failures = append(failures, d.flush())
+	if err = errors.Join(failures...); err != nil {
 		return err
 	}
-	// Remove only after successful restoration; failed attempts remain retryable.
-	if err = os.Remove(d.path); err != nil && !os.IsNotExist(err) {
-		return err
+	if backupErr == nil {
+		if err = os.Remove(d.path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 	return nil
 }
