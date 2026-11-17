@@ -61,6 +61,12 @@
           "y": 290,
           "type": "file",
           "path": "assets/Install-LineVPN-Service.pkg"
+        },
+        {
+          "x": 410,
+          "y": 290,
+          "type": "file",
+          "path": "assets/Uninstall-LineVPN.command"
         }
       ]
     },

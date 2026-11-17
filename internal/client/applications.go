@@ -146,7 +146,10 @@ func (c *Client) observeLocked(target string, app model.ApplicationInfo, now tim
 // Address rules always win. Trust extends routing only for an OS-identified
 // application, and requires a separate device credential acknowledged by API.
 func (c *Client) routeLocked(target, appID string) policy.Route {
-	if c.config.Disabled {
+	if _, err := policy.Normalize(target); err != nil {
+		return policy.Block
+	}
+	if c.config.Disabled || !c.ready || time.Now().Before(c.fallbackUntil) {
 		return policy.Direct
 	}
 	route := policy.Decide(c.effectiveRules(), target, c.ready)
@@ -155,11 +158,15 @@ func (c *Client) routeLocked(target, appID string) policy.Route {
 	}
 	if app, ok := c.apps[appID]; ok && app.Decision == "trusted" {
 		if !c.ready || c.config.Profile.AppUUID == "" {
-			return policy.Block
+			return policy.Direct
 		}
 		return policy.AppVPN
 	}
 	return route
+}
+
+func (c *Client) wantsVPNLocked(target, appID string) bool {
+	return !c.config.Disabled && (policy.Approved(c.effectiveRules(), target) || c.apps[appID].Decision == "trusted")
 }
 func (c *Client) hasTrustedAppsLocked() bool {
 	for _, a := range c.apps {

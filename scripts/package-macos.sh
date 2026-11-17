@@ -30,7 +30,9 @@ python3 scripts/collect-licenses.py apps/desktop/assets/THIRD_PARTY_NOTICES.txt
 GOOS=darwin GOARCH="$vpn_arch" CGO_ENABLED=0 go build -tags with_gvisor -trimpath -ldflags='-s -w' -o 'build/macos-root/Library/Application Support/LineVPN/linevpn-agent' ./cmd/linevpn-agent
 cp packaging/macos/dev.linevpn.agent.plist build/macos-root/Library/LaunchDaemons/
 cp packaging/macos/postinstall build/macos-scripts/postinstall
-cp packaging/macos/recover-network.sh 'build/macos-root/Library/Application Support/LineVPN/'
+cp packaging/macos/recover-network.sh packaging/macos/service-wrapper.sh packaging/macos/uninstall.sh 'build/macos-root/Library/Application Support/LineVPN/'
+cp packaging/macos/Uninstall-LineVPN.command apps/desktop/assets/
+chmod 755 apps/desktop/assets/Uninstall-LineVPN.command
 chmod 755 build/macos-scripts/postinstall 'build/macos-root/Library/Application Support/LineVPN/'*
 codesign "${vpn_sign_args[@]}" 'build/macos-root/Library/Application Support/LineVPN/linevpn-agent'
 codesign --verify --strict 'build/macos-root/Library/Application Support/LineVPN/linevpn-agent'

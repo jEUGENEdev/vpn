@@ -20,6 +20,7 @@ jobs:
         with: {go-version: '1.27.4', cache: true}
       - run: go test -race -tags with_gvisor ./...
       - run: go vet -tags with_gvisor ./...
+      - run: python3 scripts/test-network-packaging.py
       - uses: actions/setup-node@v4
         with: {node-version: '24'}
       - name: Test client UI and capture layouts
@@ -117,7 +118,7 @@ jobs:
       - name: Verify Windows socket ownership
         run: go test ./internal/owner
       - run: ./scripts/package-windows.ps1
-      - name: Verify installed service and persistent WFP
+      - name: Verify service stop, crash and uninstall network recovery
         run: ./scripts/test-windows.ps1
       - uses: actions/upload-artifact@v4
         if: always()
@@ -152,7 +153,7 @@ jobs:
       - name: Verify macOS socket ownership
         run: go test ./internal/owner
       - run: scripts/package-macos.sh ${{ matrix.arch }}
-      - name: Verify installed service and PF on matching host architecture
+      - name: Verify service lifecycle and network recovery on matching host architecture
         if: (matrix.arch == 'arm64' && runner.arch == 'ARM64') || (matrix.arch == 'amd64' && runner.arch == 'X64')
         run: scripts/test-macos.sh
       - uses: actions/upload-artifact@v4

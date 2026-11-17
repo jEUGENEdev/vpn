@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"os"
 	"time"
 )
 
@@ -30,6 +31,9 @@ func (c *Client) StartTunnel(ctx context.Context, options tun.Options) (*Tunnel,
 	options.EXP_MultiPendingPackets = true
 	dev, e := tun.New(options)
 	if e != nil {
+		if options.FileDescriptor > 0 {
+			os.NewFile(uintptr(options.FileDescriptor), "tun").Close()
+		}
 		return nil, e
 	}
 	st, e := tun.NewStack("gvisor", tun.StackOptions{Context: ctx, Tun: dev, TunOptions: options, Handler: c, Logger: logger.NOP(), UDPTimeout: time.Minute})
@@ -58,9 +62,6 @@ func (t *Tunnel) Close() {
 }
 func (c *Client) JudgeFlow(network uint8, source, dest netip.AddrPort, first []byte) tun.FlowVerdict {
 	if network != 6 && network != 17 {
-		return tun.FlowVerdict{Action: tun.ActionReject}
-	}
-	if dest.Port() == 853 && !c.disabled() {
 		return tun.FlowVerdict{Action: tun.ActionReject}
 	}
 	if network == 17 && dest.Port() == 53 {

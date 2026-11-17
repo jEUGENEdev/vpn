@@ -11,6 +11,7 @@ import (
 	tun "github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/control"
 	"github.com/sagernet/sing/common/logger"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -21,11 +22,14 @@ type Desktop struct {
 	Client  *client.Client
 	Tunnel  *client.Tunnel
 	owner   *owner.Desktop
+	dns     io.Closer
 	network tun.NetworkUpdateMonitor
 	monitor tun.DefaultInterfaceMonitor
 }
 
 func Start(ctx context.Context, dir string) (*Desktop, error) {
+	// Migrate legacy DNS/firewall state even when the profile or TUN cannot start.
+	recoveryError := Recover(dir)
 	finder := control.NewDefaultInterfaceFinder()
 	network, e := tun.NewNetworkUpdateMonitor(logger.NOP())
 	if e != nil {
@@ -65,37 +69,38 @@ func Start(ctx context.Context, dir string) (*Desktop, error) {
 		d.owner = resolver
 		c.SetOwnerLookup(resolver.Lookup)
 	}
-	name := tun.CalculateInterfaceName("linevpn")
-	monitor.RegisterMyInterface(name)
-	// A persistent deny rule is installed BEFORE routes are changed. An error
-	// intentionally leaves it in place; recovery is an explicit admin action.
-	if e = Guard(""); e != nil {
-		d.Close()
-		return nil, e
-	}
-	t, e := c.StartTunnel(ctx, tun.Options{Name: name, AutoRoute: true, StrictRoute: true, InterfaceFinder: finder, InterfaceMonitor: monitor})
-	if e != nil {
-		d.Close()
-		return nil, e
-	}
-	d.Tunnel = t
-	if e = Guard(name); e != nil {
-		d.Close()
-		return nil, e
-	}
-	if e = ConfigureDNS(); e != nil {
-		d.Close()
-		return nil, e
+	if recoveryError != nil {
+		c.SetNetworkError(recoveryError)
+	} else if c.VPNEnabled() {
+		name := tun.CalculateInterfaceName("linevpn")
+		monitor.RegisterMyInterface(name)
+		// No global kill switch and no persistent DNS changes. Closing the TUN
+		// restores the underlying network, including after process termination.
+		t, err := c.StartTunnel(ctx, tun.Options{Name: name, AutoRoute: true, StrictRoute: false, InterfaceFinder: finder, InterfaceMonitor: monitor})
+		if err != nil {
+			c.SetNetworkError(err)
+		} else {
+			dns, err := startTunnelDNS()
+			if err != nil {
+				t.Close()
+				c.SetNetworkError(err)
+			} else {
+				d.Tunnel = t
+				d.dns = dns
+			}
+		}
 	}
 	if e = DropPrivileges(dir); e != nil {
 		d.Close()
 		return nil, e
 	}
-	c.SetGuard(true)
 	go c.Run(ctx)
 	return d, nil
 }
 func (d *Desktop) Close() {
+	if d.dns != nil {
+		d.dns.Close()
+	}
 	if d.owner != nil {
 		d.owner.Close()
 	}

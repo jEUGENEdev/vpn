@@ -28,6 +28,29 @@ public class VpnSmokeTest {
     private static final String PROBE_BODY = "linevpn-native-ok";
     private android.app.Instrumentation getInstrumentation() { return InstrumentationRegistry.getInstrumentation(); }
     private Network vpnNetwork;
+    private void awaitVPNNetwork(ConnectivityManager connectivity, boolean enabled) throws Exception {
+        long deadline = SystemClock.elapsedRealtime() + 10000;
+        while (SystemClock.elapsedRealtime() < deadline) {
+            Network found = null;
+            for (Network network : connectivity.getAllNetworks()) {
+                NetworkCapabilities caps = connectivity.getNetworkCapabilities(network);
+                if (caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) found = network;
+            }
+            if ((found != null) == enabled) { vpnNetwork = found; return; }
+            Thread.sleep(100);
+        }
+        fail("VPN network did not reach enabled=" + enabled);
+    }
+    private void power(boolean enabled) throws Exception {
+        String local = Mobile.url(); int hash = local.indexOf("#token=");
+        request(local.substring(0, hash) + "local/vpn", URLDecoder.decode(local.substring(hash + 7), "UTF-8"),
+                new JSONObject().put("enabled", enabled).put("confirm", !enabled).toString());
+        JSONObject state = new JSONObject(Mobile.snapshot());
+        assertEquals(enabled, state.getBoolean("vpn_enabled"));
+        assertEquals(enabled, state.getBoolean("tunnel"));
+        assertFalse(state.optBoolean("power_transition"));
+        assertEquals("", state.optString("power_error"));
+    }
     private String request(String address, String token, String body) throws Exception {
         if (token == null) assertNotNull("Data-plane requests must use the VPN network", vpnNetwork);
         return requestOnNetwork(token == null ? vpnNetwork : null, address, token, body);
@@ -53,7 +76,7 @@ public class VpnSmokeTest {
     private void awaitHostBeforeVPN(ConnectivityManager connectivity) throws Exception {
         // sys.boot_completed and an established TUN do not mean the emulator's
         // underlying network is ready. Verify the fixture before starting VPN;
-        // never retry the routing or fail-closed assertions below.
+        // never retry the routing or direct fallback assertions below.
         assertEquals("Preflight must run before the VPN service", "stopped", Mobile.status());
         long deadline = SystemClock.elapsedRealtime() + 30000;
         IOException lastError = null;
@@ -201,23 +224,57 @@ public class VpnSmokeTest {
         }
         assertNotNull("VpnService must identify the UID/package owning the probe", applicationID);
         request(base+"local/applications",token,new JSONObject().put("id",applicationID).put("decision","trusted").toString());
-        try { request(PROBE_URL,null,null); fail("Trusted application escaped without VPN"); }
-        catch (IOException expected) { }
+        assertEquals("Offline trusted app must keep network access", PROBE_BODY, request(PROBE_URL,null,null).trim());
         request(base+"local/applications",token,new JSONObject().put("id",applicationID).put("decision","addresses").toString());
         assertEquals("Revoking application trust must restore the direct route", PROBE_BODY,
                 request(PROBE_URL,null,null).trim());
-        // No server has been configured. Approval must nevertheless protect locally
-        // before the API returns an error and retain that protection on disk.
+        // No server has been configured. Approval must remain saved locally
+        // before the API returns an error and retain the rule on disk.
         try { request(base+"local/rules",token,"{\"action\":\"approve\",\"target\":\"10.0.2.2\",\"revision\":0}"); fail("Missing server must fail approval sync"); }
         catch (IOException expected) { }
         assertTrue(new JSONObject(Mobile.snapshot()).getJSONArray("pending_protection").toString().contains("10.0.2.2"));
-        try { request(PROBE_URL,null,null); fail("Approved address escaped directly"); }
-        catch (IOException expected) { }
-        Log.i("LineVpnSmoke", "DNS, direct, application trust, restoration and address blocking passed");
+        assertEquals("Offline approved address must keep network access", PROBE_BODY, request(PROBE_URL,null,null).trim());
+        Log.i("LineVpnSmoke", "DNS, direct, application trust, restoration and direct fallback passed");
+        for (int cycle = 0; cycle < 2; cycle++) {
+            power(false);
+            awaitVPNNetwork(connectivity, false);
+            assertEquals(PROBE_BODY, requestOnNetwork(null, PROBE_URL, null, null).trim());
+            Network active = connectivity.getActiveNetwork();
+            assertNotNull("No ordinary network after off", active);
+            assertFalse("Synthetic DNS survived off", connectivity.getLinkProperties(active).getDnsServers().contains(InetAddress.getByName("172.29.255.2")));
+            if (cycle == 0) {
+                getInstrumentation().getTargetContext().stopService(new Intent(getInstrumentation().getTargetContext(), LineVpnService.class));
+                deadline = System.currentTimeMillis() + 10000;
+                while (!"stopped".equals(Mobile.status()) && System.currentTimeMillis() < deadline) Thread.sleep(100);
+                assertEquals("stopped", Mobile.status());
+                assertEquals(PROBE_BODY, requestOnNetwork(null, PROBE_URL, null, null).trim());
+                getInstrumentation().getTargetContext().startForegroundService(new Intent(getInstrumentation().getTargetContext(), LineVpnService.class));
+                deadline = System.currentTimeMillis() + 10000;
+                while (!"running".equals(Mobile.status()) && System.currentTimeMillis() < deadline) Thread.sleep(100);
+                assertEquals("running", Mobile.status());
+                JSONObject off = new JSONObject(Mobile.snapshot());
+                assertFalse("Service restart re-enabled VPN", off.getBoolean("vpn_enabled"));
+                assertFalse("Off startup created TUN", off.getBoolean("tunnel"));
+                awaitVPNNetwork(connectivity, false);
+                assertEquals(PROBE_BODY, requestOnNetwork(null, PROBE_URL, null, null).trim());
+            }
+            power(true);
+            awaitVPNNetwork(connectivity, true);
+            assertEquals(PROBE_BODY, request(PROBE_URL, null, null).trim());
+        }
+        Log.i("LineVpnSmoke", "Full VPN off/on, restored system DNS, off restart and offline re-enable passed");
         // Wait for compositor output as well as DOM readiness and foreground focus.
         android.graphics.Bitmap preview = captureNativeUI(activity);
         try (FileOutputStream out = new FileOutputStream(new File(getInstrumentation().getTargetContext().getFilesDir(), "native-preview.png"))) {
             assertTrue(preview.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out));
         } finally { preview.recycle(); }
+        // Stop an ENABLED service, not only persisted off. Its TUN and DNS must disappear.
+        getInstrumentation().getTargetContext().stopService(new Intent(getInstrumentation().getTargetContext(), LineVpnService.class));
+        deadline = System.currentTimeMillis() + 10000;
+        while (!"stopped".equals(Mobile.status()) && System.currentTimeMillis() < deadline) Thread.sleep(100);
+        assertEquals("stopped", Mobile.status());
+        awaitVPNNetwork(connectivity, false);
+        assertEquals(PROBE_BODY, requestOnNetwork(null, PROBE_URL, null, null).trim());
+
     }
 }

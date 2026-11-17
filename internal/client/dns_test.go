@@ -21,6 +21,9 @@ func TestDNSPersistsAcrossRestart(t *testing.T) {
 	}
 	var msg dns.Msg
 	msg.Unpack(res)
+	if msg.Answer[0].Header().Ttl != 0 {
+		t.Fatal("fake address can survive VPN disable in an application cache")
+	}
 	ip, _ := netip.AddrFromSlice(msg.Answer[0].(*dns.A).A)
 	f.Close()
 	f, e = OpenDNS(dir)

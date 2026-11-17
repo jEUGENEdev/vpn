@@ -125,7 +125,8 @@ func (f *FakeDNS) Answer(payload []byte) ([]byte, error) {
 			r.Rcode = dns.RcodeServerFailure
 			return r.Pack()
 		}
-		h := dns.RR_Header{Name: question.Name, Rrtype: question.Qtype, Class: dns.ClassINET, Ttl: 30}
+		// Synthetic addresses must not outlive the VPN network in app caches.
+		h := dns.RR_Header{Name: question.Name, Rrtype: question.Qtype, Class: dns.ClassINET, Ttl: 0}
 		if question.Qtype == dns.TypeA {
 			r.Answer = []dns.RR{&dns.A{Hdr: h, A: net.IP(fake4(id).AsSlice())}}
 		} else {

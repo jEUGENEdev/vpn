@@ -51,9 +51,13 @@ for ((vpn_run=1; vpn_run<=vpn_smoke_runs; vpn_run++)); do
   grep -q '^OK (1 test)' "build/android-instrumentation-$vpn_run.txt"
   kill -0 "$vpn_probe_pid"
   # Check fixture health outside Android after each scenario. A fixture outage
-  # must not make fail-closed assertions pass; do not retry this control probe.
+  # must not invalidate the connectivity assertions; do not retry this control probe.
   curl --noproxy '*' --fail --silent --show-error --max-time 2 \
     http://127.0.0.1:8765/probe > build/native-probe/host-response
   cmp build/native-probe/probe build/native-probe/host-response
   adb exec-out run-as dev.linevpn.app cat files/native-preview.png > build/android-native.png
 done
+
+# Package removal must leave ordinary networking without recovery commands.
+adb uninstall dev.linevpn.app
+adb shell ping -c 1 -W 5 10.0.2.2
