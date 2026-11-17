@@ -22,6 +22,7 @@ type Device struct {
 	Hash      string `json:"token_hash"`
 }
 type Pair struct {
+	DeviceID  string
 	AccountID string
 	Expires   time.Time
 }

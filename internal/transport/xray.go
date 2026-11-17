@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -72,11 +73,16 @@ func ClientConfig(p model.Profile) obj {
 type Runtime struct {
 	mu       sync.RWMutex
 	instance *core.Instance
+	cancel   context.CancelFunc
 }
 
 func (r *Runtime) Apply(config obj) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.cancel != nil {
+		r.cancel()
+		r.cancel = nil
+	}
 	if r.instance != nil {
 		r.instance.Close()
 		r.instance = nil
@@ -85,16 +91,34 @@ func (r *Runtime) Apply(config obj) error {
 	if e != nil {
 		return e
 	}
-	v, e := core.StartInstance("json", raw)
+	parsed, e := core.LoadConfig("json", bytes.NewReader(raw))
 	if e != nil {
 		return e
 	}
+	// Closing listeners alone leaves accepted XHTTP streams running. Cancel
+	// the instance's inbound contexts as well when access/policy changes.
+	ctx, cancel := context.WithCancel(context.Background())
+	v, e := core.NewWithContext(ctx, parsed)
+	if e != nil {
+		cancel()
+		return e
+	}
+	if e = v.Start(); e != nil {
+		cancel()
+		v.Close()
+		return e
+	}
 	r.instance = v
+	r.cancel = cancel
 	return nil
 }
 func (r *Runtime) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.cancel != nil {
+		r.cancel()
+		r.cancel = nil
+	}
 	if r.instance != nil {
 		e := r.instance.Close()
 		r.instance = nil

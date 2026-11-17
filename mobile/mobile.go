@@ -23,6 +23,7 @@ import (
 
 type Protector interface {
 	Protect(fd int64) bool
+	DeviceName() string
 	ResolveApplication(network, source string, sourcePort int64, destination string, destinationPort int64) string
 }
 
@@ -74,6 +75,7 @@ func Start(fd int64, dir string, p Protector) (string, error) {
 		syscall.Close(int(fd))
 		return "", e
 	}
+	c.SetDeviceName(p.DeviceName())
 	c.SetOwnerLookup(func(ctx context.Context, network string, source, dest netip.AddrPort) (model.ApplicationInfo, error) {
 		raw := p.ResolveApplication(network, source.Addr().String(), int64(source.Port()), dest.Addr().String(), int64(dest.Port()))
 		var app model.ApplicationInfo

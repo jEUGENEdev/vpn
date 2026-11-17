@@ -32,6 +32,7 @@ type Config struct {
 	Profile model.Profile `json:"profile"`
 }
 type Client struct {
+	identity    DeviceIdentity
 	sent        map[string]time.Time
 	resolved    map[string]time.Time
 	mu          sync.RWMutex
@@ -73,7 +74,7 @@ func New(dir string, dialer *transport.Dialer) (*Client, error) {
 	if e != nil {
 		return nil, e
 	}
-	c := &Client{dir: dir, Direct: dialer, DNS: f, Events: events.New(), pending: map[string]time.Time{}, sent: map[string]time.Time{}, resolved: map[string]time.Time{}, dismissed: map[string]bool{}, active: map[io.Closer]activeFlow{}, apps: map[string]model.Application{}, observed: map[string]*observation{}, status: "setup", requests: []model.Request{}, devices: []model.Device{}}
+	c := &Client{identity: nativeDeviceIdentity(), dir: dir, Direct: dialer, DNS: f, Events: events.New(), pending: map[string]time.Time{}, sent: map[string]time.Time{}, resolved: map[string]time.Time{}, dismissed: map[string]bool{}, active: map[io.Closer]activeFlow{}, apps: map[string]model.Application{}, observed: map[string]*observation{}, status: "setup", requests: []model.Request{}, devices: []model.Device{}}
 	raw, e := os.ReadFile(filepath.Join(dir, "profile.json"))
 	if e == nil {
 		if e = json.Unmarshal(raw, &c.config); e != nil {
@@ -86,6 +87,9 @@ func New(dir string, dialer *transport.Dialer) (*Client, error) {
 		}
 		c.configureHTTP()
 		c.status = "blocked"
+		if c.config.Profile.AccountID != "" && c.config.Profile.Token == "" {
+			c.status = "auth_required"
+		}
 	} else if !os.IsNotExist(e) {
 		f.Close()
 		return nil, e
@@ -203,6 +207,10 @@ func (c *Client) SetBootstrap(uri string) error {
 func (c *Client) Auth(ctx context.Context, action string, data any) (any, error) {
 	c.change.Lock()
 	defer c.change.Unlock()
+	data, err := c.authDeviceData(data)
+	if err != nil {
+		return nil, err
+	}
 	if action == "register" {
 		var out map[string]any
 		e := c.request(ctx, "POST", "/api/register", data, &out)
@@ -218,11 +226,18 @@ func (c *Client) Auth(ctx context.Context, action string, data any) (any, error)
 	if hasProfile && action != "login" {
 		return nil, errors.New("устройство уже связано с аккаунтом")
 	}
-	var p model.Profile
-	if e := c.request(ctx, "POST", path, data, &p); e != nil {
+	var response struct {
+		model.Profile
+		SelectDevice bool           `json:"select_device"`
+		Devices      []model.Device `json:"devices"`
+	}
+	if e := c.request(ctx, "POST", path, data, &response); e != nil {
 		return nil, e
 	}
-	if e := c.apply(p); e != nil {
+	if response.SelectDevice {
+		return map[string]any{"select_device": true, "devices": response.Devices}, nil
+	}
+	if e := c.apply(response.Profile); e != nil {
 		return nil, e
 	}
 	return map[string]bool{"ok": true}, nil
@@ -310,7 +325,9 @@ func (c *Client) Sync(ctx context.Context) error {
 		c.status = "blocked"
 		var apiError *APIError
 		if errors.As(e, &apiError) && (apiError.Status == 401 || apiError.Status == 403) {
-			c.status = "auth_required"
+			if saveErr := c.forgetAccessLocked(); saveErr != nil {
+				e = fmt.Errorf("доступ отозван; не удалось очистить локальные ключи: %w", saveErr)
+			}
 		}
 		for flow, info := range c.active {
 			if info.Route != policy.Direct {
@@ -422,7 +439,7 @@ func (c *Client) State() any {
 	}
 	requests := c.requestsLocked()
 	apps, pendingApps := c.applicationSnapshotLocked()
-	return map[string]any{"status": status, "tunnel": c.tunnel, "guard": c.guard, "account_id": c.config.Profile.AccountID, "device_id": c.config.Profile.DeviceID, "server": c.config.API, "rules": c.effectiveRules(), "pending_protection": c.config.Pinned, "requests": requests, "request_groups": groupRequests(requests), "applications": apps, "pending_applications": pendingApps, "app_tunnel": c.ready && c.config.Profile.AppUUID != "", "attribution_available": c.ownerLookup != nil, "devices": c.devices, "events": c.Events.List(), "last_sync": c.lastSync, "revision": c.config.Profile.Revision}
+	return map[string]any{"device": c.identity, "status": status, "tunnel": c.tunnel, "guard": c.guard, "account_id": c.config.Profile.AccountID, "device_id": c.config.Profile.DeviceID, "server": c.config.API, "rules": c.effectiveRules(), "pending_protection": c.config.Pinned, "requests": requests, "request_groups": groupRequests(requests), "applications": apps, "pending_applications": pendingApps, "app_tunnel": c.ready && c.config.Profile.AppUUID != "", "attribution_available": c.ownerLookup != nil, "devices": c.devices, "events": c.Events.List(), "last_sync": c.lastSync, "revision": c.config.Profile.Revision}
 }
 func (c *Client) Action(ctx context.Context, path string, data any) (any, error) {
 	if path == "applications" {
@@ -486,6 +503,34 @@ func (c *Client) Action(ctx context.Context, path string, data any) (any, error)
 			c.mu.Unlock()
 			c.change.Unlock()
 		}
+	}
+	if e == nil && path == "revoke" {
+		if fields, ok := data.(map[string]any); ok {
+			id, _ := fields["id"].(string)
+			c.change.Lock()
+			c.mu.Lock()
+			kept := make([]model.Device, 0, len(c.devices))
+			for _, device := range c.devices {
+				if device.ID != id {
+					kept = append(kept, device)
+				}
+			}
+			c.devices = kept
+			if id == c.config.Profile.DeviceID {
+				saveErr := c.forgetAccessLocked()
+				c.mu.Unlock()
+				c.change.Unlock()
+				if saveErr != nil {
+					return out, fmt.Errorf("устройство удалено на сервере; не удалось очистить локальные ключи: %w", saveErr)
+				}
+				return out, nil
+			}
+			c.mu.Unlock()
+			c.change.Unlock()
+		}
+		// The deletion already committed. A later sync failure is not a failed deletion.
+		_ = c.Sync(ctx)
+		return out, nil
 	}
 	if e == nil {
 		e = c.Sync(ctx)

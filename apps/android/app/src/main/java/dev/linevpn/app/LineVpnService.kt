@@ -57,6 +57,12 @@ class LineVpnService : VpnService() {
                 // Ownership transfers to Go. Do not close the detached descriptor in Java.
                 val fd = descriptor.detachFd()
                 Mobile.start(fd.toLong(), filesDir.absolutePath, object : Protector {
+                    override fun deviceName(): String {
+                        val model = Build.MODEL?.trim().orEmpty()
+                        if (model.isBlank() || model.equals("unknown", true)) return ""
+                        val manufacturer = Build.MANUFACTURER?.trim().orEmpty()
+                        return if (manufacturer.isBlank() || manufacturer.equals("unknown", true) || model.startsWith(manufacturer, true)) model else "$manufacturer $model"
+                    }
                     override fun protect(fd: Long): Boolean = this@LineVpnService.protect(fd.toInt())
                     override fun resolveApplication(network: String, source: String, sourcePort: Long, destination: String, destinationPort: Long): String = applicationResolver.resolve(network, source, sourcePort, destination, destinationPort)
                 })

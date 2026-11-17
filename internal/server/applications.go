@@ -2,7 +2,6 @@ package server
 
 import (
 	"net/http"
-	"time"
 
 	"github.com/jEUGENEdev/vpn/internal/secure"
 	"github.com/jEUGENEdev/vpn/internal/store"
@@ -23,8 +22,8 @@ func (s *Server) appVPN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err = s.mutation(func(st *store.State) error {
-		current, ok := st.Devices[d.ID]
-		if !ok || current.Revoked || !time.Now().Before(current.Expires) || st.Accounts[current.AccountID].Status != "active" {
+		current := st.Devices[d.ID]
+		if !stillAuthorized(st, d) {
 			return ErrForbidden
 		}
 		if input.Enabled && current.AppSecret == "" {

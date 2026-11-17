@@ -110,7 +110,7 @@ function renderStableRules() {
 }
 function renderStableDevices() {
   reconcileRows($('devices-list'), state.devices || [], d => d.id, deviceRows,
-    d => row(d.name, '', [button('Отозвать доступ', 'secondary danger', async () => { if (await confirmChange('Отозвать доступ?', 'Устройство потеряет доступ к VPN и синхронизации.')) await act('revoke', {id:d.id}); })]),
+    d => row(d.name, '', [button('Удалить устройство', 'secondary danger', async () => { if (await confirmChange('Удалить устройство?', 'Устройство исчезнет из списка. Его доступ к VPN, синхронизации и выданные им коды подключения будут отозваны. Для повторного подключения потребуется новый вход.')) await act('revoke', {id:d.id}); })]),
     (node, d) => { setText(node.querySelector('.row-copy strong'), d.name); setText(node.querySelector('.row-copy p'), (d.id === state.device_id ? 'Это устройство · ' : '') + d.platform + ' · ' + (d.revoked ? 'Доступ отозван' : 'До ' + new Date(d.expires).toLocaleDateString('ru'))); });
 }
 function initTraffic() {

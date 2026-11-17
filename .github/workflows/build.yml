@@ -141,7 +141,7 @@ jobs:
           - {arch: amd64, runner: macos-15-intel}
           - {arch: arm64, runner: macos-26}
     env:
-      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      LINEVPN_MACOS_SIGNING: preview
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -160,6 +160,8 @@ jobs:
           name: macos-native-check-${{ matrix.arch }}
           path: |
             build/macos-native.txt
+            build/macos-signing.txt
+            build/macos-gui.txt
             build/macos-install.log
             build/macos-service.log
             build/macos-package.log
