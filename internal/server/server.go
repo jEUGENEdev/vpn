@@ -44,7 +44,6 @@ type Server struct {
 	admins    map[string]session
 	attempts  map[string]bucket
 	adminHash []byte
-	dummyHash []byte
 }
 
 var ErrForbidden = errors.New("доступ запрещён")
@@ -57,8 +56,15 @@ func New(st *store.Store, c Config, password string, apply func(store.State) err
 	if e != nil {
 		return nil, e
 	}
-	dummy, _ := bcrypt.GenerateFromPassword([]byte(secure.Token()), bcrypt.DefaultCost)
-	return &Server{Store: st, Config: c, Apply: apply, admins: map[string]session{}, attempts: map[string]bucket{}, adminHash: hash, dummyHash: dummy}, nil
+	if e = st.Update(func(state *store.State) error {
+		if state.BootstrapKey == "" {
+			state.BootstrapKey = secure.Token()
+		}
+		return nil
+	}); e != nil {
+		return nil, e
+	}
+	return &Server{Store: st, Config: c, Apply: apply, admins: map[string]session{}, attempts: map[string]bucket{}, adminHash: hash}, nil
 }
 func JSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -170,7 +176,7 @@ func (s *Server) device(r *http.Request) (store.Device, store.Account, error) {
 }
 func (s *Server) profile(d store.Device, a store.Account, token string) model.Profile {
 	o := s.Config.Transport
-	return model.Profile{DeviceID: d.ID, AccountID: a.ID, Token: token, Server: s.Config.PublicIP, Port: o.Port, UUID: d.Secret, AppUUID: d.AppSecret, SNI: o.SNI, PublicKey: o.PublicKey, ShortID: o.ShortID, Path: o.Path, Rules: a.Rules, Revision: a.Revision, Status: a.Status}
+	return model.Profile{Login: a.Login, DeviceID: d.ID, AccountID: a.ID, Token: token, Server: s.Config.PublicIP, Port: o.Port, UUID: d.Secret, AppUUID: d.AppSecret, SNI: o.SNI, PublicKey: o.PublicKey, ShortID: o.ShortID, Path: o.Path, Rules: a.Rules, Revision: a.Revision, Status: a.Status}
 }
 
 func (s *Server) Handler(static http.Handler) http.Handler {
@@ -181,6 +187,9 @@ func (s *Server) Handler(static http.Handler) http.Handler {
 	mux.HandleFunc("POST /api/pair/claim", s.claim)
 	mux.HandleFunc("POST /api/admin/login", s.adminLogin)
 	mux.HandleFunc("GET /api/admin/bootstrap", s.adminBootstrap)
+	mux.HandleFunc("POST /api/admin/bootstrap/rotate", s.adminRotateBootstrap)
+	mux.HandleFunc("POST /api/admin/access-key", s.adminAccessKey)
+	mux.HandleFunc("POST /api/access-key/rotate", s.rotateAccessKey)
 	mux.HandleFunc("GET /api/admin/accounts", s.adminAccounts)
 	mux.HandleFunc("POST /api/admin/account", s.adminAccount)
 	mux.HandleFunc("POST /api/admin/revoke", s.adminRevoke)
@@ -213,10 +222,9 @@ func (s *Server) Handler(static http.Handler) http.Handler {
 var loginRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{2,63}$`)
 
 type credentials struct {
-	Login    string `json:"login"`
-	Password string `json:"password"`
-	Name     string `json:"name"`
-	Platform string `json:"platform"`
+	deviceChoice
+	Login     string `json:"login"`
+	AccessKey string `json:"access_key"`
 }
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
@@ -229,12 +237,15 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.Login = strings.ToLower(strings.TrimSpace(c.Login))
-	if !loginRE.MatchString(c.Login) || len(c.Password) < 12 || len(c.Password) > 72 {
-		fail(w, 400, errors.New("логин: 3–64 латинских символа; пароль: 12–72 байта"))
+	if !loginRE.MatchString(c.Login) || c.AccessKey != "" {
+		fail(w, 400, errors.New("имя аккаунта: 3–64 символа a–z, 0–9, точка, дефис или подчёркивание; ключ выдаётся сервером"))
 		return
 	}
-	hash, _ := bcrypt.GenerateFromPassword([]byte(c.Password), bcrypt.DefaultCost)
+	key := newAccessKey()
 	e := s.Store.Update(func(st *store.State) error {
+		if err := checkBootstrap(*st, r); err != nil {
+			return err
+		}
 		for _, a := range st.Accounts {
 			if a.Login == c.Login {
 				return errors.New("логин уже занят")
@@ -243,45 +254,33 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		if len(st.Accounts) >= 10000 {
 			return errors.New("лимит регистраций")
 		}
-		a := store.Account{Account: model.Account{ID: secure.UUID(), Login: c.Login, Status: "pending", Created: time.Now(), Rules: []string{}, Revision: 1}, Hash: string(hash)}
+		a := store.Account{Account: model.Account{ID: secure.UUID(), Login: c.Login, Status: "pending", Created: time.Now(), Rules: []string{}, Revision: 1}, KeyHash: secure.Hash(key)}
 		st.Accounts[a.ID] = a
 		return nil
 	})
 	if e != nil {
-		fail(w, 409, e)
+		status := 409
+		if errors.Is(e, errBootstrap) {
+			status = 401
+		}
+		fail(w, status, e)
 		return
 	}
-	JSON(w, 202, map[string]string{"status": "pending", "message": "Заявка отправлена администратору"})
+	JSON(w, 202, map[string]string{"status": "pending", "login": c.Login, "access_key": key, "message": "Заявка отправлена. Сохраните ключ: повторно показать его нельзя."})
 }
 func validDevice(name, platform string) bool {
 	return len(strings.TrimSpace(name)) > 0 && len(name) <= 80 && (platform == "android" || platform == "windows" || platform == "darwin" || platform == "linux")
 }
 func (s *Server) enroll(account, name, platform string) (model.Profile, error) {
-	if !validDevice(name, platform) {
-		return model.Profile{}, errors.New("некорректное имя или платформа устройства")
+	out, err := s.enrollChoice(account, deviceChoice{Name: name, Platform: platform}, "")
+	if err != nil {
+		return model.Profile{}, err
 	}
-	token := secure.Token()
-	var d store.Device
-	var a store.Account
-	e := s.mutation(func(st *store.State) error {
-		a = st.Accounts[account]
-		if a.Status != "active" {
-			return ErrForbidden
-		}
-		n := 0
-		for _, v := range st.Devices {
-			if v.AccountID == account && !v.Revoked && time.Now().Before(v.Expires) {
-				n++
-			}
-		}
-		if n >= 20 {
-			return errors.New("максимум 20 активных устройств")
-		}
-		d = store.Device{Device: model.Device{ID: secure.UUID(), AccountID: account, Name: name, Platform: platform, Expires: time.Now().Add(90 * 24 * time.Hour), Created: time.Now()}, Hash: secure.Hash(token), Secret: secure.UUID()}
-		st.Devices[d.ID] = d
-		return nil
-	})
-	return s.profile(d, a, token), e
+	profile, ok := out.(model.Profile)
+	if !ok {
+		return profile, errors.New("нужно выбрать устройство")
+	}
+	return profile, nil
 }
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if s.limited(r, "login", 10, 10*time.Minute) {
@@ -292,35 +291,40 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if !body(w, r, &c) {
 		return
 	}
-	var a store.Account
-	c.Login = strings.ToLower(strings.TrimSpace(c.Login))
-	s.Store.View(func(st store.State) error {
-		for _, v := range st.Accounts {
-			if v.Login == c.Login {
-				a = v
+	c.AccessKey = strings.TrimSpace(c.AccessKey)
+	if !validAccessKey(c.AccessKey) {
+		fail(w, 401, errAccessKey)
+		return
+	}
+	p, e := s.enrollChoiceAuthorized(c.deviceChoice, "", func(st *store.State) (string, error) {
+		if err := checkBootstrap(*st, r); err != nil {
+			return "", err
+		}
+		hash := secure.Hash(c.AccessKey)
+		for _, a := range st.Accounts {
+			if secure.Equal(a.KeyHash, hash) {
+				if a.Status != "active" {
+					return "", errAccountInactive
+				}
+				return a.ID, nil
 			}
 		}
-		return nil
+		return "", errAccessKey
 	})
-	hash := []byte(a.Hash)
-	if len(hash) == 0 {
-		hash = s.dummyHash
-	}
-	if bcrypt.CompareHashAndPassword(hash, []byte(c.Password)) != nil {
-		fail(w, 401, errors.New("неверный логин или пароль"))
-		return
-	}
-	if a.Status != "active" {
-		JSON(w, 403, map[string]string{"status": a.Status, "error": "аккаунт ещё не одобрен или заблокирован"})
-		return
-	}
-	p, e := s.enroll(a.ID, c.Name, c.Platform)
 	if e != nil {
-		fail(w, 503, e)
+		status := 503
+		if errors.Is(e, errAccessKey) || errors.Is(e, errBootstrap) {
+			status = 401
+		}
+		if errors.Is(e, errAccountInactive) {
+			status = 403
+		}
+		fail(w, status, e)
 		return
 	}
 	JSON(w, 200, p)
 }
+
 func (s *Server) adminLogin(w http.ResponseWriter, r *http.Request) {
 	if s.limited(r, "admin", 8, 15*time.Minute) {
 		fail(w, 429, errors.New("слишком много попыток входа"))
@@ -352,11 +356,18 @@ func (s *Server) adminAccounts(w http.ResponseWriter, r *http.Request) {
 		fail(w, 401, ErrForbidden)
 		return
 	}
-	accounts := []model.Account{}
+	// Explicit allowlist: never serialize user routing policy to the admin API.
+	type accountSummary struct {
+		ID      string    `json:"id"`
+		Login   string    `json:"login"`
+		Status  string    `json:"status"`
+		Created time.Time `json:"created"`
+	}
+	accounts := []accountSummary{}
 	devices := []model.Device{}
 	s.Store.View(func(st store.State) error {
 		for _, a := range st.Accounts {
-			accounts = append(accounts, a.Account)
+			accounts = append(accounts, accountSummary{a.ID, a.Login, a.Status, a.Created})
 		}
 		for _, d := range st.Devices {
 			devices = append(devices, d.Device)
@@ -491,6 +502,9 @@ func (s *Server) discover(w http.ResponseWriter, r *http.Request) {
 		failures[target] = true
 	}
 	e = s.Store.Update(func(st *store.State) error {
+		if !stillAuthorized(st, d) {
+			return ErrForbidden
+		}
 		count := 0
 		dismissed := []string{}
 		for _, q := range st.Requests {
@@ -573,7 +587,7 @@ func (s *Server) discover(w http.ResponseWriter, r *http.Request) {
 	JSON(w, 200, map[string]bool{"ok": true})
 }
 func (s *Server) rules(w http.ResponseWriter, r *http.Request) {
-	_, a, e := s.device(r)
+	d, a, e := s.device(r)
 	if e != nil {
 		fail(w, 401, e)
 		return
@@ -600,6 +614,9 @@ func (s *Server) rules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	e = s.mutation(func(st *store.State) error {
+		if !stillAuthorized(st, d) {
+			return ErrForbidden
+		}
 		v := st.Accounts[a.ID]
 		if v.Status != "active" {
 			return ErrForbidden
@@ -633,7 +650,7 @@ func (s *Server) rules(w http.ResponseWriter, r *http.Request) {
 	s.syncState(w, r)
 }
 func (s *Server) dismiss(w http.ResponseWriter, r *http.Request) {
-	_, a, e := s.device(r)
+	d, a, e := s.device(r)
 	if e != nil {
 		fail(w, 401, e)
 		return
@@ -650,6 +667,9 @@ func (s *Server) dismiss(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	e = s.Store.Update(func(st *store.State) error {
+		if !stillAuthorized(st, d) {
+			return ErrForbidden
+		}
 		k := a.ID + ":" + c.Target
 		v, ok := st.Requests[k]
 		if !ok {
@@ -675,19 +695,22 @@ func (s *Server) dismiss(w http.ResponseWriter, r *http.Request) {
 	JSON(w, 200, map[string]bool{"ok": true})
 }
 func (s *Server) pair(w http.ResponseWriter, r *http.Request) {
-	_, a, e := s.device(r)
+	d, a, e := s.device(r)
 	if e != nil {
 		fail(w, 401, e)
 		return
 	}
 	code := secure.Token()[:20]
 	e = s.Store.Update(func(st *store.State) error {
+		if !stillAuthorized(st, d) {
+			return ErrForbidden
+		}
 		for k, p := range st.Pairs {
 			if time.Now().After(p.Expires) || p.AccountID == a.ID {
 				delete(st.Pairs, k)
 			}
 		}
-		st.Pairs[secure.Hash(code)] = store.Pair{AccountID: a.ID, Expires: time.Now().Add(5 * time.Minute)}
+		st.Pairs[secure.Hash(code)] = store.Pair{AccountID: a.ID, DeviceID: d.ID, Expires: time.Now().Add(5 * time.Minute)}
 		return nil
 	})
 	if e != nil {
@@ -702,53 +725,35 @@ func (s *Server) claim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var c struct {
-		Code     string `json:"code"`
-		Name     string `json:"name"`
-		Platform string `json:"platform"`
+		deviceChoice
+		Code string `json:"code"`
 	}
 	if !body(w, r, &c) {
 		return
 	}
-	if !validDevice(c.Name, c.Platform) {
-		fail(w, 400, errors.New("неверное устройство"))
+	out, err := s.enrollChoiceAuthorized(c.deviceChoice, secure.Hash(c.Code), func(st *store.State) (string, error) { return "", checkBootstrap(*st, r) })
+	if err != nil {
+		fail(w, 401, err)
 		return
 	}
-	var account string
-	e := s.Store.Update(func(st *store.State) error {
-		k := secure.Hash(c.Code)
-		p, ok := st.Pairs[k]
-		if !ok || time.Now().After(p.Expires) {
-			return ErrForbidden
-		}
-		account = p.AccountID
-		delete(st.Pairs, k)
-		return nil
-	})
-	if e != nil {
-		fail(w, 401, e)
-		return
-	}
-	p, e := s.enroll(account, c.Name, c.Platform)
-	if e != nil {
-		fail(w, 503, e)
-		return
-	}
-	JSON(w, 200, p)
+	JSON(w, 200, out)
 }
 func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request, admin bool) {
 	account := ""
+	var caller store.Device
 	if admin {
 		if !s.admin(r) {
 			fail(w, 401, ErrForbidden)
 			return
 		}
 	} else {
-		_, a, e := s.device(r)
+		d, a, e := s.device(r)
 		if e != nil {
 			fail(w, 401, e)
 			return
 		}
 		account = a.ID
+		caller = d
 	}
 	var c struct {
 		ID string `json:"id"`
@@ -757,16 +762,22 @@ func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request, admin bool
 		return
 	}
 	e := s.mutation(func(st *store.State) error {
+		if !admin && !stillAuthorized(st, caller) {
+			return ErrForbidden
+		}
 		d, ok := st.Devices[c.ID]
 		if !ok || (!admin && d.AccountID != account) {
 			return ErrForbidden
 		}
-		d.Revoked = true
-		st.Devices[d.ID] = d
+		deleteDevice(st, d)
 		return nil
 	})
 	if e != nil {
-		fail(w, 403, e)
+		if errors.Is(e, ErrForbidden) {
+			fail(w, 403, e)
+		} else {
+			fail(w, 503, e)
+		}
 		return
 	}
 	JSON(w, 200, map[string]bool{"ok": true})

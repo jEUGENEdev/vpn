@@ -35,6 +35,7 @@ func TestAccountLifecycle(t *testing.T) {
 		r := httptest.NewRequest(method, path, bytes.NewReader(raw))
 		r.RemoteAddr = "127.0.0.1:1234"
 		r.Header.Set("Authorization", "Bearer "+token)
+		st.View(func(v store.State) error { r.Header.Set("X-LineVPN-Profile", v.BootstrapKey); return nil })
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		if w.Code != want {
@@ -44,8 +45,10 @@ func TestAccountLifecycle(t *testing.T) {
 		json.Unmarshal(w.Body.Bytes(), &out)
 		return out
 	}
-	cred := map[string]any{"login": "alice", "password": "some-strong-password", "name": "Laptop", "platform": "windows"}
-	call("/api/register", "", cred, 202)
+	cred := map[string]any{"login": "alice", "name": "Laptop", "platform": "windows"}
+	registered := call("/api/register", "", cred, 202)
+	cred["access_key"] = registered["access_key"]
+	delete(cred, "login")
 	call("/api/login", "", cred, 403)
 	call("/api/admin/accounts", "", nil, 401)
 	adm := call("/api/admin/login", "", map[string]string{"password": "admin-password-very-long"}, 200)["token"].(string)

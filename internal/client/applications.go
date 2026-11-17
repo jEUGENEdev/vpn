@@ -146,6 +146,9 @@ func (c *Client) observeLocked(target string, app model.ApplicationInfo, now tim
 // Address rules always win. Trust extends routing only for an OS-identified
 // application, and requires a separate device credential acknowledged by API.
 func (c *Client) routeLocked(target, appID string) policy.Route {
+	if c.config.Disabled {
+		return policy.Direct
+	}
 	route := policy.Decide(c.effectiveRules(), target, c.ready)
 	if route != policy.Direct {
 		return route
@@ -170,11 +173,12 @@ func (c *Client) hasTrustedAppsLocked() bool {
 // Caller holds c.change, but not c.mu.
 func (c *Client) ensureApplicationTunnel(ctx context.Context) error {
 	c.mu.RLock()
+	disabled := c.config.Disabled
 	enabled := c.hasTrustedAppsLocked()
 	configured := c.config.Profile.AppUUID != ""
 	logged := c.config.Profile.Token != ""
 	c.mu.RUnlock()
-	if enabled == configured || !logged {
+	if disabled || enabled == configured || !logged {
 		return nil
 	}
 	var profile model.Profile
@@ -335,6 +339,30 @@ func sourceList(sources map[string]model.ApplicationInfo) []model.ApplicationInf
 	})
 	return out
 }
+
+// Caller holds c.mu. Match exact IPs and domain boundaries using the routing
+// policy; applications merely visiting a similar address are not attributed.
+func (c *Client) ruleSourcesLocked(rules []string) map[string]model.RuleSources {
+	result := map[string]model.RuleSources{}
+	for _, rule := range rules {
+		sources := map[string]model.ApplicationInfo{}
+		observed, unknown := false, false
+		for target, traffic := range c.observed {
+			if !policy.Matches(rule, target) {
+				continue
+			}
+			observed = true
+			unknown = unknown || traffic.Unknown
+			for id, source := range traffic.Sources {
+				sources[id] = source
+			}
+		}
+		if observed {
+			result[rule] = model.RuleSources{Sources: sourceList(sources), Unknown: unknown}
+		}
+	}
+	return result
+}
 func groupRequests(requests []model.Request) []model.RequestGroup {
 	groups := []model.RequestGroup{}
 	indices := map[string]int{}
@@ -378,7 +406,7 @@ func (c *Client) directFailure(target, appID string, now time.Time) {
 	c.directFailureLocked(target, appID, now)
 }
 func (c *Client) directFailureLocked(target, appID string, now time.Time) {
-	if c.closed || c.routeLocked(target, appID) != policy.Direct || c.isDismissedLocked(target) {
+	if c.closed || c.config.Disabled || c.routeLocked(target, appID) != policy.Direct || c.isDismissedLocked(target) {
 		return
 	}
 	o := c.observed[target]
@@ -418,9 +446,9 @@ func (c *Client) directFailureLocked(target, appID string, now time.Time) {
 	}
 	delete(c.resolved, target)
 	if app, ok := c.apps[appID]; ok && app.Decision == "pending" {
-		c.Events.NewApplication(now, app.ID, app.Name, target)
+		c.Events.NewApplication(now, app.ApplicationInfo, target)
 	}
-	c.Events.DirectUnavailable(now, target)
+	c.Events.DirectUnavailable(now, target, o.Sources[appID])
 }
 func (c *Client) directRecovered(target, appID string, now time.Time) {
 	c.mu.Lock()

@@ -35,7 +35,8 @@
       ],
       "category": "public.app-category.utilities",
       "hardenedRuntime": true,
-      "artifactName": "LineVPN-${version}-macos-${arch}.${ext}"
+      "artifactName": "LineVPN-${version}-macos-${arch}.${ext}",
+      "notarize": false
     },
     "dmg": {
       "contents": [
@@ -73,6 +74,7 @@
       "perMachine": true,
       "runAfterFinish": false,
       "warningsAsErrors": false
-    }
+    },
+    "afterSign": "notarize.cjs"
   }
 }

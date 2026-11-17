@@ -1,0 +1,37 @@
+# Установка и диагностика macOS
+
+Для Apple Silicon выбирайте `macos-arm64.dmg`, для Intel — `macos-x64.dmg`. Сначала сверяйте `manifest.json`: версия и `source_commit` относятся именно к лежащему рядом файлу, а не к последнему изменению исходников.
+
+## Если macOS пишет «файл повреждён»
+
+1. Проверьте скачанный файл. В репозитории установщики хранятся через Git LFS. Указатель размером около 130 байт начинается с `version https://git-lfs.github.com/spec/v1`; это текст, а не DMG. В GitHub используйте **Download raw file**, при клонировании — `git lfs pull`. Сверьте размер с `manifest.json`.
+2. Выполните `shasum -a 256 /путь/к/LineVPN.dmg` и сравните результат с `SHA256SUMS`. Затем `hdiutil verify /путь/к/LineVPN.dmg`. При несовпадении скачайте образ заново. Не снимайте защиту с действительно повреждённого файла.
+3. Если образ монтируется, а ошибка возникает при открытии `LineVPN.app`, скопируйте приложение в `/Applications` и проверьте его: `codesign --verify --deep --strict --verbose=2 /Applications/LineVPN.app`. Ошибка подписи означает, что нужна пересборка/повторная загрузка, а не изменение глобальных настроек безопасности.
+4. `spctl --assess --type execute --verbose=2 /Applications/LineVPN.app` проверяет доверие Gatekeeper отдельно от целостности. Preview без нотарификации может быть заблокирован даже при правильной ad-hoc подписи. Для проверенного вами preview используйте предусмотренное macOS подтверждение в **Системные настройки → Конфиденциальность и безопасность → Всё равно открыть**, если оно доступно. Не отключайте Gatekeeper глобально и не удаляйте quarantine автоматически.
+5. Установите `Install-LineVPN-Service.pkg` из того же образа, затем откройте приложение. Если GUI открылся, но просит службу, это отдельная проблема установки PKG; посмотрите `/var/log/install.log` и `/var/log/linevpn-error.log`.
+
+В прежнем workflow было `CSC_IDENTITY_AUTO_DISCOVERY=false` без явной ad-hoc подписи. Установка службы проверялась, а финальный DMG и запуск Electron — нет. Это подтверждённый пробел сборки; без проблемного файла и лога с Mac нельзя утверждать, какой именно из перечисленных случаев вызвал конкретное сообщение.
+
+## Сборка preview
+
+На macOS с Go и Node запустите `scripts/package-macos.sh arm64` или `scripts/package-macos.sh amd64`. Скрипт явно подписывает Go-агент и Electron ad-hoc, сохраняет hardened runtime и задаёт entitlements для JIT и загрузки Electron Framework без общего Team ID. После упаковки он проверяет подпись и архитектуру приложения/агента непосредственно из готового DMG. Такой preview не считается нотарифицированным релизом.
+
+CI дополнительно устанавливает **PKG из проверенного DMG**, запускает скопированный из него GUI и проверяет загрузку клиентского интерфейса. Результаты: `macos-signing.txt`, `macos-gui.txt`, `macos-native.txt` в артефактах соответствующей архитектуры. Установщики публикуются только после успешных проверок всех платформ.
+
+## Подписанный релиз
+
+На машине сборки должны быть доступны приватные ключи сертификатов **Developer ID Application** и **Developer ID Installer**, а учётные данные нотарификации должны быть сохранены в Keychain через `xcrun notarytool store-credentials`. Сертификаты и пароли не помещаются в репозиторий.
+
+```bash
+export LINEVPN_MACOS_SIGNING=release
+export LINEVPN_MACOS_APP_IDENTITY='Developer ID Application: Your Name (TEAMID)'
+export LINEVPN_MACOS_INSTALLER_IDENTITY='Developer ID Installer: Your Name (TEAMID)'
+export LINEVPN_MACOS_NOTARY_PROFILE='linevpn-notary'
+scripts/package-macos.sh arm64
+```
+
+Скрипт подписывает агент и PKG, нотарифицирует и прикрепляет ticket к PKG; hook `afterSign` нотарифицирует приложение и прикрепляет ticket **до** создания DMG. Затем подписывается, нотарифицируется и проверяется сам DMG. Отсутствие параметров, неуспешная подпись, нотарификация или проверка завершают сборку ошибкой; молчаливого перехода к неподписанному release нет. Этот режим рассчитан на локальный/защищённый macOS runner с настроенным Keychain; обычный workflow PR собирает preview и не получает release-ключи.
+
+Подпись релиза требует реальных сертификатов владельца проекта. До запуска на Mac, проверки Gatekeeper на скачанном файле с quarantine и успешной сборки новые установщики не считаются проверенными. Старые DMG в `installers/current` не меняются от редактирования скриптов.
+
+Источники: [electron-builder v26: macOS signing](https://www.electron.build/v26/docs/features/code-signing/code-signing-mac/), [Apple: безопасное открытие приложений](https://support.apple.com/102445).
