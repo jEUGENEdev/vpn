@@ -25,13 +25,15 @@ with tempfile.TemporaryDirectory() as temporary:
     assert action.attrib['FileRef'] == 'Agent' and action.attrib['ExeCommand'] == '-recover-network'
     scheduled = tree.find('.//w:InstallExecuteSequence/w:Custom[@Action="RecoverNetwork"]', ns)
     assert scheduled is not None and scheduled.attrib['After'] == 'StopServices'
-    assert scheduled.attrib['Condition'] == 'REMOVE~="ALL"', 'also recover during upgrades'
+    assert scheduled.attrib['Condition'] == 'REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE', 'upgrades must retain protection'
     service = tree.find('.//w:ServiceControl', ns)
     assert service.attrib['Stop'] == 'both' and service.attrib['Wait'] == 'yes'
-    assert tree.find('.//w:MajorUpgrade', ns).attrib['AllowSameVersionUpgrades'] == 'yes'
+    upgrade = tree.find('.//w:MajorUpgrade', ns)
+    assert upgrade.attrib['Schedule'] == 'afterInstallInitialize', 'failed upgrades must roll back the old product'
+    assert upgrade.attrib.get('AllowSameVersionUpgrades', 'no') == 'no'
 
 plist = plistlib.loads((root / 'packaging/macos/dev.linevpn.agent.plist').read_bytes())
 assert plist['ProgramArguments'] == ['/Library/Application Support/LineVPN/service-wrapper.sh']
-for script in ('service-wrapper.sh', 'uninstall.sh', 'recover-network.sh', 'postinstall', 'Uninstall-LineVPN.command'):
+for script in ('service-wrapper.sh', 'uninstall.sh', 'recover-network.sh', 'preinstall', 'postinstall', 'Uninstall-LineVPN.command'):
     subprocess.run(['bash', '-n', str(root / 'packaging/macos' / script)], check=True)
 print('PASS: generated MSI recovery ordering, checked elevated cleanup, upgrade path and macOS supervisor packaging')

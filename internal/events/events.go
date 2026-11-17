@@ -67,7 +67,11 @@ func (c *Center) ConnectionOutage(now time.Time, message, target string, source 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.outage = true
-	c.add(now, "outage", "outage", "VPN недоступен", message, target, source, 15*time.Minute)
+	title := "VPN недоступен"
+	if target != "" {
+		title = "Ошибка VPN-соединения"
+	}
+	c.add(now, "outage", "outage", title, message, target, source, 15*time.Minute)
 }
 func (c *Center) Recovered(now time.Time) {
 	c.ConnectionRecovered(now, "", model.ApplicationInfo{})

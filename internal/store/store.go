@@ -15,6 +15,8 @@ type Account struct {
 	model.Account
 	Hash    string `json:"password_hash,omitempty"` // Legacy only; password authentication is disabled.
 	KeyHash string `json:"access_key_hash,omitempty"`
+
+	ApplicationRules map[string]model.ApplicationRule `json:"application_rules,omitempty"`
 }
 type Device struct {
 	model.Device

@@ -15,6 +15,12 @@ class LineVpnService : VpnService() {
     @Volatile private var starting = false
     @Volatile private var destroyed = false
     private var lastFailure = 0L
+    private val tunnelLock = Any()
+    private var retainedTunnel: ParcelFileDescriptor? = null
+    private fun releaseTunnel() = synchronized(tunnelLock) {
+        retainedTunnel?.close()
+        retainedTunnel = null
+    }
     private val applicationResolver by lazy { ApplicationResolver(this) }
     private val seenEvents = linkedSetOf<String>()
     private val monitor = object : Runnable { override fun run() {
@@ -30,15 +36,16 @@ class LineVpnService : VpnService() {
                 if (seenEvents.add(id)) { NativeNotifications.show(this@LineVpnService, e.getString("kind"), e.getString("title"), e.getString("message")); if (seenEvents.size > 300) seenEvents.remove(seenEvents.first()) }
             }
             val text = when {
-                (status == "system_blocked" || (isLockdownEnabled && !snapshot.optBoolean("tunnel"))) -> "Android блокирует интернет. Отключите «Блокировать без VPN» в настройках."
-                status == "stopped" -> "VPN не запущен. Соединения используют обычную сеть."
-                status == "network_error" -> "VPN не запущен. Используется обычная сеть; откройте приложение для повтора."
+                status == "system_blocked" -> "Android блокирует интернет: не удалось запустить прямой режим. Откройте приложение."
+                status == "stopped" -> "Служба VPN остановлена. Защита при остановке зависит от блокировки без VPN в Android."
+                status == "network_error" -> "Ошибка сети. Откройте приложение для повтора или ручного выключения VPN."
                 snapshot.optBoolean("power_transition") -> "Переключаем VPN и сетевые настройки…"
                 !snapshot.optBoolean("vpn_enabled", true) -> "VPN выключен. Трафик идёт напрямую."
-                snapshot.optBoolean("partial_fallback") -> "Часть адресов временно напрямую. Остальные разрешённые соединения — через VPN."
-                snapshot.optBoolean("direct_fallback") -> "VPN недоступен. Трафик идёт напрямую, без VPN-защиты."
-                isLockdownEnabled -> "В Android включена блокировка без VPN. Для доступности сети отключите её."
-                else -> "VPN работает. При сбое соединения смогут идти напрямую."
+                snapshot.optBoolean("partial_outage") -> "Сбой части VPN-соединений. Прямое подключение для них запрещено."
+                snapshot.optBoolean("protection_blocked") -> "VPN недоступен. Защищённые соединения ожидают восстановления."
+                snapshot.optBoolean("sync_pending") -> "Не удалось обновить правила. Работающие VPN-соединения сохранены."
+                !isLockdownEnabled -> "VPN работает. Для защиты при остановке приложения включите блокировку без VPN в Android."
+                else -> "VPN работает. При сбое защищённые соединения блокируются."
             }
 
             getSystemService(NotificationManager::class.java).notify(1, notification(text))
@@ -58,7 +65,7 @@ class LineVpnService : VpnService() {
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (destroyed) return START_NOT_STICKY
-        val n = notification("Запускаем VPN. Приоритет — доступность сети.")
+        val n = notification("Запускаем VPN. Защищённые соединения ждут VPN.")
         if (Build.VERSION.SDK_INT >= 34) startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) else startForeground(1, n)
         if (starting || Mobile.status() == "running") return START_STICKY
         starting = true
@@ -69,14 +76,23 @@ class LineVpnService : VpnService() {
                         if (isLockdownEnabled) throw IllegalStateException("Сначала отключите «Блокировать соединения без VPN» в системных настройках VPN. Android иначе заблокирует интернет.")
                     }
                     override fun openTunnel(): Long {
+                        return synchronized(tunnelLock) {
                         if (destroyed) throw IllegalStateException("VPN service stopped")
                         val descriptor = Builder().setSession("Линия VPN").setMtu(1400)
                             .addAddress("172.29.255.1", 30).addAddress("fd04:6c69:6e65:ffff::1", 126)
                             .addRoute("0.0.0.0", 0).addRoute("::", 0).addDnsServer("172.29.255.2")
                             .setBlocking(true).establish() ?: throw IllegalStateException("VPN permission revoked")
-                        // Ownership transfers to Go, which closes this FD on off.
-                        return descriptor.detachFd().toLong()
+                        // Keep the interface alive if Go fails to start its packet stack.
+                        // Only explicit off (without lockdown) releases the retained FD.
+                        try {
+                            val nativeFd = ParcelFileDescriptor.dup(descriptor.fileDescriptor).detachFd().toLong()
+                            retainedTunnel?.close()
+                            retainedTunnel = descriptor
+                            nativeFd
+                        } catch (e: Exception) { descriptor.close(); throw e }
+                        }
                     }
+                    override fun closeTunnel() { releaseTunnel() }
                     override fun deviceName(): String {
                         val model = Build.MODEL?.trim().orEmpty()
                         if (model.isBlank() || model.equals("unknown", true)) return ""
@@ -91,16 +107,16 @@ class LineVpnService : VpnService() {
             } catch (e: Exception) {
                 android.util.Log.e("LineVPN", "Native service startup failed", e)
                 Mobile.stop()
-                getSystemService(NotificationManager::class.java).notify(1, notification("VPN не запущен. Используйте обычную сеть; отключите блокировку без VPN в Android."))
+                getSystemService(NotificationManager::class.java).notify(1, notification("Сбой службы VPN. Проверьте блокировку без VPN в Android и повторите запуск."))
                 val now = System.currentTimeMillis()
-                if (now - lastFailure > 15 * 60 * 1000L) { lastFailure = now; NativeNotifications.show(this, "outage", "VPN не запущен", "Туннель закрыт. Для прямого доступа отключите блокировку без VPN в настройках Android.") }
+                if (now - lastFailure > 15 * 60 * 1000L) { lastFailure = now; NativeNotifications.show(this, "outage", "VPN не запущен", "Не удалось запустить службу. Для защиты при остановке приложения нужна системная блокировка без VPN.") }
                 if (!destroyed) main.postDelayed({ if (!destroyed) { starting = false; startForegroundService(Intent(this, LineVpnService::class.java)) } }, 15000)
             } finally { starting = false }
         }
         return START_STICKY
     }
-    override fun onRevoke() { destroyed = true; main.removeCallbacksAndMessages(null); NativeNotifications.show(this, "outage", "Разрешение VPN отозвано", "Туннель закрыт. Соединения используют обычную сеть, без VPN-защиты."); Mobile.stop(); stopSelf() }
-    override fun onDestroy() { destroyed = true; main.removeCallbacksAndMessages(null); Mobile.stop(); worker.shutdown(); super.onDestroy() }
+    override fun onRevoke() { destroyed = true; main.removeCallbacksAndMessages(null); NativeNotifications.show(this, "outage", "Разрешение VPN отозвано", "Туннель закрыт. Соединения используют обычную сеть, без VPN-защиты."); Mobile.stop(); releaseTunnel(); stopSelf() }
+    override fun onDestroy() { destroyed = true; main.removeCallbacksAndMessages(null); Mobile.stop(); releaseTunnel(); worker.shutdown(); super.onDestroy() }
 }
 
 object NativeNotifications {

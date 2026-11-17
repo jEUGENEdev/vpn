@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
+# preinstall stopped the old service before Installer replaced the payload.
+[[ "${3:-/}" == / ]] || { echo 'Install LineVPN on the running system volume.' >&2; exit 1; }
 # Called by Apple's Installer as root; no credentials are stored here.
+[[ "$EUID" -eq 0 && "${3:-/}" == / ]] || { echo 'Install on the running system volume as root.' >&2; exit 1; }
 if ! /usr/bin/id _linevpn >/dev/null 2>&1; then
   vpn_uid=399
   # The account and group share a number; it must be unused in BOTH namespaces.
@@ -21,11 +24,14 @@ if ! /usr/bin/id _linevpn >/dev/null 2>&1; then
 fi
 mkdir -p /var/lib/linevpn
 chmod 711 /var/lib/linevpn
-/bin/launchctl bootout system/dev.linevpn.agent 2>/dev/null || true
-if /bin/launchctl print system/dev.linevpn.agent >/dev/null 2>&1; then
-  echo 'Cannot stop the previous LineVPN service.' >&2
+if /bin/launchctl print system/dev.linevpn.agent >/dev/null 2>&1 || /usr/bin/pgrep -x linevpn-agent >/dev/null 2>&1; then
+  echo 'A previous LineVPN service is still running; refusing to start a second instance.' >&2
   exit 1
 fi
-'/Library/Application Support/LineVPN/linevpn-agent' -data /var/lib/linevpn -recover-network
+# Install a dedicated anchor. Keep its rules across worker exits and upgrades.
+if ! /usr/bin/grep -Eq '^[[:space:]]*anchor "linevpn"' /etc/pf.conf; then
+  /usr/bin/printf '\nanchor "linevpn"\n' >> /etc/pf.conf
+fi
+/sbin/pfctl -nf /etc/pf.conf
 /bin/launchctl enable system/dev.linevpn.agent
 /bin/launchctl bootstrap system /Library/LaunchDaemons/dev.linevpn.agent.plist

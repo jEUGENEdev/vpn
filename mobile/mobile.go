@@ -27,6 +27,7 @@ type Protector interface {
 	ResolveApplication(network, source string, sourcePort int64, destination string, destinationPort int64) string
 	OpenTunnel() (int64, error)
 	CheckDisable() error
+	CloseTunnel() error
 }
 
 var mu sync.Mutex
@@ -35,7 +36,7 @@ var current *session
 type session struct {
 	cancel context.CancelFunc
 	c      *client.Client
-	t      *client.Tunnel
+	t      interface{ Close() }
 	h      *http.Server
 	url    string
 	ctx    context.Context
@@ -82,14 +83,14 @@ func Start(dir string, p Protector) (string, error) {
 		return app, nil
 	})
 	s := &session{cancel: cancel, c: c, ctx: ctx, p: p}
-	// Keep the local UI alive with no VPN interface when off, including after
-	// Android restarts an always-on service. Only explicit enable establishes it.
+	// Off keeps the UI alive. A local forwarding interface is retained only
+	// when Android lockdown requires it, including after a service restart.
 	if e = s.Apply(c.VPNEnabled()); e != nil {
-		// Failed TUN creation must leave the UI available for off/retry. Apply
-		// has closed any descriptor it received, so ordinary networking remains.
+		// Android retains a duplicate TUN descriptor, keeping traffic captured
+		// even if the native packet stack fails. The UI remains available.
 		c.SetNetworkError(e)
 	}
-	if !c.VPNEnabled() && p.CheckDisable() != nil {
+	if p.CheckDisable() != nil {
 		c.SetGuard(true)
 	}
 	c.SetNetworkController(s)
@@ -112,20 +113,23 @@ func Start(dir string, p Protector) (string, error) {
 	return url, nil
 }
 
-func (s *session) Check(enabled bool) error {
-	if !enabled {
-		return s.p.CheckDisable()
-	}
-	return nil
-}
+// Lockdown does not veto explicit off: keep the local packet interface and
+// forward every flow directly through protected sockets, without a VPN server.
+func (s *session) Check(enabled bool) error { return nil }
 
 func (s *session) Apply(enabled bool) error {
-	if s.t != nil {
-		s.t.Close()
-		s.t = nil
+	lockdown := s.p.CheckDisable() != nil
+	s.c.SetGuard(lockdown)
+	if !enabled && !lockdown {
+		if s.t != nil {
+			s.t.Close()
+			s.t = nil
+		}
+		return s.p.CloseTunnel()
 	}
-	if !enabled {
-		s.c.SetGuard(false)
+	// Reuse the live TUN across mode changes. In off mode policy sends all
+	// traffic directly, including when Android's lockdown is enabled.
+	if s.t != nil {
 		return nil
 	}
 	fd, err := s.p.OpenTunnel()
@@ -136,8 +140,12 @@ func (s *session) Apply(enabled bool) error {
 		return errors.New("Android не разрешил VPN; откройте приложение и подтвердите подключение")
 	}
 	// Ownership transfers to StartTunnel (including its failure paths).
-	s.t, err = s.c.StartTunnel(s.ctx, tun.Options{Name: "linevpn", FileDescriptor: int(fd), AutoRoute: false, EXP_ExternalConfiguration: true})
-	return err
+	t, err := s.c.StartTunnel(s.ctx, tun.Options{Name: "linevpn", FileDescriptor: int(fd), AutoRoute: false, EXP_ExternalConfiguration: true})
+	if err != nil {
+		return err
+	}
+	s.t = t
+	return nil
 }
 func URL() string {
 	mu.Lock()

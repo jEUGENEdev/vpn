@@ -41,10 +41,6 @@ func main() {
 		return
 	}
 	run := func(ctx context.Context) error {
-		// Cleanup also runs if profile/token preparation fails before Start.
-		if err := platform.Recover(*dir); err != nil {
-			log.Printf("network recovery: %v", err)
-		}
 		for {
 			err := serve(ctx, *dir)
 			// macOS dropped UID: launchd must start a fresh privileged instance.

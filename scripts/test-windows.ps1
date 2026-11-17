@@ -2,7 +2,9 @@
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Use an isolated CI runner for this network test' }
 Set-Location (Join-Path $PSScriptRoot '..')
-$msi = (Resolve-Path build/LineVPN-0.2.0-windows-x64.msi).Path
+$vpnVersion = python scripts/package_version.py
+if ($LASTEXITCODE -ne 0) { throw 'Invalid installer version' }
+$msi = (Resolve-Path "build/LineVPN-$vpnVersion-windows-x64.msi").Path
 $agent = Join-Path $env:ProgramFiles 'LineVPN/resources/agent/linevpn-agent.exe'
 $log = Join-Path (Get-Location) 'build/windows-install.log'
 $nativeOK = $false
@@ -22,7 +24,7 @@ try {
             break
         } catch { Start-Sleep -Seconds 1 }
     }
-    if (-not $state.tunnel -or $state.guard) { throw 'TUN unavailable or persistent guard retained' }
+    if (-not $state.tunnel -or -not $state.guard) { throw 'TUN or persistent guard unavailable' }
     Write-Output 'Service ready; checking DNS and direct traffic'
     $answer = Resolve-DnsName example.com -Server 172.29.255.2 -Type A -DnsOnly -QuickTimeout
     if (-not ($answer.IPAddress -match '^198\.(18|19)\.')) { throw 'TUN DNS did not return a fake IP' }
@@ -35,23 +37,37 @@ try {
     $decision = @{id=$curlApp.id;decision='trusted'} | ConvertTo-Json
     Invoke-RestMethod -Uri http://127.0.0.1:17891/local/applications -Headers $headers -Method Post -ContentType 'application/json' -Body $decision -TimeoutSec 3 | Out-Null
     & curl.exe --silent --output NUL --connect-timeout 2 --max-time 3 http://1.1.1.1/cdn-cgi/trace
-    if ($LASTEXITCODE -ne 0) { throw 'Offline trusted app lost direct connectivity' }
+    if ($LASTEXITCODE -eq 0) { throw 'Offline trusted app bypassed VPN' }
     $decision = @{id=$curlApp.id;decision='addresses'} | ConvertTo-Json
     Invoke-RestMethod -Uri http://127.0.0.1:17891/local/applications -Headers $headers -Method Post -ContentType 'application/json' -Body $decision -TimeoutSec 3 | Out-Null
     try { Invoke-RestMethod -Uri http://127.0.0.1:17891/local/rules -Headers $headers -Method Post -ContentType 'application/json' -Body '{"target":"1.1.1.1","action":"approve","revision":0}' -TimeoutSec 3 | Out-Null } catch { }
     $state = Invoke-RestMethod -Uri http://127.0.0.1:17891/local/state -Headers $headers -TimeoutSec 2
     if ($state.pending_protection -notcontains '1.1.1.1') { throw 'Approval not protected locally' }
     & curl.exe --silent --output NUL --connect-timeout 2 --max-time 3 http://1.1.1.1/cdn-cgi/trace
-    if ($LASTEXITCODE -ne 0) { throw 'Offline approved address lost direct connectivity' }
+    if ($LASTEXITCODE -eq 0) { throw 'Offline approved address bypassed VPN' }
     python scripts/test-desktop-power.py
     if ($LASTEXITCODE -ne 0) { throw 'Native power cycle regression failed' }
-    Write-Output 'Checking abrupt process termination and direct connectivity'
+    # Same MSI = repair of the existing product, with the existing state intact.
+    Stop-Service LineVPN
+    $dataPath = Join-Path $env:ProgramData 'LineVPN'
+    python scripts/test-upgrade-state.py snapshot $dataPath build/windows-upgrade-state.json
+    if ($LASTEXITCODE -ne 0) { throw 'Could not snapshot configured client state' }
+    $repair = Start-Process msiexec.exe -ArgumentList @('/i', ('"' + $msi + '"'), '/qn', '/norestart') -Wait -PassThru
+    if ($repair.ExitCode -notin @(0, 3010)) { throw "MSI repeat installation failed: $($repair.ExitCode)" }
+    python scripts/test-upgrade-state.py check $dataPath build/windows-upgrade-state.json
+    if ($LASTEXITCODE -ne 0) { throw 'Repair changed saved client data' }
+    $products = @(Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' | Get-ItemProperty | Where-Object { $_.DisplayName -eq 'LineVPN' })
+    if ($products.Count -ne 1 -or $products[0].DisplayVersion -ne $vpnVersion) { throw 'Duplicate or stale installed product after repair' }
+    Start-Service LineVPN
+    python scripts/test-desktop-update.py $msi
+    if ($LASTEXITCODE -ne 0) { throw 'Native MSI update regression failed' }
+    Write-Output 'Checking abrupt process termination and retained protection'
     Set-Service LineVPN -StartupType Disabled
     $vpnProcess = (Get-CimInstance Win32_Service -Filter "Name='LineVPN'").ProcessId
     Stop-Process -Id $vpnProcess -Force
     Start-Sleep -Seconds 2
     & curl.exe --silent --output NUL --connect-timeout 4 --max-time 8 http://1.1.1.1/cdn-cgi/trace
-    if ($LASTEXITCODE -ne 0) { throw 'Direct networking failed after process termination' }
+    if ($LASTEXITCODE -eq 0) { throw 'Protected traffic escaped after process termination' }
     Set-Service LineVPN -StartupType Automatic
     Start-Service LineVPN
     # An enabled service must stop cleanly before MSI removes its executable.
@@ -71,4 +87,4 @@ try {
     if (Test-Path $agent) { & $agent -recover-network }
     if (-not $nativeOK) { Start-Process msiexec.exe -ArgumentList @('/x', ('"' + $msi + '"'), '/qn', '/norestart') -Wait | Out-Null }
 }
-if ($nativeOK) { 'PASS: MSI install, DNS, direct fallback, off/on, process termination and automatic uninstall recovery' | Set-Content build/windows-native.txt }
+if ($nativeOK) { 'PASS: MSI install/repair preserves state and one product, DNS, protected failures, off/on, process termination and automatic uninstall recovery' | Set-Content build/windows-native.txt }

@@ -8,8 +8,53 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 )
+
+func Guard(name string) error {
+	if os.Geteuid() != 0 {
+		return errors.New("нужна установленная фоновая служба")
+	}
+	if name != "" && !strings.HasPrefix(name, "utun") {
+		return errors.New("invalid interface")
+	}
+	hook, e := exec.Command("/sbin/pfctl", "-sr").Output()
+	if e != nil || !strings.Contains(string(hook), `anchor "linevpn"`) {
+		if b, err := exec.Command("/sbin/pfctl", "-f", "/etc/pf.conf").CombinedOutput(); err != nil {
+			return fmt.Errorf("PF config: %s: %w", b, err)
+		}
+	}
+	hook, e = exec.Command("/sbin/pfctl", "-sr").Output()
+	if e != nil || !strings.Contains(string(hook), `anchor "linevpn"`) {
+		return errors.New("LineVPN PF anchor missing; reinstall the client")
+	}
+	rules, e := guardRules(name)
+	if e != nil {
+		return e
+	}
+	cmd := exec.Command("/sbin/pfctl", "-a", "linevpn", "-f", "-")
+	cmd.Stdin = strings.NewReader(rules)
+	if b, e := cmd.CombinedOutput(); e != nil {
+		return fmt.Errorf("PF: %s: %w", b, e)
+	}
+	info, e := exec.Command("/sbin/pfctl", "-s", "info").CombinedOutput()
+	if e == nil && !strings.Contains(string(info), "Status: Enabled") {
+		if b, err := exec.Command("/sbin/pfctl", "-e").CombinedOutput(); err != nil {
+			return fmt.Errorf("PF enable: %s: %w", b, err)
+		}
+		info, e = exec.Command("/sbin/pfctl", "-s", "info").CombinedOutput()
+	}
+	if e != nil || !strings.Contains(string(info), "Status: Enabled") {
+		return errors.New("PF is not enabled")
+	}
+	if name == "" {
+		if e := exec.Command("/sbin/pfctl", "-F", "states").Run(); e != nil {
+			return e
+		}
+	}
+	return nil
+}
 
 func Recover(dir string) error {
 	if os.Geteuid() != 0 {

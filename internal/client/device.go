@@ -23,6 +23,9 @@ type DeviceIdentity struct {
 // deleted/expired credentials do not remain on the local disk.
 func (c *Client) forgetAccessLocked() error {
 	c.ready = false
+	c.routeEpoch++
+	clear(c.vpnFailures)
+	c.vpnFailed = false
 	c.status = "auth_required"
 	c.config.Profile.Token = ""
 	c.config.Profile.UUID = ""

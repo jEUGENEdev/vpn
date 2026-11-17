@@ -32,7 +32,7 @@ class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 100)
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(32), dp(24), dp(24)) }
         box.addView(TextView(this).apply { text = "Линия VPN"; textSize = 32f; setTextColor(0xFF172341.toInt()); isAccessibilityHeading = true })
-        box.addView(TextView(this).apply { text = "Приоритет — доступность сети. При сбое VPN соединения смогут идти напрямую, без VPN-защиты. В системных настройках оставьте «Блокировать соединения без VPN» выключенным."; textSize = 16f; setTextColor(0xFF58657B.toInt()); setPadding(0, dp(24), 0, dp(24)) })
+        box.addView(TextView(this).apply { text = "При сбое VPN разрешённые адреса и доверенные приложения блокируются. Прямой доступ для них включается кнопкой «Выключить VPN». Для защиты при остановке приложения включите «Постоянная VPN» и «Блокировать соединения без VPN» в системных настройках."; textSize = 16f; setTextColor(0xFF58657B.toInt()); setPadding(0, dp(24), 0, dp(24)) })
         box.addView(Button(this).apply { text = "Открыть VPN"; minHeight = dp(48); setOnClickListener { prepareVPN() } })
         box.addView(Button(this).apply { text = "Настройки VPN"; minHeight = dp(48); setOnClickListener { startActivity(Intent(Settings.ACTION_VPN_SETTINGS)) } })
         // Large system fonts and landscape must not push either action off screen.
