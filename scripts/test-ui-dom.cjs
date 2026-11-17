@@ -167,6 +167,7 @@ async function testCombinedAuthentication() {
   const state = {...copy(fixture), account_id:'', status:'setup', auth_required:false,
     device:{name:'',platform:'darwin'}, login:'Alice', vpn_enabled:true};
   const calls = [];
+  let restartPower = false;
   w.HTMLElement.prototype.scrollIntoView = function() {};
   w.fetch = async (url, options) => {
     const body = options.body ? JSON.parse(options.body) : null;
@@ -186,6 +187,7 @@ async function testCombinedAuthentication() {
     } else if (url === '/local/vpn') {
       state.vpn_enabled = body.enabled;
       state.status = body.enabled ? 'setup' : 'disabled';
+      if(restartPower){state.power_transition=true;state.status='switching';}
     }
     return {ok:true,status:200,json:async()=>copy(out)};
   };
@@ -233,6 +235,32 @@ async function testCombinedAuthentication() {
     await $('vpn-toggle').onclick();
     assert.equal($('setup').hidden,false,'power toggle hid required login');
     assert.equal($('dashboard').hidden,true);
+    Object.assign(state,{account_id:'test',auth_required:false,status:'ready',vpn_enabled:true,guard:false,power_error:'',power_transition:false});
+    restartPower=true;await w.eval('update()');
+    const switchOff=$('vpn-toggle').onclick();
+    await tick();$('confirm').close('ok');await tick();
+    assert.equal($('vpn-toggle').disabled,true);
+    assert.match($('vpn-mode-note').textContent,/Переключаем/);
+    assert.doesNotMatch($('toast').textContent,/настройки восстановлены/);
+    Object.assign(state,{status:'disabled',power_transition:false,tunnel:false,guard:false});
+    await switchOff;
+    assert.equal($('vpn-toggle').textContent,'Включить VPN');
+    assert.match($('toast').textContent,/настройки восстановлены/);
+    restartPower=false;
+    Object.assign(state,{account_id:'test',auth_required:false,status:'switching',vpn_enabled:false,power_transition:true});
+    await w.eval('update()');
+    assert.equal($('vpn-toggle').disabled,true);
+    assert.match($('status-label').textContent,/ПЕРЕКЛЮЧАЕМ/);
+    assert.doesNotMatch($('vpn-mode-note').textContent,/идёт напрямую|восстановлены/);
+    Object.assign(state,{status:'network_error',power_transition:false,power_error:'DNS restore failed'});
+    await w.eval('update()');
+    assert.equal($('vpn-toggle').textContent,'Повторить переключение');
+    assert.match($('hero-description').textContent,/DNS restore failed/);
+    Object.assign(state,{status:'system_blocked',power_error:'',guard:true});
+    w.LineBridge={settings(){},theme(){}};
+    await w.eval('update()');
+    assert.equal($('guard-warning').hidden,false);
+    assert.match($('vpn-mode-note').textContent,/Android блокирует интернет/);
     console.log('DOM integration passed: key login, device selection, pairing, one-time key and revoked-session power toggle.');
   } finally { w.close(); }
 }

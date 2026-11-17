@@ -25,6 +25,8 @@ type Protector interface {
 	Protect(fd int64) bool
 	DeviceName() string
 	ResolveApplication(network, source string, sourcePort int64, destination string, destinationPort int64) string
+	OpenTunnel() (int64, error)
+	CheckDisable() error
 }
 
 var mu sync.Mutex
@@ -36,22 +38,18 @@ type session struct {
 	t      *client.Tunnel
 	h      *http.Server
 	url    string
+	ctx    context.Context
+	p      Protector
 }
 
-func Start(fd int64, dir string, p Protector) (string, error) {
+func Start(dir string, p Protector) (string, error) {
 	mu.Lock()
 	defer mu.Unlock()
 	if current != nil {
-		if fd > 0 {
-			syscall.Close(int(fd))
-		}
 		return current.url, nil
 	}
-	if fd < 1 || p == nil {
-		if fd > 0 {
-			syscall.Close(int(fd))
-		}
-		return "", errors.New("VPN interface is required")
+	if p == nil {
+		return "", errors.New("VPN service is required")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	control := func(network, address string, raw syscall.RawConn) error {
@@ -72,7 +70,6 @@ func Start(fd int64, dir string, p Protector) (string, error) {
 	c, e := client.New(filepath.Join(dir, "core"), d)
 	if e != nil {
 		cancel()
-		syscall.Close(int(fd))
 		return "", e
 	}
 	c.SetDeviceName(p.DeviceName())
@@ -84,26 +81,63 @@ func Start(fd int64, dir string, p Protector) (string, error) {
 		}
 		return app, nil
 	})
-	t, e := c.StartTunnel(ctx, tun.Options{Name: "linevpn", FileDescriptor: int(fd), AutoRoute: false, EXP_ExternalConfiguration: true})
-	if e != nil {
+	s := &session{cancel: cancel, c: c, ctx: ctx, p: p}
+	// Keep the local UI alive with no VPN interface when off, including after
+	// Android restarts an always-on service. Only explicit enable establishes it.
+	if e = s.Apply(c.VPNEnabled()); e != nil {
 		c.Close()
 		cancel()
 		return "", e
 	}
+	if !c.VPNEnabled() && p.CheckDisable() != nil {
+		c.SetGuard(true)
+	}
+	c.SetNetworkController(s)
 	ln, e := net.Listen("tcp", "127.0.0.1:0")
 	if e != nil {
 		c.Close()
-		t.Close()
+		if s.t != nil {
+			s.t.Close()
+		}
 		cancel()
 		return "", e
 	}
 	token := secure.Token()
 	h := &http.Server{Handler: c.Handler(token, ui.Handler("client")), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second}
 	url := fmt.Sprintf("http://%s/#token=%s", ln.Addr(), token)
-	current = &session{cancel, c, t, h, url}
+	s.h, s.url = h, url
+	current = s
 	go h.Serve(ln)
 	go c.Run(ctx)
 	return url, nil
+}
+
+func (s *session) Check(enabled bool) error {
+	if !enabled {
+		return s.p.CheckDisable()
+	}
+	return nil
+}
+
+func (s *session) Apply(enabled bool) error {
+	if s.t != nil {
+		s.t.Close()
+		s.t = nil
+	}
+	if !enabled {
+		s.c.SetGuard(false)
+		return nil
+	}
+	fd, err := s.p.OpenTunnel()
+	if err != nil {
+		return err
+	}
+	if fd < 1 {
+		return errors.New("Android не разрешил VPN; откройте приложение и подтвердите подключение")
+	}
+	// Ownership transfers to StartTunnel (including its failure paths).
+	s.t, err = s.c.StartTunnel(s.ctx, tun.Options{Name: "linevpn", FileDescriptor: int(fd), AutoRoute: false, EXP_ExternalConfiguration: true})
+	return err
 }
 func URL() string {
 	mu.Lock()
@@ -130,7 +164,9 @@ func Stop() {
 	current.cancel()
 	current.h.Close()
 	current.c.Close()
-	current.t.Close()
+	if current.t != nil {
+		current.t.Close()
+	}
 	current = nil
 }
 

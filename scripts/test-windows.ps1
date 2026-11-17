@@ -48,6 +48,8 @@ try {
     if ($state.pending_protection -notcontains '1.1.1.1') { throw 'Approval not protected locally' }
     & curl.exe --silent --output NUL --connect-timeout 2 --max-time 3 http://1.1.1.1/cdn-cgi/trace
     if ($LASTEXITCODE -eq 0) { throw 'Approved IP escaped without VPN' }
+    python scripts/test-desktop-power.py
+    if ($LASTEXITCODE -ne 0) { throw 'Native power cycle regression failed' }
     # Stop the service explicitly to suppress recovery while checking persistent rules.
     Write-Output 'Checking bounded service stop and persistent WFP'
     $service = Get-Service LineVPN

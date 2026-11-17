@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"github.com/jEUGENEdev/vpn/internal/platform"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
 	"os/exec"
@@ -61,7 +60,6 @@ func runService(run func(context.Context) error) error {
 	}
 	return svc.Run("LineVPN", handler{run})
 }
-func recoverNetwork() error { return platform.Recover() }
 func tokenPermissions(dir, path string) error {
 	if e := exec.Command("icacls", dir, "/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "*S-1-5-32-545:(RX)").Run(); e != nil {
 		return e

@@ -28,6 +28,29 @@ public class VpnSmokeTest {
     private static final String PROBE_BODY = "linevpn-native-ok";
     private android.app.Instrumentation getInstrumentation() { return InstrumentationRegistry.getInstrumentation(); }
     private Network vpnNetwork;
+    private void awaitVPNNetwork(ConnectivityManager connectivity, boolean enabled) throws Exception {
+        long deadline = SystemClock.elapsedRealtime() + 10000;
+        while (SystemClock.elapsedRealtime() < deadline) {
+            Network found = null;
+            for (Network network : connectivity.getAllNetworks()) {
+                NetworkCapabilities caps = connectivity.getNetworkCapabilities(network);
+                if (caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) found = network;
+            }
+            if ((found != null) == enabled) { vpnNetwork = found; return; }
+            Thread.sleep(100);
+        }
+        fail("VPN network did not reach enabled=" + enabled);
+    }
+    private void power(boolean enabled) throws Exception {
+        String local = Mobile.url(); int hash = local.indexOf("#token=");
+        request(local.substring(0, hash) + "local/vpn", URLDecoder.decode(local.substring(hash + 7), "UTF-8"),
+                new JSONObject().put("enabled", enabled).put("confirm", !enabled).toString());
+        JSONObject state = new JSONObject(Mobile.snapshot());
+        assertEquals(enabled, state.getBoolean("vpn_enabled"));
+        assertEquals(enabled, state.getBoolean("tunnel"));
+        assertFalse(state.optBoolean("power_transition"));
+        assertEquals("", state.optString("power_error"));
+    }
     private String request(String address, String token, String body) throws Exception {
         if (token == null) assertNotNull("Data-plane requests must use the VPN network", vpnNetwork);
         return requestOnNetwork(token == null ? vpnNetwork : null, address, token, body);
@@ -214,6 +237,35 @@ public class VpnSmokeTest {
         try { request(PROBE_URL,null,null); fail("Approved address escaped directly"); }
         catch (IOException expected) { }
         Log.i("LineVpnSmoke", "DNS, direct, application trust, restoration and address blocking passed");
+        for (int cycle = 0; cycle < 2; cycle++) {
+            power(false);
+            awaitVPNNetwork(connectivity, false);
+            assertEquals(PROBE_BODY, requestOnNetwork(null, PROBE_URL, null, null).trim());
+            Network active = connectivity.getActiveNetwork();
+            assertNotNull("No ordinary network after off", active);
+            assertFalse("Synthetic DNS survived off", connectivity.getLinkProperties(active).getDnsServers().contains(InetAddress.getByName("172.29.255.2")));
+            if (cycle == 0) {
+                getInstrumentation().getTargetContext().stopService(new Intent(getInstrumentation().getTargetContext(), LineVpnService.class));
+                deadline = System.currentTimeMillis() + 10000;
+                while (!"stopped".equals(Mobile.status()) && System.currentTimeMillis() < deadline) Thread.sleep(100);
+                assertEquals("stopped", Mobile.status());
+                assertEquals(PROBE_BODY, requestOnNetwork(null, PROBE_URL, null, null).trim());
+                getInstrumentation().getTargetContext().startForegroundService(new Intent(getInstrumentation().getTargetContext(), LineVpnService.class));
+                deadline = System.currentTimeMillis() + 10000;
+                while (!"running".equals(Mobile.status()) && System.currentTimeMillis() < deadline) Thread.sleep(100);
+                assertEquals("running", Mobile.status());
+                JSONObject off = new JSONObject(Mobile.snapshot());
+                assertFalse("Service restart re-enabled VPN", off.getBoolean("vpn_enabled"));
+                assertFalse("Off startup created TUN", off.getBoolean("tunnel"));
+                awaitVPNNetwork(connectivity, false);
+                assertEquals(PROBE_BODY, requestOnNetwork(null, PROBE_URL, null, null).trim());
+            }
+            power(true);
+            awaitVPNNetwork(connectivity, true);
+            try { request(PROBE_URL, null, null); fail("Re-enable lost saved approval protection"); }
+            catch (IOException expected) { }
+        }
+        Log.i("LineVpnSmoke", "Full VPN off/on, restored system DNS, off restart and re-enabled blocking passed");
         // Wait for compositor output as well as DOM readiness and foreground focus.
         android.graphics.Bitmap preview = captureNativeUI(activity);
         try (FileOutputStream out = new FileOutputStream(new File(getInstrumentation().getTargetContext().getFilesDir(), "native-preview.png"))) {

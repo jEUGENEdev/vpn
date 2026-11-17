@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"syscall"
 	"unsafe"
 )
 
@@ -121,9 +122,9 @@ func Guard(name string) error {
 	}
 	return nil
 }
-func ConfigureDNS() error             { _, e := exec.Command("ipconfig", "/flushdns").Output(); return e }
+func ConfigureDNS(dir string) error   { _, e := exec.Command("ipconfig", "/flushdns").Output(); return e }
 func DropPrivileges(dir string) error { return nil }
-func Recover() error {
+func Recover(dir string) error {
 	s, e := wf.New(nil)
 	if e != nil {
 		return e
@@ -140,11 +141,11 @@ func Recover() error {
 			}
 		}
 	}
-	if e = s.DeleteSublayer(sublayer); e != nil && !errors.Is(e, windows.ERROR_NOT_FOUND) {
+	if e = s.DeleteSublayer(sublayer); e != nil && !errors.Is(e, windows.ERROR_NOT_FOUND) && !errors.Is(e, syscall.Errno(windows.FWP_E_SUBLAYER_NOT_FOUND)) {
 		return e
 	}
-	if e = s.DeleteProvider(provider); e != nil {
+	if e = s.DeleteProvider(provider); e != nil && !errors.Is(e, windows.ERROR_NOT_FOUND) && !errors.Is(e, syscall.Errno(windows.FWP_E_PROVIDER_NOT_FOUND)) {
 		return e
 	}
-	return ConfigureDNS()
+	return ConfigureDNS(dir)
 }

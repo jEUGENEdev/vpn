@@ -1,10 +1,8 @@
 package platform
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/jEUGENEdev/vpn/internal/secure"
 	"os"
 	"os/exec"
 	"os/user"
@@ -49,42 +47,21 @@ func Guard(name string) error {
 	}
 	return nil
 }
-func ConfigureDNS() error {
-	b, e := exec.Command("/usr/sbin/networksetup", "-listallnetworkservices").Output()
-	if e != nil {
-		return e
+func ConfigureDNS(dir string) error { return systemDNS(dir).configure() }
+
+func Recover(dir string) error {
+	if os.Geteuid() != 0 {
+		return errors.New("для восстановления сети нужны права администратора")
 	}
-	backup := map[string][]string{}
-	path := "/var/lib/linevpn/dns-backup.json"
-	if b, e := os.ReadFile(path); e == nil {
-		json.Unmarshal(b, &backup)
+	if err := systemDNS(dir).restore(); err != nil {
+		return err
 	}
-	for i, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
-		if i == 0 || strings.HasPrefix(line, "*") {
-			continue
-		}
-		if _, ok := backup[line]; !ok {
-			old, e := exec.Command("/usr/sbin/networksetup", "-getdnsservers", line).Output()
-			if e != nil {
-				return e
-			}
-			values := strings.Fields(string(old))
-			if strings.Contains(string(old), "aren't any") {
-				values = []string{"Empty"}
-			}
-			backup[line] = values
-			raw, _ := json.Marshal(backup)
-			if e = secure.Save(path, raw); e != nil {
-				return e
-			}
-		}
-		if b, e := exec.Command("/usr/sbin/networksetup", "-setdnsservers", line, "172.29.255.2").CombinedOutput(); e != nil {
-			return fmt.Errorf("DNS: %s: %w", b, e)
-		}
+	if b, err := exec.Command("/sbin/pfctl", "-a", "linevpn", "-F", "rules").CombinedOutput(); err != nil {
+		return fmt.Errorf("PF recovery: %s: %w", b, err)
 	}
-	exec.Command("/usr/bin/dscacheutil", "-flushcache").Run()
 	return nil
 }
+
 func DropPrivileges(dir string) error {
 	u, e := user.Lookup("_linevpn")
 	if e != nil {

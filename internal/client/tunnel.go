@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"os"
 	"time"
 )
 
@@ -30,6 +31,9 @@ func (c *Client) StartTunnel(ctx context.Context, options tun.Options) (*Tunnel,
 	options.EXP_MultiPendingPackets = true
 	dev, e := tun.New(options)
 	if e != nil {
+		if options.FileDescriptor > 0 {
+			os.NewFile(uintptr(options.FileDescriptor), "tun").Close()
+		}
 		return nil, e
 	}
 	st, e := tun.NewStack("gvisor", tun.StackOptions{Context: ctx, Tun: dev, TunOptions: options, Handler: c, Logger: logger.NOP(), UDPTimeout: time.Minute})

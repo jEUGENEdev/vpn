@@ -54,6 +54,7 @@ curl --noproxy '*' -s --max-time 3 -H "Authorization: Bearer $vpn_token" -H 'Con
 curl --noproxy '*' -fsS --max-time 2 -H "Authorization: Bearer $vpn_token" http://127.0.0.1:17891/local/state > build/macos-state.json
 python3 -c 'import json; assert "1.1.1.1" in json.load(open("build/macos-state.json"))["pending_protection"]'
 if curl --noproxy '*' -s --output /dev/null --connect-timeout 2 --max-time 3 http://1.1.1.1/cdn-cgi/trace; then echo 'Approved IP escaped without VPN' >&2; exit 1; fi
+python3 scripts/test-desktop-power.py
 sudo launchctl bootout system/dev.linevpn.agent
 if curl --noproxy '*' -s --output /dev/null --connect-timeout 2 --max-time 3 http://1.1.1.1/cdn-cgi/trace; then echo 'PF guard disappeared with service' >&2; exit 1; fi
 printf 'PASS: PKG install, TUN DNS, direct connection, process attribution, app trust, approval block and PF after service stop\n' > build/macos-native.txt

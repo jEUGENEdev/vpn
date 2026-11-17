@@ -27,7 +27,7 @@ class LineVpnService : VpnService() {
                 val id = e.getString("at") + ":" + e.getString("id")
                 if (seenEvents.add(id)) { NativeNotifications.show(this@LineVpnService, e.getString("kind"), e.getString("title"), e.getString("message")); if (seenEvents.size > 300) seenEvents.remove(seenEvents.first()) }
             }
-            val text = if (!snapshot.optBoolean("vpn_enabled", true)) "VPN выключен. Весь трафик идёт напрямую." else if (!isAlwaysOn || !isLockdownEnabled) "Включите постоянный VPN и блокировку без VPN в настройках." else if (status == "stopped") "Служба не запущена. Системная блокировка сохраняет защиту." else if (status == "setup" || status == "auth_required") "Войдите в аккаунт для подключения VPN." else if (status == "blocked" || status == "degraded") "Сервер недоступен. Одобренные соединения заблокированы." else "Защита включена. Одобренные адреса — только через VPN."
+            val text = if (status == "system_blocked") "VPN выключен, но Android блокирует интернет. Отключите блокировку без VPN в настройках." else if (status == "network_error") "Не удалось переключить сеть. Откройте приложение и повторите." else if (snapshot.optBoolean("power_transition")) "Переключаем VPN и сетевые настройки…" else if (!snapshot.optBoolean("vpn_enabled", true)) "VPN выключен. Весь трафик идёт напрямую." else if (!isAlwaysOn || !isLockdownEnabled) "Включите постоянный VPN и блокировку без VPN в настройках." else if (status == "stopped") "Служба не запущена. Системная блокировка сохраняет защиту." else if (status == "setup" || status == "auth_required") "Войдите в аккаунт для подключения VPN." else if (status == "blocked" || status == "degraded") "Сервер недоступен. Одобренные соединения заблокированы." else "Защита включена. Одобренные адреса — только через VPN."
             getSystemService(NotificationManager::class.java).notify(1, notification(text))
         } catch (_: Exception) { }
         main.postDelayed(this, 5000)
@@ -50,13 +50,18 @@ class LineVpnService : VpnService() {
         starting = true
         worker.execute {
             try {
-                val descriptor = Builder().setSession("Линия VPN").setMtu(1400)
-                    .addAddress("172.29.255.1", 30).addAddress("fd04:6c69:6e65:ffff::1", 126)
-                    .addRoute("0.0.0.0", 0).addRoute("::", 0).addDnsServer("172.29.255.2")
-                    .setBlocking(true).establish() ?: throw IllegalStateException("VPN permission revoked")
-                // Ownership transfers to Go. Do not close the detached descriptor in Java.
-                val fd = descriptor.detachFd()
-                Mobile.start(fd.toLong(), filesDir.absolutePath, object : Protector {
+                Mobile.start(filesDir.absolutePath, object : Protector {
+                    override fun checkDisable() {
+                        if (isLockdownEnabled) throw IllegalStateException("Сначала отключите «Блокировать соединения без VPN» в системных настройках VPN. Android иначе заблокирует интернет.")
+                    }
+                    override fun openTunnel(): Long {
+                        val descriptor = Builder().setSession("Линия VPN").setMtu(1400)
+                            .addAddress("172.29.255.1", 30).addAddress("fd04:6c69:6e65:ffff::1", 126)
+                            .addRoute("0.0.0.0", 0).addRoute("::", 0).addDnsServer("172.29.255.2")
+                            .setBlocking(true).establish() ?: throw IllegalStateException("VPN permission revoked")
+                        // Ownership transfers to Go, which closes this FD on off.
+                        return descriptor.detachFd().toLong()
+                    }
                     override fun deviceName(): String {
                         val model = Build.MODEL?.trim().orEmpty()
                         if (model.isBlank() || model.equals("unknown", true)) return ""

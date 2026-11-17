@@ -98,7 +98,7 @@ function renderApplications() {
     },
     (card, app) => {
       setText(card.querySelector('.row-copy strong'), app.name);
-      setText(card.querySelector('.row-copy p'), state.vpn_enabled === false ? 'VPN выключен · напрямую; решение сохранено' : app.decision === 'trusted' ? (state.app_tunnel ? 'Доверенное · весь трафик через VPN' : 'Доверенное · ждём сервер, прямого обхода нет') : app.decision === 'addresses' ? 'VPN только для разрешённых адресов' : 'Вы ещё не выбирали маршрут для приложения');
+      setText(card.querySelector('.row-copy p'), powerRouteNote('Решение') || (app.decision === 'trusted' ? (state.app_tunnel ? 'Доверенное · весь трафик через VPN' : 'Доверенное · ждём сервер, прямого обхода нет') : app.decision === 'addresses' ? 'VPN только для разрешённых адресов' : 'Вы ещё не выбирали маршрут для приложения'));
       setText(card.querySelector('.application-target'), 'Последний адрес: ' + app.target);
       setText(card.querySelector('.application-path'), app.path);
       card.hidden = !matchesSearch('applications-search', [app.target, app.decision, ...sourceFields([app])]);
@@ -138,7 +138,7 @@ function renderStableRules() {
     (node, target) => {
       const traffic = (state.rule_sources || {})[target];
       const sources = traffic?.sources || [];
-      setText(node.querySelector('.row-copy p'), state.vpn_enabled === false ? 'VPN выключен · напрямую; правило сохранено' : pending.includes(target) ? 'Локальная защита включена · сервер ещё не подтвердил' : 'Только VPN · включая поддомены');
+      setText(node.querySelector('.row-copy p'), powerRouteNote('Правило') || (pending.includes(target) ? 'Локальная защита включена · сервер ещё не подтвердил' : 'Только VPN · включая поддомены'));
       node.querySelector('.primary').hidden = !pending.includes(target);
       setText(node.querySelector('.rule-sources'), traffic ? 'Запросы с этого устройства: ' + sourceSummary(sources, traffic.unknown_source) : 'Запросов с этого устройства ещё не наблюдали');
       node.querySelector('.source-details').hidden = !sources.length;
@@ -171,4 +171,11 @@ function initTraffic() {
     } catch { /* act displays the error; the decision can be retried on Applications. */ }
   });
   document.addEventListener('visibilitychange', maybePromptApplication);
+}
+
+function powerRouteNote(noun) {
+  if(state.power_transition)return 'Переключаем сеть · '+noun+' сохранено';
+  if(state.power_error)return 'Ошибка настройки сети · '+noun+' сохранено';
+  if(state.status==='system_blocked')return 'Android блокирует интернет · '+noun+' сохранено';
+  return state.vpn_enabled===false&&state.status==='disabled'?'VPN выключен · напрямую; '+noun.toLowerCase()+' сохранено':'';
 }
