@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,12 +27,15 @@ import (
 )
 
 type Config struct {
-	Pinned  []string      `json:"pending_protection,omitempty"`
-	API     string        `json:"api"`
-	Pin     string        `json:"pin"`
-	Profile model.Profile `json:"profile"`
+	Disabled     bool          `json:"vpn_disabled,omitempty"`
+	BootstrapKey string        `json:"bootstrap_key,omitempty"`
+	Pinned       []string      `json:"pending_protection,omitempty"`
+	API          string        `json:"api"`
+	Pin          string        `json:"pin"`
+	Profile      model.Profile `json:"profile"`
 }
 type Client struct {
+	identity    DeviceIdentity
 	sent        map[string]time.Time
 	resolved    map[string]time.Time
 	mu          sync.RWMutex
@@ -58,6 +62,7 @@ type Client struct {
 	tunnel      bool
 	guard       bool
 	vpnFailed   bool
+	routeEpoch  uint64
 	closed      bool
 }
 
@@ -73,7 +78,7 @@ func New(dir string, dialer *transport.Dialer) (*Client, error) {
 	if e != nil {
 		return nil, e
 	}
-	c := &Client{dir: dir, Direct: dialer, DNS: f, Events: events.New(), pending: map[string]time.Time{}, sent: map[string]time.Time{}, resolved: map[string]time.Time{}, dismissed: map[string]bool{}, active: map[io.Closer]activeFlow{}, apps: map[string]model.Application{}, observed: map[string]*observation{}, status: "setup", requests: []model.Request{}, devices: []model.Device{}}
+	c := &Client{identity: nativeDeviceIdentity(), dir: dir, Direct: dialer, DNS: f, Events: events.New(), pending: map[string]time.Time{}, sent: map[string]time.Time{}, resolved: map[string]time.Time{}, dismissed: map[string]bool{}, active: map[io.Closer]activeFlow{}, apps: map[string]model.Application{}, observed: map[string]*observation{}, status: "setup", requests: []model.Request{}, devices: []model.Device{}}
 	raw, e := os.ReadFile(filepath.Join(dir, "profile.json"))
 	if e == nil {
 		if e = json.Unmarshal(raw, &c.config); e != nil {
@@ -86,6 +91,9 @@ func New(dir string, dialer *transport.Dialer) (*Client, error) {
 		}
 		c.configureHTTP()
 		c.status = "blocked"
+		if c.config.Profile.AccountID != "" && c.config.Profile.Token == "" {
+			c.status = "auth_required"
+		}
 	} else if !os.IsNotExist(e) {
 		f.Close()
 		return nil, e
@@ -159,6 +167,9 @@ func (c *Client) request(ctx context.Context, method, path string, in any, out a
 		return e
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if cfg.BootstrapKey != "" {
+		req.Header.Set("X-LineVPN-Profile", cfg.BootstrapKey)
+	}
 	if cfg.Profile.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+cfg.Profile.Token)
 	}
@@ -191,18 +202,35 @@ func (c *Client) SetBootstrap(uri string) error {
 	defer c.change.Unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.config.Profile.Token != "" {
-		return errors.New("устройство уже привязано; смена аккаунта требует удаления локального профиля администратором")
+	if c.closed {
+		return errors.New("client stopped")
 	}
-	c.config.API = api
-	c.config.Pin = pin
+	u, _ := url.Parse(strings.TrimSpace(uri))
+	key := u.Query().Get("access")
+	decoded, keyErr := base64.RawURLEncoding.DecodeString(key)
+	if keyErr != nil || len(key) != 43 || len(decoded) != 32 {
+		return errors.New("нужен новый профиль с ключом подключения: получите его в админке")
+	}
+	if (c.config.Profile.AccountID != "" || c.config.Profile.Token != "") && (api != c.config.API || pin != c.config.Pin) {
+		return errors.New("связанное устройство может обновить профиль только того же сервера и сертификата")
+	}
+	next := c.config
+	next.API, next.Pin, next.BootstrapKey = api, pin, key
+	raw, _ := json.Marshal(next)
+	if e = secure.Save(filepath.Join(c.dir, "profile.json"), raw); e != nil {
+		return e
+	}
+	c.config = next
 	c.configureHTTP()
-	raw, _ := json.Marshal(c.config)
-	return secure.Save(filepath.Join(c.dir, "profile.json"), raw)
+	return nil
 }
 func (c *Client) Auth(ctx context.Context, action string, data any) (any, error) {
 	c.change.Lock()
 	defer c.change.Unlock()
+	data, err := c.authDeviceData(data)
+	if err != nil {
+		return nil, err
+	}
 	if action == "register" {
 		var out map[string]any
 		e := c.request(ctx, "POST", "/api/register", data, &out)
@@ -218,11 +246,18 @@ func (c *Client) Auth(ctx context.Context, action string, data any) (any, error)
 	if hasProfile && action != "login" {
 		return nil, errors.New("устройство уже связано с аккаунтом")
 	}
-	var p model.Profile
-	if e := c.request(ctx, "POST", path, data, &p); e != nil {
+	var response struct {
+		model.Profile
+		SelectDevice bool           `json:"select_device"`
+		Devices      []model.Device `json:"devices"`
+	}
+	if e := c.request(ctx, "POST", path, data, &response); e != nil {
 		return nil, e
 	}
-	if e := c.apply(p); e != nil {
+	if response.SelectDevice {
+		return map[string]any{"select_device": true, "devices": response.Devices}, nil
+	}
+	if e := c.apply(response.Profile); e != nil {
 		return nil, e
 	}
 	return map[string]bool{"ok": true}, nil
@@ -267,6 +302,14 @@ func (c *Client) apply(p model.Profile) error {
 		flow.Close()
 	}
 	c.config = next
+	c.routeEpoch++
+	if next.Disabled {
+		c.vpn.Close()
+		c.appVPN.Close()
+		c.status = "disabled"
+		c.lastSync = time.Now()
+		return nil
+	}
 	if e = c.vpn.Apply(transport.ClientConfig(p)); e != nil {
 		c.status = "blocked"
 		return e
@@ -310,7 +353,9 @@ func (c *Client) Sync(ctx context.Context) error {
 		c.status = "blocked"
 		var apiError *APIError
 		if errors.As(e, &apiError) && (apiError.Status == 401 || apiError.Status == 403) {
-			c.status = "auth_required"
+			if saveErr := c.forgetAccessLocked(); saveErr != nil {
+				e = fmt.Errorf("доступ отозван; не удалось очистить локальные ключи: %w", saveErr)
+			}
 		}
 		for flow, info := range c.active {
 			if info.Route != policy.Direct {
@@ -319,14 +364,17 @@ func (c *Client) Sync(ctx context.Context) error {
 			}
 		}
 		c.mu.Unlock()
-		c.Events.Outage(time.Now(), "Связь с сервером потеряна. Одобренные адреса заблокированы; прямого обхода нет.")
+		if !c.disabled() {
+			c.Events.Outage(time.Now(), "Связь с сервером потеряна. Одобренные адреса заблокированы; прямого обхода нет.")
+		}
 		return e
 	}
 	c.mu.RLock()
 	old := c.config.Profile
 	ready := c.ready
+	disabled := c.config.Disabled
 	c.mu.RUnlock()
-	if !ready || old.Revision != s.Profile.Revision || old.UUID != s.Profile.UUID || old.AppUUID != s.Profile.AppUUID {
+	if (!ready && !disabled) || old.Revision != s.Profile.Revision || old.UUID != s.Profile.UUID || old.AppUUID != s.Profile.AppUUID || old.Login != s.Profile.Login {
 		if e := c.apply(s.Profile); e != nil {
 			return e
 		}
@@ -395,7 +443,7 @@ func (c *Client) Sync(ctx context.Context) error {
 	c.mu.RLock()
 	vpnFailed := c.vpnFailed
 	c.mu.RUnlock()
-	if !vpnFailed {
+	if !vpnFailed && !disabled {
 		c.Events.Recovered(time.Now())
 	}
 	return c.ensureApplicationTunnel(ctx)
@@ -420,11 +468,45 @@ func (c *Client) State() any {
 	if c.ready && c.vpnFailed {
 		status = "degraded"
 	}
+	if c.config.Disabled {
+		status = "disabled"
+	}
 	requests := c.requestsLocked()
 	apps, pendingApps := c.applicationSnapshotLocked()
-	return map[string]any{"status": status, "tunnel": c.tunnel, "guard": c.guard, "account_id": c.config.Profile.AccountID, "device_id": c.config.Profile.DeviceID, "server": c.config.API, "rules": c.effectiveRules(), "pending_protection": c.config.Pinned, "requests": requests, "request_groups": groupRequests(requests), "applications": apps, "pending_applications": pendingApps, "app_tunnel": c.ready && c.config.Profile.AppUUID != "", "attribution_available": c.ownerLookup != nil, "devices": c.devices, "events": c.Events.List(), "last_sync": c.lastSync, "revision": c.config.Profile.Revision}
+	rules := c.effectiveRules()
+	return map[string]any{"device": c.identity, "status": status, "vpn_enabled": !c.config.Disabled, "auth_required": c.status == "auth_required" || (c.config.Profile.AccountID != "" && c.config.Profile.Token == ""), "login": c.config.Profile.Login, "tunnel": c.tunnel, "guard": c.guard, "account_id": c.config.Profile.AccountID, "device_id": c.config.Profile.DeviceID, "server": c.config.API, "rules": rules, "rule_sources": c.ruleSourcesLocked(rules), "pending_protection": c.config.Pinned, "requests": requests, "request_groups": groupRequests(requests), "applications": apps, "pending_applications": pendingApps, "app_tunnel": c.ready && c.config.Profile.AppUUID != "", "attribution_available": c.ownerLookup != nil, "devices": c.devices, "events": c.Events.List(), "last_sync": c.lastSync, "revision": c.config.Profile.Revision}
 }
 func (c *Client) Action(ctx context.Context, path string, data any) (any, error) {
+	if path == "vpn" {
+		fields, ok := data.(map[string]any)
+		if !ok {
+			return nil, errors.New("укажите enabled")
+		}
+		enabled, ok := fields["enabled"].(bool)
+		if !ok {
+			return nil, errors.New("укажите enabled: true или false")
+		}
+		if !enabled && fields["confirm"] != true {
+			return nil, errors.New("подтвердите прямое подключение без VPN")
+		}
+		if err := c.SetVPNEnabled(enabled); err != nil {
+			return nil, err
+		}
+		// The mode has already been persisted. An offline server leaves enabled
+		// protection blocked; never roll it back to direct routing on failure.
+		if enabled {
+			_ = c.Sync(ctx)
+		}
+		return c.State(), nil
+	}
+	if path == "access-key/rotate" {
+		var out map[string]string
+		if err := c.request(ctx, "POST", "/api/access-key/rotate", data, &out); err != nil {
+			return nil, err
+		}
+		_ = c.Sync(ctx) // Our old device session is now revoked. Preserve the one-time key response.
+		return out, nil
+	}
 	if path == "applications" {
 		return c.applicationAction(ctx, data)
 	}
@@ -487,6 +569,34 @@ func (c *Client) Action(ctx context.Context, path string, data any) (any, error)
 			c.change.Unlock()
 		}
 	}
+	if e == nil && path == "revoke" {
+		if fields, ok := data.(map[string]any); ok {
+			id, _ := fields["id"].(string)
+			c.change.Lock()
+			c.mu.Lock()
+			kept := make([]model.Device, 0, len(c.devices))
+			for _, device := range c.devices {
+				if device.ID != id {
+					kept = append(kept, device)
+				}
+			}
+			c.devices = kept
+			if id == c.config.Profile.DeviceID {
+				saveErr := c.forgetAccessLocked()
+				c.mu.Unlock()
+				c.change.Unlock()
+				if saveErr != nil {
+					return out, fmt.Errorf("устройство удалено на сервере; не удалось очистить локальные ключи: %w", saveErr)
+				}
+				return out, nil
+			}
+			c.mu.Unlock()
+			c.change.Unlock()
+		}
+		// The deletion already committed. A later sync failure is not a failed deletion.
+		_ = c.Sync(ctx)
+		return out, nil
+	}
 	if e == nil {
 		e = c.Sync(ctx)
 	}
@@ -510,10 +620,11 @@ func (c *Client) dialApplication(ctx context.Context, network, target string, po
 	}
 	c.observeLocked(target, app, time.Now())
 	route := c.routeLocked(target, app.ID)
+	epoch := c.routeEpoch
 	c.mu.Unlock()
 	addr := net.JoinHostPort(target, fmt.Sprint(port))
 	if route == policy.Block {
-		c.Events.Outage(time.Now(), "Запрос к одобренному адресу остановлен. Прямое соединение запрещено.")
+		c.Events.ConnectionOutage(time.Now(), "Защищённый запрос остановлен. Прямое соединение запрещено.", target, app)
 		return nil, errors.New("protected destination is offline")
 	}
 	var conn net.Conn
@@ -534,25 +645,26 @@ func (c *Client) dialApplication(ctx context.Context, network, target string, po
 			c.mu.Lock()
 			c.vpnFailed = true
 			c.mu.Unlock()
-			c.Events.Outage(time.Now(), "Ошибка защищённого подключения. Повторим через VPN.")
+			c.Events.ConnectionOutage(time.Now(), "Ошибка защищённого подключения. Повторим через VPN.", target, app)
 		}
 		return nil, err
 	}
 	c.mu.Lock()
 	current := c.routeLocked(target, app.ID)
-	if current != route || c.closed {
+	if current != route || c.closed || c.routeEpoch != epoch {
 		c.mu.Unlock()
 		conn.Close()
 		return nil, errors.New("policy changed during connection")
 	}
 	c.active[conn] = activeFlow{Target: target, AppID: app.ID, Route: route}
 	c.mu.Unlock()
-	return &tracked{Conn: conn, c: c}, nil
+	return &tracked{Conn: conn, c: c, source: app}, nil
 }
 
 type tracked struct {
 	net.Conn
 	c               *Client
+	source          model.ApplicationInfo
 	received        atomic.Bool
 	failureReported atomic.Bool
 	closed          atomic.Bool
@@ -638,7 +750,7 @@ func (t *tracked) Read(p []byte) (int, error) {
 		}
 		t.c.mu.Unlock()
 		if recovered {
-			t.c.Events.Recovered(time.Now())
+			t.c.Events.ConnectionRecovered(time.Now(), info.Target, t.source)
 		}
 	}
 	if err != nil && (!errors.Is(err, io.EOF) || !t.received.Load()) {
@@ -650,7 +762,7 @@ func (t *tracked) Read(p []byte) (int, error) {
 		}
 		t.c.mu.Unlock()
 		if protected {
-			t.c.Events.Outage(time.Now(), "Защищённое соединение прервано. Прямого переключения нет.")
+			t.c.Events.ConnectionOutage(time.Now(), "Защищённое соединение прервано. Прямого переключения нет.", info.Target, t.source)
 		} else if active {
 			t.reportDirectFailure()
 		}

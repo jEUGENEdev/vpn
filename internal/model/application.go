@@ -28,3 +28,9 @@ type RequestGroup struct {
 	Sources   []ApplicationInfo `json:"sources"`
 	Unknown   bool              `json:"unknown_source"`
 }
+
+// RuleSources describes observed local traffic, not who created a shared rule.
+type RuleSources struct {
+	Sources []ApplicationInfo `json:"sources"`
+	Unknown bool              `json:"unknown_source"`
+}

@@ -111,7 +111,9 @@ main() {
   local address=$linevpn_host
   [[ "$address" != *:* ]] || address="[$address]"
   printf '\nDeployment verified: remote HTTPS health and public TCP 443/8443.\nAdmin: https://%s:8443/\n' "$address"
+  printf 'Public API identity (no enrollment key):\n'
   cat "$output/vpn1-bootstrap.txt"
+  printf 'Get the current connection profile in Admin > Server profile.\n'
   printf 'API certificate: %s/vpn1-api-cert.pem\n' "$output"
 }
 

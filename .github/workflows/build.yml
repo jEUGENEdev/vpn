@@ -25,7 +25,8 @@ jobs:
       - name: Test client UI and capture layouts
         run: |
           mkdir -p build/ui-test
-          npm install --prefix build/ui-test playwright@1.56.1
+          npm install --prefix build/ui-test playwright@1.56.1 jsdom@26.1.0
+          JSDOM_MODULE="$GITHUB_WORKSPACE/build/ui-test/node_modules/jsdom" node scripts/test-ui-dom.cjs
           build/ui-test/node_modules/.bin/playwright install --with-deps chromium
           PLAYWRIGHT_MODULE="$GITHUB_WORKSPACE/build/ui-test/node_modules/playwright" node scripts/test-ui.cjs
       - uses: actions/upload-artifact@v4
@@ -141,7 +142,7 @@ jobs:
           - {arch: amd64, runner: macos-15-intel}
           - {arch: arm64, runner: macos-26}
     env:
-      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      LINEVPN_MACOS_SIGNING: preview
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -160,6 +161,8 @@ jobs:
           name: macos-native-check-${{ matrix.arch }}
           path: |
             build/macos-native.txt
+            build/macos-signing.txt
+            build/macos-gui.txt
             build/macos-install.log
             build/macos-service.log
             build/macos-package.log

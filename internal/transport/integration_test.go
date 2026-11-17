@@ -156,15 +156,43 @@ func TestREALITYXHTTPRoundTripAndDeny(t *testing.T) {
 	reply = make([]byte, len("trusted-app"))
 	_, e = io.ReadFull(trusted, reply)
 	timer.Stop()
-	trusted.Close()
+	defer trusted.Close()
 	if e != nil || string(reply) != "trusted-app" {
 		t.Fatalf("trusted app tunnel failed for a destination outside address rules: %q %v", reply, e)
 	}
-	d := st.Devices["d"]
-	d.Revoked = true
-	st.Devices["d"] = d
+	trustedUDP, e := appClient.Dial(ctx, "udp", udpEcho.LocalAddr().String())
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer trustedUDP.Close()
+	udpDeadline := time.AfterFunc(5*time.Second, func() { trustedUDP.Close() })
+	trustedUDP.Write([]byte("before-delete"))
+	udpReply := make([]byte, 64)
+	nUDP, e := trustedUDP.Read(udpReply)
+	if e != nil || string(udpReply[:nUDP]) != "before-delete" {
+		t.Fatal("trusted UDP probe failed", e)
+	}
+	udpDeadline.Stop()
+	// Keep address rules permitted: denial below must come from deletion.
+	a.Rules = []string{"127.0.0.1"}
+	st.Accounts["a"] = a
+	delete(st.Devices, "d")
 	if e = server.Apply(loopbackTestConfig(ServerConfig(st, o, time.Now()))); e != nil {
 		t.Fatal(e)
+	}
+	closeTimer := time.AfterFunc(3*time.Second, func() { trusted.Close() })
+	trusted.Write([]byte("after-deletion"))
+	n, _ := trusted.Read(make([]byte, 32))
+	closeTimer.Stop()
+	if n != 0 {
+		t.Fatal("existing trusted flow survived device deletion")
+	}
+	udpDeadline = time.AfterFunc(3*time.Second, func() { trustedUDP.Close() })
+	trustedUDP.Write([]byte("after-delete"))
+	nUDP, _ = trustedUDP.Read(udpReply)
+	udpDeadline.Stop()
+	if nUDP != 0 {
+		t.Fatal("existing trusted UDP flow survived deletion")
 	}
 	appClient.Close()
 	if e = appClient.Apply(ClientConfig(p)); e != nil {
@@ -179,9 +207,26 @@ func TestREALITYXHTTPRoundTripAndDeny(t *testing.T) {
 		timer.Stop()
 		blocked.Close()
 		if n != 0 || hits.Load() != before {
-			t.Fatal("revoked device retained its app tunnel")
+			t.Fatal("deleted device retained its app tunnel")
 		}
 	}
+	p.UUID = uuid
+	if e = client.Apply(ClientConfig(p)); e != nil {
+		t.Fatal(e)
+	}
+	before = hits.Load()
+	blocked, e = client.Dial(ctx, "tcp", echo.Addr().String())
+	if e == nil {
+		timer := time.AfterFunc(3*time.Second, func() { blocked.Close() })
+		blocked.Write([]byte("deleted-address-key"))
+		n, _ := blocked.Read(make([]byte, 32))
+		timer.Stop()
+		blocked.Close()
+		if n != 0 || hits.Load() != before {
+			t.Fatal("deleted device retained address tunnel")
+		}
+	}
+
 }
 
 // Xray 26.11 blocks private destinations in Freedom by default. Only this local

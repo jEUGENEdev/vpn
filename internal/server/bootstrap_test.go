@@ -54,7 +54,16 @@ func TestAdminBootstrapUsesConfiguredServerAndCurrentCertificate(t *testing.T) {
 			if err := os.WriteFile(path, raw, 0600); err != nil {
 				t.Fatal(err)
 			}
-			s := &Server{Config: Config{PublicIP: tc.ip, Address: tc.listen, Cert: path,
+			st, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			key := secure.Token()
+			if err := st.Update(func(v *store.State) error { v.BootstrapKey = key; return nil }); err != nil {
+				t.Fatal(err)
+			}
+			s := &Server{Store: st, Config: Config{PublicIP: tc.ip, Address: tc.listen, Cert: path,
 				Key: "private-api-key", AdminPasswordFile: "admin-password",
 				Transport: transport.ServerOptions{PrivateKey: "private-reality-key"}},
 				admins: map[string]session{secure.Hash("admin-token"): {expires: time.Now().Add(time.Hour)},
@@ -89,7 +98,7 @@ func TestAdminBootstrapUsesConfiguredServerAndCurrentCertificate(t *testing.T) {
 					t.Fatal("admin profile was cacheable")
 				}
 			}
-			want := "linevpn://" + tc.authority + "?pin=" + secure.Pin(cert)
+			want := "linevpn://" + tc.authority + "?pin=" + secure.Pin(cert) + "&access=" + key
 			check(want)
 			check(want)
 			after, err := os.ReadFile(path)
@@ -101,7 +110,7 @@ func TestAdminBootstrapUsesConfiguredServerAndCurrentCertificate(t *testing.T) {
 			if err := os.WriteFile(path, replacement, 0600); err != nil {
 				t.Fatal(err)
 			}
-			check("linevpn://" + tc.authority + "?pin=" + secure.Pin(newCert))
+			check("linevpn://" + tc.authority + "?pin=" + secure.Pin(newCert) + "&access=" + key)
 		})
 	}
 }

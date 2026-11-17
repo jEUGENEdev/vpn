@@ -153,7 +153,9 @@ function Invoke-Deployment {
         $address = if ($server.Contains(':')) { "[$server]" } else { $server }
         Write-Host "`nDeployment verified: remote HTTPS health and public TCP 443/8443."
         Write-Host "Admin: https://${address}:8443/"
+        Write-Host 'Public API identity (no enrollment key):'
         Write-Host (Get-Content -LiteralPath (Join-Path $output 'vpn1-bootstrap.txt') -Raw)
+        Write-Host 'Get the current connection profile in Admin > Server profile.'
         Write-Host "API certificate: $output\vpn1-api-cert.pem"
     } finally {
         if ($sftpSession) { Remove-SFTPSession -SessionId $sftpSession.SessionId -ErrorAction SilentlyContinue | Out-Null }

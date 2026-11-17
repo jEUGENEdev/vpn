@@ -22,7 +22,7 @@ recover() {
   if [[ -f build/macos-network.log ]]; then cat build/macos-network.log; fi
 }
 trap recover EXIT
-sudo installer -pkg apps/desktop/assets/Install-LineVPN-Service.pkg -target / > build/macos-install.log
+sudo installer -pkg build/macos-tested-service.pkg -target / > build/macos-install.log
 vpn_ready=false
 for ((i=0; i<20; i++)); do
   if [[ -f /var/lib/linevpn/ui-token ]]; then
@@ -33,6 +33,15 @@ for ((i=0; i<20; i++)); do
 done
 if [[ "$vpn_ready" != true ]]; then echo "Local service API never became ready" >&2; exit 1; fi
 python3 -c 'import json; v=json.load(open("build/macos-state.json")); assert v["tunnel"] and v["guard"]'
+# Launch the signed app copied from the final DMG, after the packaged service is ready.
+python3 - <<'PYGUI'
+import os, pathlib, subprocess
+report = pathlib.Path('build/macos-gui.txt').resolve()
+report.unlink(missing_ok=True)
+env = dict(os.environ, LINEVPN_SMOKE_TEST_REPORT=str(report))
+subprocess.run(['build/macos-smoke/LineVPN.app/Contents/MacOS/LineVPN', '--background'], env=env, check=True, timeout=45)
+assert report.read_text().startswith('PASS:'), 'Packaged Electron did not load the client UI'
+PYGUI
 dig +short +time=2 +tries=1 @172.29.255.2 example.com A | grep -Eq '^198\.(18|19)\.'
 curl --noproxy '*' -s --output /dev/null --connect-timeout 4 --max-time 8 http://1.1.1.1/cdn-cgi/trace
 # The privileged lookup helper must still identify curl after the agent drops UID.
