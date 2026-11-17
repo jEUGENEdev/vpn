@@ -110,7 +110,7 @@ func TestDirectFailureEventsKeepTheirActualSource(t *testing.T) {
 	}
 }
 
-func TestFallbackConnectionEventIncludesSource(t *testing.T) {
+func TestBlockedConnectionEventIncludesSource(t *testing.T) {
 	c := testTrafficClient(t)
 	c.config.Pinned = []string{"127.0.0.1"}
 	app := testApp("b")
@@ -120,10 +120,10 @@ func TestFallbackConnectionEventIncludesSource(t *testing.T) {
 	}
 	defer ln.Close()
 	conn, err := c.dialApplication(context.Background(), "tcp", "127.0.0.1", uint16(ln.Addr().(*net.TCPAddr).Port), app)
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		conn.Close()
+		t.Fatal("protected connection escaped VPN")
 	}
-	conn.Close()
 	items := c.Events.List()
 	if len(items) != 1 || items[0].Target != "127.0.0.1" || items[0].Source == nil || *items[0].Source != app {
 		t.Fatalf("fallback lost its source: %+v", items)
@@ -231,8 +231,8 @@ func TestApplicationTrustIsLocalPersistentAndAddressRulesWin(t *testing.T) {
 	if _, err := c.Action(context.Background(), "applications", map[string]any{"id": app.ID, "decision": "trusted"}); err != nil {
 		t.Fatal(err)
 	}
-	if c.routeLocked("example.com", app.ID) != policy.Direct {
-		t.Fatal("unacknowledged app trust blocked direct")
+	if c.routeLocked("example.com", app.ID) != policy.Block {
+		t.Fatal("unacknowledged app trust allowed direct")
 	}
 	c.ready = true
 	c.config.Profile.AppUUID = "app-credential"
@@ -244,8 +244,8 @@ func TestApplicationTrustIsLocalPersistentAndAddressRulesWin(t *testing.T) {
 		t.Fatal("application route took precedence over address rule")
 	}
 	c.ready = false
-	if c.routeLocked("elsewhere.org", app.ID) != policy.Direct {
-		t.Fatal("offline trusted app blocked direct")
+	if c.routeLocked("elsewhere.org", app.ID) != policy.Block {
+		t.Fatal("offline trusted app allowed direct")
 	}
 	dir := c.dir
 	c.Close()
@@ -257,8 +257,8 @@ func TestApplicationTrustIsLocalPersistentAndAddressRulesWin(t *testing.T) {
 	if reopened.apps[app.ID].Decision != "trusted" {
 		t.Fatal("trust not persisted")
 	}
-	if reopened.routeLocked("elsewhere.org", app.ID) != policy.Direct {
-		t.Fatal("restart blocked direct fallback")
+	if reopened.routeLocked("elsewhere.org", app.ID) != policy.Block {
+		t.Fatal("restart allowed direct fallback")
 	}
 }
 func TestTrustClosesExistingDirectFlowAndRevocationKeepsAddressRules(t *testing.T) {
@@ -274,8 +274,8 @@ func TestTrustClosesExistingDirectFlowAndRevocationKeepsAddressRules(t *testing.
 	}
 	c.config.Profile.Rules = []string{"example.com"}
 	c.Action(context.Background(), "applications", map[string]any{"id": app.ID, "decision": "addresses"})
-	if c.routeLocked("example.com", app.ID) != policy.Direct {
-		t.Fatal("revoking app trust blocked network")
+	if c.routeLocked("example.com", app.ID) != policy.Block {
+		t.Fatal("revoking app trust bypassed address protection")
 	}
 }
 func TestReadFailureCountsOncePerConnection(t *testing.T) {

@@ -26,6 +26,10 @@ if /bin/launchctl print system/dev.linevpn.agent >/dev/null 2>&1; then
   echo 'Cannot stop the previous LineVPN service.' >&2
   exit 1
 fi
-'/Library/Application Support/LineVPN/linevpn-agent' -data /var/lib/linevpn -recover-network
+# Install a dedicated anchor. Keep its rules across worker exits and upgrades.
+if ! /usr/bin/grep -Eq '^[[:space:]]*anchor "linevpn"' /etc/pf.conf; then
+  /usr/bin/printf '\nanchor "linevpn"\n' >> /etc/pf.conf
+fi
+/sbin/pfctl -nf /etc/pf.conf
 /bin/launchctl enable system/dev.linevpn.agent
 /bin/launchctl bootstrap system /Library/LaunchDaemons/dev.linevpn.agent.plist

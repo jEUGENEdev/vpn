@@ -151,16 +151,17 @@ func (c *Client) routeLocked(target, appID string) policy.Route {
 	if _, err := policy.Normalize(target); err != nil {
 		return policy.Block
 	}
-	if c.config.Disabled || !c.ready {
+	if c.config.Disabled {
 		return policy.Direct
 	}
-	route := policy.Decide(c.effectiveRules(), target, c.ready)
+	ready := c.ready && !c.powerPending && c.powerError == ""
+	route := policy.Decide(c.effectiveRules(), target, ready)
 	if route != policy.Direct {
 		return route
 	}
 	if app, ok := c.apps[appID]; ok && app.Decision == "trusted" {
-		if !c.ready || c.config.Profile.AppUUID == "" {
-			return policy.Direct
+		if !ready || c.config.Profile.AppUUID == "" {
+			return policy.Block
 		}
 		return policy.AppVPN
 	}
@@ -225,6 +226,7 @@ func (c *Client) applicationAction(ctx context.Context, data any) (any, error) {
 		return nil, err
 	}
 	c.apps = next
+	c.routeEpoch++
 	for conn, flow := range c.active {
 		if flow.AppID == id {
 			delete(c.active, conn)

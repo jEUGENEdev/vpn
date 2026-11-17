@@ -25,7 +25,7 @@ with tempfile.TemporaryDirectory() as temporary:
     assert action.attrib['FileRef'] == 'Agent' and action.attrib['ExeCommand'] == '-recover-network'
     scheduled = tree.find('.//w:InstallExecuteSequence/w:Custom[@Action="RecoverNetwork"]', ns)
     assert scheduled is not None and scheduled.attrib['After'] == 'StopServices'
-    assert scheduled.attrib['Condition'] == 'REMOVE~="ALL"', 'also recover during upgrades'
+    assert scheduled.attrib['Condition'] == 'REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE', 'upgrades must retain protection'
     service = tree.find('.//w:ServiceControl', ns)
     assert service.attrib['Stop'] == 'both' and service.attrib['Wait'] == 'yes'
     assert tree.find('.//w:MajorUpgrade', ns).attrib['AllowSameVersionUpgrades'] == 'yes'

@@ -18,7 +18,7 @@ import (
 	"github.com/jEUGENEdev/vpn/internal/transport"
 )
 
-func TestManualOffPersistsAndOfflineEnableKeepsDirect(t *testing.T) {
+func TestManualOffPersistsAndOfflineEnableBlocksProtectedRoutes(t *testing.T) {
 	dir := t.TempDir()
 	c, err := New(dir, &transport.Dialer{})
 	if err != nil {
@@ -59,7 +59,7 @@ func TestManualOffPersistsAndOfflineEnableKeepsDirect(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer flow.Close()
-	// Enabling while offline keeps intent/rules and direct network access.
+	// Enabling while offline protects saved rules before any successful sync.
 	if _, err = c.Action(context.Background(), "vpn", map[string]any{"enabled": true}); err != nil {
 		t.Fatal(err)
 	}
@@ -69,13 +69,12 @@ func TestManualOffPersistsAndOfflineEnableKeepsDirect(t *testing.T) {
 	if _, err = flow.Write([]byte("must not leak")); err == nil {
 		t.Fatal("existing direct flow survived enable")
 	}
-	if c.routeLocked("127.0.0.1", "") != policy.Direct || c.routeLocked("pending.example", "") != policy.Direct {
+	if c.routeLocked("127.0.0.1", "") != policy.Block || c.routeLocked("pending.example", "") != policy.Block {
 		t.Fatal("saved rules lost")
 	}
-	if conn, err := c.Dial(context.Background(), "tcp", "127.0.0.1", port); err != nil {
-		t.Fatal("offline enable blocked network", err)
-	} else {
+	if conn, err := c.Dial(context.Background(), "tcp", "127.0.0.1", port); err == nil {
 		conn.Close()
+		t.Fatal("offline enable allowed protected direct traffic")
 	}
 }
 
@@ -92,7 +91,7 @@ func TestVPNModeSaveFailureLeavesProtectionEnabled(t *testing.T) {
 	if err = c.SetVPNEnabled(false); err == nil {
 		t.Fatal("expected save error")
 	}
-	if c.disabled() || c.routeLocked("example.com", "") != policy.Direct {
+	if c.disabled() || c.routeLocked("example.com", "") != policy.Block {
 		t.Fatal("save failure changed routing")
 	}
 }

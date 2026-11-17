@@ -19,7 +19,7 @@ for i,file in enumerate(sorted(root.rglob('*'))):
  fid='Agent' if file.name=='linevpn-agent.exe' else 'F'+str(i)
  node(c,'File',Id=fid,Source=str(file),KeyPath='yes')
  if fid=='Agent':
-  node(c,'ServiceInstall',Id='InstallAgent',Name='LineVPN',DisplayName='Линия VPN',Description='VPN routing with automatic direct network fallback',Type='ownProcess',Start='auto',ErrorControl='normal',Account='LocalSystem',Arguments='-service')
+  node(c,'ServiceInstall',Id='InstallAgent',Name='LineVPN',DisplayName='Линия VPN',Description='VPN routing with protection until explicit off',Type='ownProcess',Start='auto',ErrorControl='normal',Account='LocalSystem',Arguments='-service')
   node(c,'ServiceControl',Id='ControlAgent',Name='LineVPN',Start='install',Stop='both',Remove='uninstall',Wait='yes')
  node(feature,'ComponentRef',Id=cid)
 programmenu=node(p,'StandardDirectory',Id='ProgramMenuFolder');folder=node(programmenu,'Directory',Id='LineMenu',Name='LineVPN');c=node(folder,'Component',Id='Shortcut',Guid='{9A5D6DC0-5C93-4DC6-82BC-9857E58B9B20}')
@@ -28,5 +28,5 @@ node(c,'Shortcut',Id='StartShortcut',Name='Линия VPN',Target='[INSTALLFOLDE
 # A cleanup failure aborts removal, leaving the recovery tool available.
 node(p,'CustomAction',Id='RecoverNetwork',FileRef='Agent',ExeCommand='-recover-network',Execute='deferred',Impersonate='no',Return='check')
 sequence=node(p,'InstallExecuteSequence')
-node(sequence,'Custom',Action='RecoverNetwork',After='StopServices',Condition='REMOVE~="ALL"')
+node(sequence,'Custom',Action='RecoverNetwork',After='StopServices',Condition='REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE')
 out.write_bytes(ET.tostring(w,encoding='utf-8',xml_declaration=True))

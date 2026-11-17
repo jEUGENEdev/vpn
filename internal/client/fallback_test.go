@@ -26,7 +26,7 @@ func TestFailedPeerDoesNotBypassOtherVPNPermissions(t *testing.T) {
 		target, app string
 		route       policy.Route
 	}{
-		{"media.example", app.ID, policy.Direct},
+		{"media.example", app.ID, policy.VPN},
 		{"other.example", app.ID, policy.VPN},
 		{"media.example", other.ID, policy.VPN},
 		{"cdn.example", app.ID, policy.AppVPN},
@@ -49,7 +49,7 @@ func TestRecoveryIsScopedAndFallbackMemoryIsBounded(t *testing.T) {
 	if !c.vpnFailed {
 		t.Fatal("one reply concealed another failing peer")
 	}
-	if c.routeFlowLocked(flowKey{Target: "first.example"}) != policy.VPN || c.routeFlowLocked(flowKey{Target: "second.example"}) != policy.Direct {
+	if c.routeFlowLocked(flowKey{Target: "first.example"}) != policy.VPN || c.routeFlowLocked(flowKey{Target: "second.example"}) != policy.VPN {
 		t.Fatal("recovery changed unrelated route")
 	}
 	c.recoverVPNLocked(flowKey{Target: "second.example"})

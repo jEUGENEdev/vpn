@@ -71,6 +71,8 @@ type Client struct {
 	powerError   string
 }
 
+var ErrVPNUnavailable = errors.New("VPN недоступен; прямое подключение запрещено")
+
 type APIError struct {
 	Status  int
 	Message string
@@ -315,14 +317,12 @@ func (c *Client) apply(p model.Profile) error {
 		}
 	}
 	defer func() {
-		// A failed refresh preserves working direct connections, but never
-		// retains an authenticated flow after access becomes inactive.
-		if !c.ready {
-			for flow, info := range c.active {
-				if info.Route != policy.Direct {
-					delete(c.active, flow)
-					flow.Close()
-				}
+		// Enforce newly protected routes even if applying the transport fails.
+		// Unrelated direct traffic may continue; protected traffic may not.
+		for flow, info := range c.active {
+			if c.routeFlowLocked(info.key()) != info.Route {
+				delete(c.active, flow)
+				flow.Close()
 			}
 		}
 	}()
@@ -391,6 +391,7 @@ func (c *Client) sync(ctx context.Context, background bool) error {
 	if e := c.request(ctx, "GET", "/api/sync", nil, &s); e != nil {
 		c.mu.Lock()
 		c.ready = false
+		c.routeEpoch++
 		c.status = "blocked"
 		var apiError *APIError
 		if errors.As(e, &apiError) && (apiError.Status == 401 || apiError.Status == 403) {
@@ -406,7 +407,7 @@ func (c *Client) sync(ctx context.Context, background bool) error {
 		}
 		c.mu.Unlock()
 		if !c.disabled() {
-			c.Events.Outage(time.Now(), "VPN недоступен. Для сохранения доступа к сети соединения идут напрямую, без VPN-защиты.")
+			c.Events.Outage(time.Now(), "VPN недоступен. Разрешённые адреса и доверенные приложения заблокированы до восстановления VPN или ручного выключения.")
 		}
 		return e
 	}
@@ -506,13 +507,14 @@ func (c *Client) State() any {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	status := c.status
-	if c.ready && c.vpnFailed {
+	appPending := c.hasTrustedAppsLocked() && c.config.Profile.AppUUID == ""
+	if c.ready && (c.vpnFailed || appPending) {
 		status = "degraded"
 	}
 	if c.config.Disabled {
 		status = "disabled"
 	}
-	if c.config.Disabled && c.guard {
+	if c.config.Disabled && c.guard && !c.tunnel {
 		status = "system_blocked"
 	}
 	if c.powerError != "" {
@@ -524,7 +526,7 @@ func (c *Client) State() any {
 	requests := c.requestsLocked()
 	apps, pendingApps := c.applicationSnapshotLocked()
 	rules := c.effectiveRules()
-	return map[string]any{"device": c.identity, "status": status, "vpn_enabled": !c.config.Disabled, "availability_first": true, "direct_fallback": !c.config.Disabled && (!c.ready || c.vpnFailed || !c.tunnel), "partial_fallback": !c.config.Disabled && c.ready && c.tunnel && c.vpnFailed, "power_transition": c.powerPending, "power_error": c.powerError, "auth_required": c.status == "auth_required" || (c.config.Profile.AccountID != "" && c.config.Profile.Token == ""), "login": c.config.Profile.Login, "tunnel": c.tunnel, "guard": c.guard, "account_id": c.config.Profile.AccountID, "device_id": c.config.Profile.DeviceID, "server": c.config.API, "rules": rules, "rule_sources": c.ruleSourcesLocked(rules), "pending_protection": c.config.Pinned, "requests": requests, "request_groups": groupRequests(requests), "applications": apps, "pending_applications": pendingApps, "app_tunnel": c.ready && c.config.Profile.AppUUID != "", "attribution_available": c.ownerLookup != nil, "devices": c.devices, "events": c.Events.List(), "last_sync": c.lastSync, "revision": c.config.Profile.Revision}
+	return map[string]any{"device": c.identity, "status": status, "vpn_enabled": !c.config.Disabled, "fail_closed": true, "protection_blocked": !c.config.Disabled && (!c.ready || c.vpnFailed || appPending || !c.tunnel || c.powerError != ""), "partial_outage": !c.config.Disabled && c.ready && c.tunnel && (c.vpnFailed || appPending), "power_transition": c.powerPending, "power_error": c.powerError, "auth_required": c.status == "auth_required" || (c.config.Profile.AccountID != "" && c.config.Profile.Token == ""), "login": c.config.Profile.Login, "tunnel": c.tunnel, "guard": c.guard, "account_id": c.config.Profile.AccountID, "device_id": c.config.Profile.DeviceID, "server": c.config.API, "rules": rules, "rule_sources": c.ruleSourcesLocked(rules), "pending_protection": c.config.Pinned, "requests": requests, "request_groups": groupRequests(requests), "applications": apps, "pending_applications": pendingApps, "app_tunnel": c.ready && c.config.Profile.AppUUID != "", "attribution_available": c.ownerLookup != nil, "devices": c.devices, "events": c.Events.List(), "last_sync": c.lastSync, "revision": c.config.Profile.Revision}
 }
 func (c *Client) Action(ctx context.Context, path string, data any) (any, error) {
 	if path == "vpn" {
@@ -542,7 +544,7 @@ func (c *Client) Action(ctx context.Context, path string, data any) (any, error)
 		if err := c.SetVPNEnabled(enabled); err != nil {
 			return nil, err
 		}
-		// Keep the user's intent; unavailable VPN uses direct fallback.
+		// Keep the user's intent; unavailable protected routes remain blocked.
 		if enabled {
 			_ = c.Sync(ctx)
 		}
@@ -575,6 +577,7 @@ func (c *Client) Action(ctx context.Context, path string, data any) (any, error)
 			e = secure.Save(filepath.Join(c.dir, "profile.json"), raw)
 			if e == nil {
 				c.config = next
+				c.routeEpoch++
 				for flow, info := range c.active {
 					if policy.Matches(target, info.Target) {
 						delete(c.active, flow)
@@ -670,15 +673,16 @@ func (c *Client) dialApplication(ctx context.Context, network, target string, po
 	c.observeLocked(target, app, time.Now())
 	key := flowKey{Target: target, AppID: app.ID, Network: network, Port: port}
 	route := c.routeFlowLocked(key)
-	fallback := route == policy.Direct && c.wantsVPNLocked(target, app.ID)
+	protected := c.wantsVPNLocked(target, app.ID)
 	epoch := c.routeEpoch
 	c.mu.Unlock()
 	addr := net.JoinHostPort(target, fmt.Sprint(port))
 	if route == policy.Block {
+		if protected {
+			c.Events.ConnectionOutage(time.Now(), "VPN недоступен. Прямое подключение запрещено; ждём восстановления VPN или ручного выключения.", target, app)
+			return nil, ErrVPNUnavailable
+		}
 		return nil, errors.New("invalid destination")
-	}
-	if fallback {
-		c.Events.ConnectionOutage(time.Now(), "VPN недоступен. Подключаемся напрямую, без VPN-защиты.", target, app)
 	}
 	var conn net.Conn
 	var err error
@@ -700,9 +704,8 @@ func (c *Client) dialApplication(ctx context.Context, network, target string, po
 		}
 		c.failVPNLocked(key)
 		c.mu.Unlock()
-		c.Events.ConnectionOutage(time.Now(), "Ошибка VPN. Подключаемся напрямую, без VPN-защиты.", target, app)
-		route = policy.Direct
-		conn, err = c.Direct.DialContext(ctx, network, addr)
+		c.Events.ConnectionOutage(time.Now(), "Ошибка VPN. Прямое подключение запрещено. Повторное соединение использует VPN.", target, app)
+		return nil, fmt.Errorf("%w: %v", ErrVPNUnavailable, err)
 	}
 	if err != nil {
 		if route == policy.Direct {
@@ -772,7 +775,7 @@ func (t *tracked) reportVPNWriteFailure() {
 	}
 	t.c.failVPNLocked(flow.key())
 	t.c.mu.Unlock()
-	t.c.Events.ConnectionOutage(time.Now(), "Не удалось отправить данные через VPN. Повторное соединение с этим адресом пойдёт напрямую, без VPN-защиты.", flow.Target, t.source)
+	t.c.Events.ConnectionOutage(time.Now(), "Не удалось отправить данные через VPN. Повторное соединение использует только VPN; прямое подключение запрещено.", flow.Target, t.source)
 }
 
 func (t *tracked) reportResponseTimeout() {
@@ -807,9 +810,9 @@ func (t *tracked) reportResponseTimeout() {
 	}
 	t.c.failVPNLocked(flow.key())
 	t.c.mu.Unlock()
-	t.c.Events.ConnectionOutage(time.Now(), "VPN не отвечает. Повторное подключение пойдёт напрямую, без VPN-защиты.", flow.Target, t.source)
+	t.c.Events.ConnectionOutage(time.Now(), "VPN не отвечает. Повторное подключение использует только VPN; прямое подключение запрещено.", flow.Target, t.source)
 	// Never replay application bytes on another route. Close the stalled flow
-	// so the application can retry, then use the availability fallback.
+	// so the application can retry through VPN without leaking application bytes.
 	t.Close()
 }
 
@@ -890,7 +893,7 @@ func (t *tracked) Read(p []byte) (int, error) {
 		}
 		t.c.mu.Unlock()
 		if protected {
-			t.c.Events.ConnectionOutage(time.Now(), "VPN-соединение прервано. Повторное соединение с этим адресом пойдёт напрямую, без VPN-защиты.", info.Target, t.source)
+			t.c.Events.ConnectionOutage(time.Now(), "VPN-соединение прервано. Повторное соединение использует только VPN; прямое подключение запрещено.", info.Target, t.source)
 		} else if active {
 			t.reportDirectFailure()
 		}

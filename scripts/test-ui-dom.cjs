@@ -245,7 +245,7 @@ async function testCombinedAuthentication() {
     Object.assign(state,{status:'disabled',power_transition:false,tunnel:false,guard:false});
     await switchOff;
     assert.equal($('vpn-toggle').textContent,'Включить VPN');
-    assert.match($('toast').textContent,/настройки восстановлены/);
+    assert.match($('toast').textContent,/Все соединения идут напрямую/);
     restartPower=false;
     Object.assign(state,{account_id:'test',auth_required:false,status:'switching',vpn_enabled:false,power_transition:true});
     await w.eval('update()');
@@ -254,29 +254,36 @@ async function testCombinedAuthentication() {
     assert.doesNotMatch($('vpn-mode-note').textContent,/идёт напрямую|восстановлены/);
     Object.assign(state,{status:'network_error',power_transition:false,power_error:'DNS restore failed'});
     await w.eval('update()');
-    assert.equal($('vpn-toggle').textContent,'Повторить переключение');
+    assert.equal($('vpn-toggle').textContent,'Повторить выключение');
     assert.match($('hero-description').textContent,/DNS restore failed/);
     Object.assign(state,{status:'system_blocked',power_error:'',guard:true});
     w.LineBridge={settings(){},theme(){}};
     await w.eval('update()');
-    assert.equal($('guard-warning').hidden,false);
+    assert.equal($('guard-warning').hidden,true);
     assert.match($('vpn-mode-note').textContent,/Android блокирует интернет/);
-    Object.assign(state,{status:'ready',vpn_enabled:true,tunnel:true,guard:false,direct_fallback:true,power_error:''});
+    Object.assign(state,{status:'blocked',vpn_enabled:true,tunnel:true,guard:false,protection_blocked:true,power_error:''});
     await w.eval('update()');
-    assert.match($('status-label').textContent,/ПРЯМОЕ ПОДКЛЮЧЕНИЕ/,'fallback falsely showed VPN protection');
-    assert.match($('hero-description').textContent,/без VPN-защиты/);
-    assert.equal($('guard-warning').hidden,true,'client asked to enable lockdown');
-    assert.match($('vpn-mode-note').textContent,/доступность сети/);
-    Object.assign(state,{status:'degraded',partial_fallback:true});
+    assert.equal($('status-label').textContent,'ОЖИДАЕМ VPN');
+    assert.match($('hero-description').textContent,/не переходят на прямое/);
+    assert.equal($('guard-warning').hidden,false,'Android crash protection guidance hidden');
+    assert.match($('vpn-mode-note').textContent,/только VPN/);
+    assert.equal($('vpn-toggle').textContent,'Выключить VPN');
+    Object.assign(state,{status:'degraded',partial_outage:true});
     await w.eval('update()');
     assert.equal($('status-label').textContent,'ЧАСТИЧНЫЙ СБОЙ VPN');
     assert.match($('hero-description').textContent,/Остальные.*через VPN/);
-    assert.equal($('address-route-tag').textContent,'Частичный резерв');
-    assert.match(w.eval("powerRouteNote('Разрешение')"),/Часть адресов временно напрямую/);
-    Object.assign(state,{status:'ready',direct_fallback:false,partial_fallback:false,guard:true});
+    assert.equal($('address-route-tag').textContent,'Ожидаем VPN');
+    assert.match(w.eval("powerRouteNote('Разрешение')"),/только VPN/);
+    Object.assign(state,{status:'ready',protection_blocked:false,partial_outage:false,guard:true});
     await w.eval('update()');
-    assert.equal($('guard-warning').hidden,false,'existing Android lockdown was hidden');
-    assert.match($('guard-description').textContent,/отключите/);
+    assert.equal($('guard-warning').hidden,true,'working Android lockdown shown as a warning');
+    // Even failed native enable must leave the explicit off button usable.
+    Object.assign(state,{status:'network_error',power_error:'TUN failed'});
+    await w.eval('update()');
+    assert.equal($('vpn-toggle').textContent,'Выключить VPN');
+    const offAfterFailure=$('vpn-toggle').onclick();
+    await tick();$('confirm').close('ok');await offAfterFailure;
+    assert.equal(calls.at(-1).body.enabled,false);
     console.log('DOM integration passed: key login, device selection, pairing, one-time key and revoked-session power toggle.');
   } finally { w.close(); }
 }
