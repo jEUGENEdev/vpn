@@ -335,6 +335,30 @@ func sourceList(sources map[string]model.ApplicationInfo) []model.ApplicationInf
 	})
 	return out
 }
+
+// Caller holds c.mu. Match exact IPs and domain boundaries using the routing
+// policy; applications merely visiting a similar address are not attributed.
+func (c *Client) ruleSourcesLocked(rules []string) map[string]model.RuleSources {
+	result := map[string]model.RuleSources{}
+	for _, rule := range rules {
+		sources := map[string]model.ApplicationInfo{}
+		observed, unknown := false, false
+		for target, traffic := range c.observed {
+			if !policy.Matches(rule, target) {
+				continue
+			}
+			observed = true
+			unknown = unknown || traffic.Unknown
+			for id, source := range traffic.Sources {
+				sources[id] = source
+			}
+		}
+		if observed {
+			result[rule] = model.RuleSources{Sources: sourceList(sources), Unknown: unknown}
+		}
+	}
+	return result
+}
 func groupRequests(requests []model.Request) []model.RequestGroup {
 	groups := []model.RequestGroup{}
 	indices := map[string]int{}
@@ -418,9 +442,9 @@ func (c *Client) directFailureLocked(target, appID string, now time.Time) {
 	}
 	delete(c.resolved, target)
 	if app, ok := c.apps[appID]; ok && app.Decision == "pending" {
-		c.Events.NewApplication(now, app.ID, app.Name, target)
+		c.Events.NewApplication(now, app.ApplicationInfo, target)
 	}
-	c.Events.DirectUnavailable(now, target)
+	c.Events.DirectUnavailable(now, target, o.Sources[appID])
 }
 func (c *Client) directRecovered(target, appID string, now time.Time) {
 	c.mu.Lock()

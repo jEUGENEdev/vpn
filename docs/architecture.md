@@ -22,6 +22,17 @@ go vet -tags with_gvisor ./...
 scripts/build-server.sh
 ```
 
+Проверки интерфейса без системного браузера и полный браузерный прогон:
+
+```bash
+npm install --prefix build/ui-test playwright@1.56.1 jsdom@26.1.0
+JSDOM_MODULE="$PWD/build/ui-test/node_modules/jsdom" node scripts/test-ui-dom.cjs
+build/ui-test/node_modules/.bin/playwright install chromium
+PLAYWRIGHT_MODULE="$PWD/build/ui-test/node_modules/playwright" node scripts/test-ui.cjs
+```
+
+DOM-проверки исполняют настоящий код клиента и админки с тестовыми данными: источники событий, поиск, сохранение состояния строк и адреса действий. Они не проверяют визуальную раскладку; для неё нужен полный прогон Playwright.
+
 Интеграционный тест транспортного слоя поднимает настоящий Xray-клиент и сервер с XHTTP/REALITY и проверяет TCP/UDP round trip, затем удаляет разрешение и проверяет отсутствие соединений к целевому listener. Интернет и реальный VPS для этого теста не нужны.
 
 Нативные команды сборки: `scripts/package-android.sh`, `scripts/package-macos.sh arm64` / `amd64`, `scripts/package-windows.ps1`. macOS-пакет собирается на macOS, MSI — на Windows. Секреты подписи не заложены в репозиторий. Полный комплект публикуется в `installers/current` только после прохождения всех сборок, через Git LFS.

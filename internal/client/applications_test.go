@@ -69,6 +69,87 @@ func TestOnlyRepeatedDirectFailuresAreSuggestedAndSuccessClears(t *testing.T) {
 		t.Fatal("old failure burst survived recovery")
 	}
 }
+
+func TestDirectFailureEventsKeepTheirActualSource(t *testing.T) {
+	for _, decision := range []string{"pending", "addresses", "unknown"} {
+		t.Run(decision, func(t *testing.T) {
+			c := testTrafficClient(t)
+			now := time.Now()
+			app := testApp("a")
+			target := "api.example.com"
+			observe(t, c, target, app, now)
+			if decision == "unknown" {
+				// Another, identified app used this address successfully. That
+				// must not make it the owner of an unidentified failing flow.
+				app = model.ApplicationInfo{}
+				observe(t, c, target, app, now)
+			} else {
+				known := c.apps[app.ID]
+				known.Decision = decision
+				c.apps[app.ID] = known
+			}
+			c.directFailure(target, app.ID, now)
+			c.directFailure(target, app.ID, now.Add(time.Second))
+			items := c.Events.List()
+			if len(items) != 1 || items[0].Target != target {
+				t.Fatalf("missing or duplicate event: %+v", items)
+			}
+			if decision == "unknown" {
+				if items[0].Source != nil {
+					t.Fatalf("guessed source from another connection: %+v", items[0])
+				}
+			} else if items[0].Source == nil || *items[0].Source != app {
+				t.Fatalf("source missing: %+v", items[0])
+			}
+			c.directRecovered(target, app.ID, now.Add(2*time.Second))
+			delete(c.apps, app.ID)
+			if c.Events.List()[0].Target != target || (decision != "unknown" && *c.Events.List()[0].Source != app) {
+				t.Fatal("current traffic changed historical event context")
+			}
+		})
+	}
+}
+
+func TestBlockedConnectionEventIncludesSource(t *testing.T) {
+	c := testTrafficClient(t)
+	c.config.Pinned = []string{"example.com"}
+	app := testApp("b")
+	if _, err := c.dialApplication(context.Background(), "tcp", "blocked.example.com", 443, app); err == nil {
+		t.Fatal("offline protected connection unexpectedly opened")
+	}
+	items := c.Events.List()
+	if len(items) != 1 || items[0].Target != "blocked.example.com" || items[0].Source == nil || *items[0].Source != app {
+		t.Fatalf("blocked connection lost its source: %+v", items)
+	}
+}
+
+func TestRuleSourcesUseLocalObservationsAndDomainBoundaries(t *testing.T) {
+	c := testTrafficClient(t)
+	c.config.Profile.Rules = []string{"example.com", "8.8.8.8", "untouched.example.org"}
+	c.config.Pinned = []string{"2001:db8::1"}
+	now := time.Now()
+	app, other := testApp("a"), testApp("b")
+	observe(t, c, "api.example.com", app, now)
+	observe(t, c, "cdn.example.com", app, now)
+	observe(t, c, "unknown.example.com", model.ApplicationInfo{}, now)
+	observe(t, c, "notexample.com", other, now)
+	observe(t, c, "8.8.8.8", other, now)
+	observe(t, c, "2001:db8::1", app, now)
+	sources := c.State().(map[string]any)["rule_sources"].(map[string]model.RuleSources)
+	if len(sources) != 3 {
+		t.Fatalf("unobserved rule got sources: %+v", sources)
+	}
+	domain := sources["example.com"]
+	if len(domain.Sources) != 1 || domain.Sources[0] != app || !domain.Unknown {
+		t.Fatalf("domain sources not deduplicated or crossed a boundary: %+v", domain)
+	}
+	if ip := sources["8.8.8.8"]; len(ip.Sources) != 1 || ip.Sources[0] != other || ip.Unknown {
+		t.Fatalf("IP source mixed with domain: %+v", ip)
+	}
+	if ip := sources["2001:db8::1"]; len(ip.Sources) != 1 || ip.Sources[0] != app {
+		t.Fatalf("pending protection lost source: %+v", ip)
+	}
+}
 func TestHistoricSuccessesAndExpiredFailuresDoNotSuggest(t *testing.T) {
 	c := testTrafficClient(t)
 	now := time.Now()

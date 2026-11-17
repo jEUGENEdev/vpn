@@ -422,7 +422,8 @@ func (c *Client) State() any {
 	}
 	requests := c.requestsLocked()
 	apps, pendingApps := c.applicationSnapshotLocked()
-	return map[string]any{"status": status, "tunnel": c.tunnel, "guard": c.guard, "account_id": c.config.Profile.AccountID, "device_id": c.config.Profile.DeviceID, "server": c.config.API, "rules": c.effectiveRules(), "pending_protection": c.config.Pinned, "requests": requests, "request_groups": groupRequests(requests), "applications": apps, "pending_applications": pendingApps, "app_tunnel": c.ready && c.config.Profile.AppUUID != "", "attribution_available": c.ownerLookup != nil, "devices": c.devices, "events": c.Events.List(), "last_sync": c.lastSync, "revision": c.config.Profile.Revision}
+	rules := c.effectiveRules()
+	return map[string]any{"status": status, "tunnel": c.tunnel, "guard": c.guard, "account_id": c.config.Profile.AccountID, "device_id": c.config.Profile.DeviceID, "server": c.config.API, "rules": rules, "rule_sources": c.ruleSourcesLocked(rules), "pending_protection": c.config.Pinned, "requests": requests, "request_groups": groupRequests(requests), "applications": apps, "pending_applications": pendingApps, "app_tunnel": c.ready && c.config.Profile.AppUUID != "", "attribution_available": c.ownerLookup != nil, "devices": c.devices, "events": c.Events.List(), "last_sync": c.lastSync, "revision": c.config.Profile.Revision}
 }
 func (c *Client) Action(ctx context.Context, path string, data any) (any, error) {
 	if path == "applications" {
@@ -513,7 +514,7 @@ func (c *Client) dialApplication(ctx context.Context, network, target string, po
 	c.mu.Unlock()
 	addr := net.JoinHostPort(target, fmt.Sprint(port))
 	if route == policy.Block {
-		c.Events.Outage(time.Now(), "Запрос к одобренному адресу остановлен. Прямое соединение запрещено.")
+		c.Events.ConnectionOutage(time.Now(), "Защищённый запрос остановлен. Прямое соединение запрещено.", target, app)
 		return nil, errors.New("protected destination is offline")
 	}
 	var conn net.Conn
@@ -534,7 +535,7 @@ func (c *Client) dialApplication(ctx context.Context, network, target string, po
 			c.mu.Lock()
 			c.vpnFailed = true
 			c.mu.Unlock()
-			c.Events.Outage(time.Now(), "Ошибка защищённого подключения. Повторим через VPN.")
+			c.Events.ConnectionOutage(time.Now(), "Ошибка защищённого подключения. Повторим через VPN.", target, app)
 		}
 		return nil, err
 	}
@@ -547,12 +548,13 @@ func (c *Client) dialApplication(ctx context.Context, network, target string, po
 	}
 	c.active[conn] = activeFlow{Target: target, AppID: app.ID, Route: route}
 	c.mu.Unlock()
-	return &tracked{Conn: conn, c: c}, nil
+	return &tracked{Conn: conn, c: c, source: app}, nil
 }
 
 type tracked struct {
 	net.Conn
 	c               *Client
+	source          model.ApplicationInfo
 	received        atomic.Bool
 	failureReported atomic.Bool
 	closed          atomic.Bool
@@ -638,7 +640,7 @@ func (t *tracked) Read(p []byte) (int, error) {
 		}
 		t.c.mu.Unlock()
 		if recovered {
-			t.c.Events.Recovered(time.Now())
+			t.c.Events.ConnectionRecovered(time.Now(), info.Target, t.source)
 		}
 	}
 	if err != nil && (!errors.Is(err, io.EOF) || !t.received.Load()) {
@@ -650,7 +652,7 @@ func (t *tracked) Read(p []byte) (int, error) {
 		}
 		t.c.mu.Unlock()
 		if protected {
-			t.c.Events.Outage(time.Now(), "Защищённое соединение прервано. Прямого переключения нет.")
+			t.c.Events.ConnectionOutage(time.Now(), "Защищённое соединение прервано. Прямого переключения нет.", info.Target, t.source)
 		} else if active {
 			t.reportDirectFailure()
 		}
