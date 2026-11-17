@@ -60,6 +60,29 @@ func deviceTestServer(t *testing.T) (*Server, func(string, string, any, int) map
 	return s, call
 }
 
+func TestSameAccountDevicesHaveIndependentLiveCredentials(t *testing.T) {
+	_, call := deviceTestServer(t)
+	credentials := map[string]any{"access_key": "lnv_" + strings.Repeat("a", 43), "platform": "android", "name": "Same phone model"}
+	first := call("/api/login", "", credentials, 200)
+	second := call("/api/login", "", credentials, 200)
+	for _, field := range []string{"device_id", "uuid", "token"} {
+		if first[field] == second[field] {
+			t.Fatalf("devices share %s", field)
+		}
+	}
+	for _, device := range []map[string]any{first, second} {
+		token := device["token"].(string)
+		call("/api/app-vpn", token, map[string]bool{"enabled": true}, 200)
+		synced := call("/api/sync", token, nil, 200)
+		if len(synced["devices"].([]any)) != 2 {
+			t.Fatal("another login replaced a live device")
+		}
+	}
+	call("/api/revoke", second["token"].(string), map[string]any{"id": second["device_id"]}, 200)
+	call("/api/sync", first["token"].(string), nil, 200)
+	call("/api/sync", second["token"].(string), nil, 401)
+}
+
 func TestDeviceSelectionAndCredentialRotation(t *testing.T) {
 	s, call := deviceTestServer(t)
 	old, err := s.enroll("a", "System laptop", "darwin")

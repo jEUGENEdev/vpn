@@ -86,7 +86,6 @@ func TestREALITYXHTTPRoundTripAndDeny(t *testing.T) {
 	if string(reply) != "round-trip" {
 		t.Fatal(string(reply))
 	}
-	conn.Close()
 	udpEcho, e := net.ListenPacket("udp", "127.0.0.1:0")
 	if e != nil {
 		t.Fatal(e)
@@ -120,6 +119,87 @@ func TestREALITYXHTTPRoundTripAndDeny(t *testing.T) {
 			t.Fatalf("UDP datagram size %d: got %d bytes: %v", size, n, e)
 		}
 	}
+	// Enrolling another device (and enabling its app credential) must not
+	// interrupt the first device's already authenticated TCP/UDP streams.
+	st.Devices["second"] = store.Device{Device: model.Device{ID: "second", AccountID: "a", Expires: time.Now().Add(time.Hour)}, Secret: secure.UUID(), AppSecret: secure.UUID()}
+	if e = server.Apply(loopbackTestConfig(ServerConfig(st, o, time.Now()))); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = conn.Write([]byte("still-here")); e != nil {
+		t.Fatal("second device interrupted first TCP stream:", e)
+	}
+	if _, e = io.ReadFull(conn, reply); e != nil || string(reply) != "still-here" {
+		t.Fatal("first TCP stream lost after enrollment:", string(reply), e)
+	}
+	if _, e = udp.Write([]byte("media")); e != nil {
+		t.Fatal(e)
+	}
+	if n, err := udp.Read(reply); err != nil || string(reply[:n]) != "media" {
+		t.Fatal("first UDP stream lost after enrollment:", err)
+	}
+	var second Runtime
+	defer second.Close()
+	secondProfile := p
+	secondProfile.UUID = st.Devices["second"].Secret
+	if e = second.Apply(ClientConfig(secondProfile)); e != nil {
+		t.Fatal(e)
+	}
+	other, e := second.Dial(ctx, "tcp", echo.Addr().String())
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer other.Close()
+	otherTimer := time.AfterFunc(5*time.Second, func() { other.Close() })
+	defer otherTimer.Stop()
+	if _, e = other.Write([]byte("two-online")); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = io.ReadFull(other, reply); e != nil || string(reply) != "two-online" {
+		t.Fatal("second device cannot route alongside first:", e)
+	}
+	secondUDP, e := second.Dial(ctx, "udp", udpEcho.LocalAddr().String())
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer secondUDP.Close()
+	secondUDPTimer := time.AfterFunc(5*time.Second, func() { secondUDP.Close() })
+	defer secondUDPTimer.Stop()
+	for _, live := range []net.Conn{udp, secondUDP} {
+		if _, e = live.Write([]byte("two-media")); e != nil {
+			t.Fatal(e)
+		}
+		if n, err := live.Read(reply); err != nil || string(reply[:n]) != "two-media" {
+			t.Fatal("simultaneous device UDP failed:", err)
+		}
+	}
+	// Reapplying an unchanged policy must also preserve both sessions.
+	if e = server.Apply(loopbackTestConfig(ServerConfig(st, o, time.Now()))); e != nil {
+		t.Fatal(e)
+	}
+	for _, live := range []net.Conn{conn, other} {
+		if _, e = live.Write([]byte("both-alive")); e != nil {
+			t.Fatal(e)
+		}
+		if _, e = io.ReadFull(live, reply); e != nil || string(reply) != "both-alive" {
+			t.Fatal("refresh interrupted a device:", e)
+		}
+	}
+	// Widening existing IP and domain ACLs is additive too.
+	for _, rule := range []string{"127.0.0.2", "example.com", "example.org"} {
+		account := st.Accounts["a"]
+		account.Rules = append(account.Rules, rule)
+		st.Accounts["a"] = account
+		if e = server.Apply(loopbackTestConfig(ServerConfig(st, o, time.Now()))); e != nil {
+			t.Fatal(e)
+		}
+		if _, e = conn.Write([]byte("more-rules")); e != nil {
+			t.Fatal(e)
+		}
+		if _, e = io.ReadFull(conn, reply); e != nil || string(reply) != "more-rules" {
+			t.Fatal("adding permission interrupted a device:", e)
+		}
+	}
+	conn.Close()
 	udp.Close()
 	a := st.Accounts["a"]
 	a.Rules = nil

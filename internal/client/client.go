@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,39 +36,39 @@ type Config struct {
 	Profile      model.Profile `json:"profile"`
 }
 type Client struct {
-	identity      DeviceIdentity
-	sent          map[string]time.Time
-	resolved      map[string]time.Time
-	mu            sync.RWMutex
-	change        sync.Mutex
-	config        Config
-	dir           string
-	http          *http.Client
-	vpn           transport.Runtime
-	appVPN        transport.Runtime
-	apps          map[string]model.Application
-	observed      map[string]*observation
-	ownerLookup   owner.Lookup
-	Direct        *transport.Dialer
-	DNS           *FakeDNS
-	Events        *events.Center
-	pending       map[string]time.Time
-	dismissed     map[string]bool
-	active        map[io.Closer]activeFlow
-	ready         bool
-	status        string
-	requests      []model.Request
-	devices       []model.Device
-	lastSync      time.Time
-	tunnel        bool
-	guard         bool
-	vpnFailed     bool
-	fallbackUntil time.Time
-	routeEpoch    uint64
-	closed        bool
-	power         NetworkController
-	powerPending  bool
-	powerError    string
+	identity     DeviceIdentity
+	sent         map[string]time.Time
+	resolved     map[string]time.Time
+	mu           sync.RWMutex
+	change       sync.Mutex
+	config       Config
+	dir          string
+	http         *http.Client
+	vpn          transport.Runtime
+	appVPN       transport.Runtime
+	apps         map[string]model.Application
+	observed     map[string]*observation
+	ownerLookup  owner.Lookup
+	Direct       *transport.Dialer
+	DNS          *FakeDNS
+	Events       *events.Center
+	pending      map[string]time.Time
+	dismissed    map[string]bool
+	active       map[io.Closer]activeFlow
+	ready        bool
+	status       string
+	requests     []model.Request
+	devices      []model.Device
+	lastSync     time.Time
+	tunnel       bool
+	guard        bool
+	vpnFailed    bool
+	fallbacks    map[fallbackKey]time.Time
+	routeEpoch   uint64
+	closed       bool
+	power        NetworkController
+	powerPending bool
+	powerError   string
 }
 
 type APIError struct {
@@ -303,13 +304,31 @@ func (c *Client) apply(p model.Profile) error {
 		return e
 	}
 	c.ready = false
-	// A failed refresh must not interrupt working direct connections every
-	// five seconds. Close them only after a usable VPN is configured below.
+	vpnChanged := !reflect.DeepEqual(transport.ClientConfig(old), transport.ClientConfig(p))
+	appChanged := vpnChanged || old.AppUUID != p.AppUUID
+	// Close affected transports before replacement, so deliberate policy
+	// changes are not mistaken for network failures by tracked connections.
 	for flow, info := range c.active {
-		if info.Route != policy.Direct {
+		if (info.Route == policy.VPN && vpnChanged) || (info.Route == policy.AppVPN && appChanged) {
 			delete(c.active, flow)
 			flow.Close()
 		}
+	}
+	defer func() {
+		// A failed refresh preserves working direct connections, but never
+		// retains an authenticated flow after access becomes inactive.
+		if !c.ready {
+			for flow, info := range c.active {
+				if info.Route != policy.Direct {
+					delete(c.active, flow)
+					flow.Close()
+				}
+			}
+		}
+	}()
+	if vpnChanged || appChanged {
+		clear(c.fallbacks)
+		c.vpnFailed = false
 	}
 	c.config = next
 	c.routeEpoch++
@@ -336,9 +355,11 @@ func (c *Client) apply(p model.Profile) error {
 	}
 	c.ready = p.Status == "active"
 	if c.ready {
-		for flow := range c.active {
-			delete(c.active, flow)
-			flow.Close()
+		for flow, info := range c.active {
+			if c.routeFlowLocked(info.Target, info.AppID, info.Network, info.Port) != info.Route {
+				delete(c.active, flow)
+				flow.Close()
+			}
 		}
 	}
 	c.status = "ready"
@@ -503,7 +524,7 @@ func (c *Client) State() any {
 	requests := c.requestsLocked()
 	apps, pendingApps := c.applicationSnapshotLocked()
 	rules := c.effectiveRules()
-	return map[string]any{"device": c.identity, "status": status, "vpn_enabled": !c.config.Disabled, "availability_first": true, "direct_fallback": !c.config.Disabled && (!c.ready || c.vpnFailed || !c.tunnel), "power_transition": c.powerPending, "power_error": c.powerError, "auth_required": c.status == "auth_required" || (c.config.Profile.AccountID != "" && c.config.Profile.Token == ""), "login": c.config.Profile.Login, "tunnel": c.tunnel, "guard": c.guard, "account_id": c.config.Profile.AccountID, "device_id": c.config.Profile.DeviceID, "server": c.config.API, "rules": rules, "rule_sources": c.ruleSourcesLocked(rules), "pending_protection": c.config.Pinned, "requests": requests, "request_groups": groupRequests(requests), "applications": apps, "pending_applications": pendingApps, "app_tunnel": c.ready && !c.vpnFailed && c.config.Profile.AppUUID != "", "attribution_available": c.ownerLookup != nil, "devices": c.devices, "events": c.Events.List(), "last_sync": c.lastSync, "revision": c.config.Profile.Revision}
+	return map[string]any{"device": c.identity, "status": status, "vpn_enabled": !c.config.Disabled, "availability_first": true, "direct_fallback": !c.config.Disabled && (!c.ready || c.vpnFailed || !c.tunnel), "power_transition": c.powerPending, "power_error": c.powerError, "auth_required": c.status == "auth_required" || (c.config.Profile.AccountID != "" && c.config.Profile.Token == ""), "login": c.config.Profile.Login, "tunnel": c.tunnel, "guard": c.guard, "account_id": c.config.Profile.AccountID, "device_id": c.config.Profile.DeviceID, "server": c.config.API, "rules": rules, "rule_sources": c.ruleSourcesLocked(rules), "pending_protection": c.config.Pinned, "requests": requests, "request_groups": groupRequests(requests), "applications": apps, "pending_applications": pendingApps, "app_tunnel": c.ready && c.config.Profile.AppUUID != "", "attribution_available": c.ownerLookup != nil, "devices": c.devices, "events": c.Events.List(), "last_sync": c.lastSync, "revision": c.config.Profile.Revision}
 }
 func (c *Client) Action(ctx context.Context, path string, data any) (any, error) {
 	if path == "vpn" {
@@ -647,7 +668,7 @@ func (c *Client) dialApplication(ctx context.Context, network, target string, po
 		return nil, errors.New("client stopped")
 	}
 	c.observeLocked(target, app, time.Now())
-	route := c.routeLocked(target, app.ID)
+	route := c.routeFlowLocked(target, app.ID, network, port)
 	fallback := route == policy.Direct && c.wantsVPNLocked(target, app.ID)
 	epoch := c.routeEpoch
 	c.mu.Unlock()
@@ -672,8 +693,11 @@ func (c *Client) dialApplication(ctx context.Context, network, target string, po
 	}
 	if err != nil && route != policy.Direct {
 		c.mu.Lock()
-		c.vpnFailed = true
-		c.fallbackUntil = time.Now().Add(30 * time.Second)
+		if c.closed || c.routeEpoch != epoch {
+			c.mu.Unlock()
+			return nil, errors.New("policy changed during connection")
+		}
+		c.failedVPNLocked(activeFlow{Target: target, AppID: app.ID, Network: network, Port: port, Route: route})
 		c.mu.Unlock()
 		c.Events.ConnectionOutage(time.Now(), "Ошибка VPN. Подключаемся напрямую, без VPN-защиты.", target, app)
 		route = policy.Direct
@@ -693,13 +717,13 @@ func (c *Client) dialApplication(ctx context.Context, network, target string, po
 		return nil, err
 	}
 	c.mu.Lock()
-	current := c.routeLocked(target, app.ID)
+	current := c.routeFlowLocked(target, app.ID, network, port)
 	if current != route || c.closed || c.routeEpoch != epoch {
 		c.mu.Unlock()
 		conn.Close()
 		return nil, errors.New("policy changed during connection")
 	}
-	c.active[conn] = activeFlow{Target: target, AppID: app.ID, Route: route}
+	c.active[conn] = activeFlow{Target: target, AppID: app.ID, Route: route, Network: network, Port: port}
 	c.mu.Unlock()
 	return &tracked{Conn: conn, c: c, source: app}, nil
 }
@@ -748,10 +772,9 @@ func (t *tracked) reportVPNWriteFailure() {
 		t.c.mu.Unlock()
 		return
 	}
-	t.c.vpnFailed = true
-	t.c.fallbackUntil = time.Now().Add(30 * time.Second)
+	t.c.failedVPNLocked(flow)
 	t.c.mu.Unlock()
-	t.c.Events.ConnectionOutage(time.Now(), "Не удалось отправить данные через VPN. Следующие соединения идут напрямую, без VPN-защиты.", flow.Target, t.source)
+	t.c.Events.ConnectionOutage(time.Now(), "Не удалось отправить данные через VPN. Повторные соединения с этим адресом идут напрямую, без VPN-защиты.", flow.Target, t.source)
 }
 
 func (t *tracked) reportResponseTimeout() {
@@ -766,8 +789,12 @@ func (t *tracked) reportResponseTimeout() {
 		t.reportDirectFailure()
 		return
 	}
-	t.c.vpnFailed = true
-	t.c.fallbackUntil = time.Now().Add(30 * time.Second)
+	// UDP media can legitimately be one-way. Silence is not a VPN failure.
+	if flow.Network == "udp" {
+		t.c.mu.Unlock()
+		return
+	}
+	t.c.failedVPNLocked(flow)
 	t.c.mu.Unlock()
 	t.c.Events.ConnectionOutage(time.Now(), "VPN не отвечает. Повторное подключение пойдёт напрямую, без VPN-защиты.", flow.Target, t.source)
 	// Never replay application bytes on another route. Close the stalled flow
@@ -779,9 +806,9 @@ func (t *tracked) Write(p []byte) (int, error) {
 	if n > 0 {
 		t.responseOnce.Do(func() {
 			t.c.mu.RLock()
-			_, active := t.c.active[t.Conn]
+			flow, active := t.c.active[t.Conn]
 			t.c.mu.RUnlock()
-			if !active || t.received.Load() || t.closed.Load() {
+			if !active || t.received.Load() || t.closed.Load() || (flow.Network == "udp" && flow.Route != policy.Direct) {
 				return
 			}
 			// Start the response timeout only after sending application data.
@@ -822,11 +849,7 @@ func (t *tracked) Read(p []byte) (int, error) {
 		t.c.mu.Lock()
 		info, active := t.c.active[t.Conn]
 		protected := active && info.Route != policy.Direct
-		recovered := protected && t.c.ready && t.c.vpnFailed
-		if recovered {
-			t.c.fallbackUntil = time.Time{}
-			t.c.vpnFailed = false
-		}
+		recovered := protected && t.c.ready && t.c.recoveredVPNLocked(info)
 		t.c.mu.Unlock()
 		if recovered {
 			t.c.Events.ConnectionRecovered(time.Now(), info.Target, t.source)
@@ -835,14 +858,15 @@ func (t *tracked) Read(p []byte) (int, error) {
 	if err != nil && (!errors.Is(err, io.EOF) || !t.received.Load()) {
 		t.c.mu.Lock()
 		info, active := t.c.active[t.Conn]
-		protected := active && info.Route != policy.Direct
+		var timeout net.Error
+		idleUDP := info.Network == "udp" && errors.As(err, &timeout) && timeout.Timeout()
+		protected := active && info.Route != policy.Direct && !t.closed.Load() && !idleUDP
 		if protected {
-			t.c.vpnFailed = true
-			t.c.fallbackUntil = time.Now().Add(30 * time.Second)
+			t.c.failedVPNLocked(info)
 		}
 		t.c.mu.Unlock()
 		if protected {
-			t.c.Events.ConnectionOutage(time.Now(), "VPN-соединение прервано. Следующие соединения идут напрямую, без VPN-защиты.", info.Target, t.source)
+			t.c.Events.ConnectionOutage(time.Now(), "VPN-соединение прервано. Повторные соединения с этим адресом идут напрямую, без VPN-защиты.", info.Target, t.source)
 		} else if active {
 			t.reportDirectFailure()
 		}

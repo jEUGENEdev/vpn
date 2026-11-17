@@ -35,6 +35,8 @@ type directFailureState struct {
 type activeFlow struct {
 	Target, AppID string
 	Route         policy.Route
+	Network       string
+	Port          uint16
 }
 
 func validApplication(a model.ApplicationInfo) bool {
@@ -149,7 +151,7 @@ func (c *Client) routeLocked(target, appID string) policy.Route {
 	if _, err := policy.Normalize(target); err != nil {
 		return policy.Block
 	}
-	if c.config.Disabled || !c.ready || time.Now().Before(c.fallbackUntil) {
+	if c.config.Disabled || !c.ready {
 		return policy.Direct
 	}
 	route := policy.Decide(c.effectiveRules(), target, c.ready)
