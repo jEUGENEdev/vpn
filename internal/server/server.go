@@ -181,7 +181,7 @@ func (s *Server) device(r *http.Request) (store.Device, store.Account, error) {
 }
 func (s *Server) profile(d store.Device, a store.Account, token string) model.Profile {
 	o := s.Config.Transport
-	return model.Profile{Login: a.Login, DeviceID: d.ID, AccountID: a.ID, Token: token, Server: s.Config.PublicIP, Port: o.Port, UUID: d.Secret, AppUUID: d.AppSecret, SNI: o.SNI, PublicKey: o.PublicKey, ShortID: o.ShortID, Path: o.Path, Rules: a.Rules, Revision: a.Revision, Status: a.Status}
+	return model.Profile{ApplicationRules: applicationRules(a, d.Platform), Login: a.Login, DeviceID: d.ID, AccountID: a.ID, Token: token, Server: s.Config.PublicIP, Port: o.Port, UUID: d.Secret, AppUUID: d.AppSecret, SNI: o.SNI, PublicKey: o.PublicKey, ShortID: o.ShortID, Path: o.Path, Rules: a.Rules, Revision: a.Revision, Status: a.Status}
 }
 
 func (s *Server) Handler(static http.Handler) http.Handler {
@@ -208,6 +208,7 @@ func (s *Server) Handler(static http.Handler) http.Handler {
 	mux.HandleFunc("POST /api/discover", s.discover)
 	mux.HandleFunc("POST /api/rules", s.rules)
 	mux.HandleFunc("POST /api/app-vpn", s.appVPN)
+	mux.HandleFunc("POST /api/application-rules", s.saveApplicationRules)
 	mux.HandleFunc("POST /api/dismiss", s.dismiss)
 	mux.HandleFunc("POST /api/pair", s.pair)
 	mux.HandleFunc("POST /api/revoke", s.revoke)

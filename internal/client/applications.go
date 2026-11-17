@@ -103,6 +103,7 @@ func (c *Client) observeLocked(target string, app model.ApplicationInfo, now tim
 		a, exists := c.apps[app.ID]
 		if !exists && len(c.apps) < 512 {
 			a = model.Application{ApplicationInfo: app, Decision: "pending", FirstSeen: now, LastSeen: now, Target: target}
+			a.Decision, a.SyncConfirmed = c.restoredApplicationDecisionLocked(app)
 			c.apps[app.ID] = a
 			_ = c.saveApplications(c.apps)
 		} else if exists {
@@ -219,12 +220,14 @@ func (c *Client) applicationAction(ctx context.Context, data any) (any, error) {
 		next[key] = value
 	}
 	app.Decision = decision
+	app.SyncPending = true
 	next[id] = app
 	if err := c.saveApplications(next); err != nil {
 		c.mu.Unlock()
 		return nil, err
 	}
 	c.apps = next
+	c.routeEpoch++
 	for conn, flow := range c.active {
 		if flow.AppID == id {
 			delete(c.active, conn)
@@ -232,8 +235,12 @@ func (c *Client) applicationAction(ctx context.Context, data any) (any, error) {
 		}
 	}
 	c.mu.Unlock()
+	policyErr := c.syncSavedPolicy(ctx)
 	if err := c.ensureApplicationTunnel(ctx); err != nil {
 		return map[string]any{"ok": true, "pending": true, "message": "Решение сохранено. Для VPN приложения ждём подтверждения сервера."}, nil
+	}
+	if policyErr != nil {
+		return map[string]any{"ok": true, "pending": true, "message": "Решение сохранено на устройстве. Перед переустановкой дождитесь сохранения в аккаунте. " + policyErr.Error()}, nil
 	}
 	return map[string]bool{"ok": true}, nil
 }

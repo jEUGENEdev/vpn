@@ -53,6 +53,16 @@ function visible(w, selector) { return [...w.document.querySelectorAll(selector)
   try {
     await tick();
     assert.equal($('dashboard').hidden,false,'client failed to render');
+    fixture.policy_sync_pending=2;
+    fixture.policy_sync_error='Для сохранения решений обновите сервер';
+    await w.eval('update()');
+    assert.equal($('policy-sync-status').hidden,false,'unsaved rules warning hidden');
+    assert.match($('policy-sync-status').textContent,/2.*переустановкой/);
+    assert.match($('policy-sync-status').textContent,/обновите сервер/);
+    fixture.policy_sync_pending=0;
+    fixture.policy_sync_error='';
+    await w.eval('update()');
+    assert.equal($('policy-sync-status').hidden,true,'saved rules still reported unsaved');
     input(w,'traffic-search','  FIRST   BROWSER ');
     assert.equal(visible(w,'#requests-list > .request-group').length,1,'nested source path not found');
     const group = d.querySelector('#requests-list > .request-group');

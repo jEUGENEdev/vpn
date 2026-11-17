@@ -82,7 +82,7 @@ function renderTraffic() {
   renderApplications();
 }
 async function decideApplication(app, decision) {
-  if (decision === 'trusted' && !await confirmChange('Доверить VPN приложению «' + app.name + '»?', 'Весь трафик этого приложения пойдёт через VPN. При сбое VPN он сможет идти напрямую, без VPN-защиты. Правила адресов для остальных приложений не изменятся.\n' + app.path)) return;
+  if (decision === 'trusted' && !await confirmChange('Доверить VPN приложению «' + app.name + '»?', 'Весь трафик этого приложения пойдёт через VPN. Решение сохранится в аккаунте для этого приложения и платформы, в том числе после переустановки. При сбое VPN он сможет идти напрямую, без VPN-защиты.\n' + app.path)) return;
   const result = await act('applications', {id:app.id, decision});
   toast(result.message || (state.vpn_enabled === false ? 'Решение сохранено. Оно начнёт действовать после включения VPN.' : decision === 'trusted' ? 'Приложение использует VPN' : 'Для приложения действуют правила адресов'));
 }

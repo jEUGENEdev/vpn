@@ -8,7 +8,7 @@ import (
 )
 
 // A second, device-scoped credential keeps app trust separate from the shared
-// address allowlist. App identity and trust decisions stay on the device.
+// address allowlist. Names, paths and traffic history stay on the device.
 func (s *Server) appVPN(w http.ResponseWriter, r *http.Request) {
 	d, _, err := s.device(r)
 	if err != nil {

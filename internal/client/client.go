@@ -69,6 +69,8 @@ type Client struct {
 	power        NetworkController
 	powerPending bool
 	powerError   string
+
+	policySyncError string
 }
 
 type APIError struct {
@@ -107,6 +109,15 @@ func New(dir string, dialer *transport.Dialer) (*Client, error) {
 		f.Close()
 		return nil, e
 	}
+	apps, e := c.mergeApplicationRulesLocked(c.config.Profile, nil)
+	if e == nil && !reflect.DeepEqual(apps, c.apps) {
+		e = c.saveApplications(apps)
+	}
+	if e != nil {
+		f.Close()
+		return nil, e
+	}
+	c.apps = apps
 	return c, nil
 }
 func (c *Client) Close() {
@@ -270,6 +281,10 @@ func (c *Client) Auth(ctx context.Context, action string, data any) (any, error)
 	return map[string]bool{"ok": true}, nil
 }
 func (c *Client) apply(p model.Profile) error {
+	return c.applyProfile(p, nil)
+}
+
+func (c *Client) applyProfile(p model.Profile, acknowledged []model.ApplicationRuleChange) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
@@ -287,6 +302,10 @@ func (c *Client) apply(p model.Profile) error {
 		return e
 	}
 	p.Rules = rules
+	apps, e := c.mergeApplicationRulesLocked(p, acknowledged)
+	if e != nil {
+		return e
+	}
 	if p.Token == "" {
 		p.Token = old.Token
 	}
@@ -296,22 +315,6 @@ func (c *Client) apply(p model.Profile) error {
 	for _, r := range c.config.Pinned {
 		if !policy.Approved(p.Rules, r) {
 			next.Pinned = append(next.Pinned, r)
-		}
-	}
-	raw, _ := json.Marshal(next)
-	if e = secure.Save(filepath.Join(c.dir, "profile.json"), raw); e != nil {
-		c.ready = false
-		return e
-	}
-	c.ready = false
-	vpnChanged := !reflect.DeepEqual(transport.ClientConfig(old), transport.ClientConfig(p))
-	appChanged := vpnChanged || old.AppUUID != p.AppUUID
-	// Close affected transports before replacement, so deliberate policy
-	// changes are not mistaken for network failures by tracked connections.
-	for flow, info := range c.active {
-		if (info.Route == policy.VPN && vpnChanged) || (info.Route == policy.AppVPN && appChanged) {
-			delete(c.active, flow)
-			flow.Close()
 		}
 	}
 	defer func() {
@@ -326,12 +329,35 @@ func (c *Client) apply(p model.Profile) error {
 			}
 		}
 	}()
+	raw, _ := json.Marshal(next)
+	if e = secure.Save(filepath.Join(c.dir, "profile.json"), raw); e != nil {
+		c.ready = false
+		return e
+	}
+	if !reflect.DeepEqual(apps, c.apps) {
+		if e = c.saveApplications(apps); e != nil {
+			c.ready = false
+			return e
+		}
+	}
+	c.ready = false
+	vpnChanged := !reflect.DeepEqual(transport.ClientConfig(old), transport.ClientConfig(p))
+	appChanged := vpnChanged || old.AppUUID != p.AppUUID
+	// Close affected transports before replacement, so deliberate policy
+	// changes are not mistaken for network failures by tracked connections.
+	for flow, info := range c.active {
+		if (info.Route == policy.VPN && vpnChanged) || (info.Route == policy.AppVPN && appChanged) {
+			delete(c.active, flow)
+			flow.Close()
+		}
+	}
 	if vpnChanged || appChanged {
 		clear(c.vpnFailures)
 		c.vpnFailed = false
 	}
 	c.config = next
 	c.routeEpoch++
+	c.apps = apps
 	if next.Disabled {
 		c.vpn.Close()
 		c.appVPN.Close()
@@ -382,7 +408,7 @@ func (c *Client) sync(ctx context.Context, background bool) error {
 	c.change.Lock()
 	defer c.change.Unlock()
 	c.mu.RLock()
-	logged := c.config.Profile.Token != "" && !(background && c.config.Disabled) && !c.powerPending && c.powerError == ""
+	logged := c.config.Profile.Token != "" && !(background && c.config.Disabled && c.pendingPolicyCountLocked() == 0) && !c.powerPending && c.powerError == ""
 	c.mu.RUnlock()
 	if !logged {
 		return nil
@@ -415,7 +441,7 @@ func (c *Client) sync(ctx context.Context, background bool) error {
 	ready := c.ready
 	disabled := c.config.Disabled
 	c.mu.RUnlock()
-	if (!ready && !disabled && s.Profile.Status == "active") || old.Status != s.Profile.Status || old.Revision != s.Profile.Revision || old.UUID != s.Profile.UUID || old.AppUUID != s.Profile.AppUUID || old.Login != s.Profile.Login {
+	if (!ready && !disabled && s.Profile.Status == "active") || old.Status != s.Profile.Status || old.Revision != s.Profile.Revision || old.UUID != s.Profile.UUID || old.AppUUID != s.Profile.AppUUID || old.Login != s.Profile.Login || !reflect.DeepEqual(old.ApplicationRules, s.Profile.ApplicationRules) || len(c.pendingPins()) > 0 {
 		if e := c.apply(s.Profile); e != nil {
 			return e
 		}
@@ -487,7 +513,11 @@ func (c *Client) sync(ctx context.Context, background bool) error {
 	if !vpnFailed && !disabled && ready {
 		c.Events.Recovered(time.Now())
 	}
-	return c.ensureApplicationTunnel(ctx)
+	policyErr := c.syncSavedPolicy(ctx)
+	if err := c.ensureApplicationTunnel(ctx); err != nil {
+		return err
+	}
+	return policyErr
 }
 func (c *Client) Run(ctx context.Context) {
 	tick := time.NewTicker(5 * time.Second)
@@ -524,7 +554,7 @@ func (c *Client) State() any {
 	requests := c.requestsLocked()
 	apps, pendingApps := c.applicationSnapshotLocked()
 	rules := c.effectiveRules()
-	return map[string]any{"device": c.identity, "status": status, "vpn_enabled": !c.config.Disabled, "availability_first": true, "direct_fallback": !c.config.Disabled && (!c.ready || c.vpnFailed || !c.tunnel), "partial_fallback": !c.config.Disabled && c.ready && c.tunnel && c.vpnFailed, "power_transition": c.powerPending, "power_error": c.powerError, "auth_required": c.status == "auth_required" || (c.config.Profile.AccountID != "" && c.config.Profile.Token == ""), "login": c.config.Profile.Login, "tunnel": c.tunnel, "guard": c.guard, "account_id": c.config.Profile.AccountID, "device_id": c.config.Profile.DeviceID, "server": c.config.API, "rules": rules, "rule_sources": c.ruleSourcesLocked(rules), "pending_protection": c.config.Pinned, "requests": requests, "request_groups": groupRequests(requests), "applications": apps, "pending_applications": pendingApps, "app_tunnel": c.ready && c.config.Profile.AppUUID != "", "attribution_available": c.ownerLookup != nil, "devices": c.devices, "events": c.Events.List(), "last_sync": c.lastSync, "revision": c.config.Profile.Revision}
+	return map[string]any{"policy_sync_pending": c.pendingPolicyCountLocked(), "policy_sync_error": c.policySyncError, "device": c.identity, "status": status, "vpn_enabled": !c.config.Disabled, "availability_first": true, "direct_fallback": !c.config.Disabled && (!c.ready || c.vpnFailed || !c.tunnel), "partial_fallback": !c.config.Disabled && c.ready && c.tunnel && c.vpnFailed, "power_transition": c.powerPending, "power_error": c.powerError, "auth_required": c.status == "auth_required" || (c.config.Profile.AccountID != "" && c.config.Profile.Token == ""), "login": c.config.Profile.Login, "tunnel": c.tunnel, "guard": c.guard, "account_id": c.config.Profile.AccountID, "device_id": c.config.Profile.DeviceID, "server": c.config.API, "rules": rules, "rule_sources": c.ruleSourcesLocked(rules), "pending_protection": c.config.Pinned, "requests": requests, "request_groups": groupRequests(requests), "applications": apps, "pending_applications": pendingApps, "app_tunnel": c.ready && c.config.Profile.AppUUID != "", "attribution_available": c.ownerLookup != nil, "devices": c.devices, "events": c.Events.List(), "last_sync": c.lastSync, "revision": c.config.Profile.Revision}
 }
 func (c *Client) Action(ctx context.Context, path string, data any) (any, error) {
 	if path == "vpn" {

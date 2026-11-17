@@ -35,6 +35,9 @@ type Request struct {
 	Unknown       bool                 `json:"unknown_source,omitempty"`
 }
 type Profile struct {
+	// nil denotes a server without application-rule sync; [] denotes support.
+	ApplicationRules []ApplicationRule `json:"application_rules"`
+
 	Login     string   `json:"login"`
 	DeviceID  string   `json:"device_id"`
 	AccountID string   `json:"account_id"`
