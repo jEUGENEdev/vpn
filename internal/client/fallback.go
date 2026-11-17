@@ -1,44 +1,63 @@
 package client
 
-import "time"
+import (
+	"time"
 
-// A failed media peer is not evidence that every other destination or app has
-// lost VPN connectivity. Keep the availability fallback local to that choice.
-type fallbackKey struct{ Target, AppID string }
+	"github.com/jEUGENEdev/vpn/internal/policy"
+)
 
-// Caller holds c.mu. Bound memory even when an app probes many failed peers.
-func (c *Client) failVPNLocked(target, appID string, now time.Time) {
-	if c.fallbacks == nil {
-		c.fallbacks = map[fallbackKey]time.Time{}
+// A failed UDP endpoint must not switch TCP, other media hosts or another
+// application's traffic to direct. Only this exact route gets a short retry.
+type flowKey struct {
+	Target, AppID, Network string
+	Port                   uint16
+}
+
+func (f activeFlow) key() flowKey {
+	return flowKey{Target: f.Target, AppID: f.AppID, Network: f.Network, Port: f.Port}
+}
+
+// Caller holds c.mu (at least for reading).
+func (c *Client) routeFlowLocked(key flowKey) policy.Route {
+	route := c.routeLocked(key.Target, key.AppID)
+	if route != policy.Block && time.Now().Before(c.vpnFailures[key]) {
+		return policy.Direct
 	}
-	for key, until := range c.fallbacks {
+	return route
+}
+
+// Caller holds c.mu for writing. Keep memory bounded even during a long outage.
+func (c *Client) failVPNLocked(key flowKey) {
+	if c.vpnFailures == nil {
+		c.vpnFailures = map[flowKey]time.Time{}
+	}
+	now := time.Now()
+	for flow, until := range c.vpnFailures {
 		if !now.Before(until) {
-			delete(c.fallbacks, key)
+			delete(c.vpnFailures, flow)
 		}
 	}
-	key := fallbackKey{target, appID}
-	if _, exists := c.fallbacks[key]; !exists && len(c.fallbacks) >= 1000 {
-		var oldest fallbackKey
+	if _, exists := c.vpnFailures[key]; !exists && len(c.vpnFailures) >= 1000 {
+		var oldest flowKey
 		var at time.Time
-		for candidate, until := range c.fallbacks {
+		for flow, until := range c.vpnFailures {
 			if at.IsZero() || until.Before(at) {
-				oldest, at = candidate, until
+				oldest, at = flow, until
 			}
 		}
-		delete(c.fallbacks, oldest)
+		delete(c.vpnFailures, oldest)
 	}
-	c.fallbacks[key] = now.Add(30 * time.Second)
+	c.vpnFailures[key] = now.Add(30 * time.Second)
 	c.vpnFailed = true
 }
 
-func (c *Client) recoverVPNLocked(target, appID string, now time.Time) bool {
-	wasFailed := c.vpnFailed
-	delete(c.fallbacks, fallbackKey{target, appID})
-	for key, until := range c.fallbacks {
+func (c *Client) recoverVPNLocked(key flowKey) {
+	delete(c.vpnFailures, key)
+	now := time.Now()
+	for flow, until := range c.vpnFailures {
 		if !now.Before(until) {
-			delete(c.fallbacks, key)
+			delete(c.vpnFailures, flow)
 		}
 	}
-	c.vpnFailed = len(c.fallbacks) > 0
-	return wasFailed && !c.vpnFailed
+	c.vpnFailed = len(c.vpnFailures) != 0
 }

@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
+	"fmt"
 	"github.com/jEUGENEdev/vpn/internal/model"
 	"github.com/jEUGENEdev/vpn/internal/secure"
 	"github.com/jEUGENEdev/vpn/internal/store"
@@ -86,7 +87,6 @@ func TestREALITYXHTTPRoundTripAndDeny(t *testing.T) {
 	if string(reply) != "round-trip" {
 		t.Fatal(string(reply))
 	}
-	conn.Close()
 	udpEcho, e := net.ListenPacket("udp", "127.0.0.1:0")
 	if e != nil {
 		t.Fatal(e)
@@ -120,7 +120,67 @@ func TestREALITYXHTTPRoundTripAndDeny(t *testing.T) {
 			t.Fatalf("UDP datagram size %d: got %d bytes: %v", size, n, e)
 		}
 	}
+	// Enrolling another device used to close both streams on the first one.
+	original := server.instance
+	st.Devices["second"] = store.Device{Device: model.Device{ID: "second", AccountID: "a", Expires: time.Now().Add(time.Hour)}, Secret: secure.UUID()}
+	if e = server.Apply(loopbackTestConfig(ServerConfig(st, o, time.Now()))); e != nil {
+		t.Fatal(e)
+	}
+	if server.instance != original {
+		t.Fatal("enrolling a second device restarted every active tunnel")
+	}
+	var second Runtime
+	defer second.Close()
+	secondProfile := p
+	secondProfile.UUID = st.Devices["second"].Secret
+	if e = second.Apply(ClientConfig(secondProfile)); e != nil {
+		t.Fatal(e)
+	}
+	secondTCP, e := second.Dial(ctx, "tcp", echo.Addr().String())
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer secondTCP.Close()
+	secondUDP, e := second.Dial(ctx, "udp", udpEcho.LocalAddr().String())
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer secondUDP.Close()
+	// No-op API retries, app trust, and additive domain/IP approvals must also
+	// leave already authenticated streams on both devices running.
+	for step := 0; step < 3; step++ {
+		if step == 1 {
+			d := st.Devices["second"]
+			d.AppSecret = secure.UUID()
+			st.Devices["second"] = d
+		}
+		if step == 2 {
+			a := st.Accounts["a"]
+			a.Rules = append(a.Rules, "127.0.0.2", "media.example.com")
+			st.Accounts["a"] = a
+		}
+		if e = server.Apply(loopbackTestConfig(ServerConfig(st, o, time.Now()))); e != nil {
+			t.Fatal(e)
+		}
+		if server.instance != original {
+			t.Fatal("additive permission change restarted active devices")
+		}
+		results := make(chan error, 4)
+		for i, stream := range []net.Conn{conn, udp, secondTCP, secondUDP} {
+			go func() {
+				results <- mediaRoundTrip(stream, fmt.Sprintf("device-media-%d-%d", step, i), i%2 == 1)
+			}()
+		}
+		for range 4 {
+			if err := <-results; err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	conn.Close()
 	udp.Close()
+	secondTCP.Close()
+	secondUDP.Close()
 	a := st.Accounts["a"]
 	a.Rules = nil
 	st.Accounts["a"] = a
@@ -234,4 +294,25 @@ func TestREALITYXHTTPRoundTripAndDeny(t *testing.T) {
 func loopbackTestConfig(c obj) obj {
 	c["outbounds"].([]obj)[1]["settings"] = obj{"finalRules": []obj{{"action": "allow", "ip": []string{"127.0.0.1/32"}}}}
 	return c
+}
+
+// Bound failures even when an Xray connection does not implement deadlines.
+func mediaRoundTrip(conn net.Conn, payload string, udp bool) error {
+	timer := time.AfterFunc(3*time.Second, func() { conn.Close() })
+	defer timer.Stop()
+	if _, err := conn.Write([]byte(payload)); err != nil {
+		return err
+	}
+	response := make([]byte, len(payload))
+	var n int
+	var err error
+	if udp {
+		n, err = conn.Read(response)
+	} else {
+		n, err = io.ReadFull(conn, response)
+	}
+	if err != nil || string(response[:n]) != payload {
+		return fmt.Errorf("simultaneous media round trip: %q: %w", response[:n], err)
+	}
+	return nil
 }

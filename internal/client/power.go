@@ -77,7 +77,7 @@ func (c *Client) SetVPNEnabled(enabled bool) error {
 	c.powerPending, c.powerError = true, ""
 	c.routeEpoch++
 	c.ready, c.vpnFailed = false, false
-	clear(c.fallbacks)
+	clear(c.vpnFailures)
 	for flow := range c.active {
 		delete(c.active, flow)
 		flow.Close()

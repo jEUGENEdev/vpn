@@ -33,18 +33,15 @@ func (r *Runtime) extendServer(next *core.Config) bool {
 			return false
 		}
 	}
-	ruleSet := make(map[string]bool, len(newRoutes.Rule))
-	marshal := proto.MarshalOptions{Deterministic: true}
-	for _, rule := range newRoutes.Rule {
-		raw, err := marshal.Marshal(rule)
-		if err != nil {
-			return false
+	for _, before := range oldRoutes.Rule {
+		preserved := false
+		for _, after := range newRoutes.Rule {
+			if preservesRule(before, after) {
+				preserved = true
+				break
+			}
 		}
-		ruleSet[string(raw)] = true
-	}
-	for _, old := range oldRoutes.Rule {
-		raw, err := marshal.Marshal(old)
-		if err != nil || !ruleSet[string(raw)] {
+		if !preserved {
 			return false
 		}
 	}
@@ -133,4 +130,36 @@ func serverConfigParts(config *core.Config) (*core.Config, map[string]*protocol.
 		}
 	}
 	return nil, nil, nil, false
+}
+
+func containsMessages[T proto.Message](old, next []T) bool {
+	// An empty list is unrestricted, so adding a condition would narrow access.
+	if len(old) == 0 {
+		return len(next) == 0
+	}
+	if len(next) == 0 {
+		return true
+	}
+	for _, before := range old {
+		found := false
+		for _, after := range next {
+			if proto.Equal(before, after) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func preservesRule(old, next *router.RoutingRule) bool {
+	if !containsMessages(old.Domain, next.Domain) || !containsMessages(old.Ip, next.Ip) {
+		return false
+	}
+	before, after := proto.Clone(old).(*router.RoutingRule), proto.Clone(next).(*router.RoutingRule)
+	before.Domain, before.Ip, after.Domain, after.Ip = nil, nil, nil, nil
+	return proto.Equal(before, after)
 }
