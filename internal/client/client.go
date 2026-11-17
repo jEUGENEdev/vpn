@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -62,7 +63,7 @@ type Client struct {
 	tunnel       bool
 	guard        bool
 	vpnFailed    bool
-	fallbacks    map[fallbackKey]time.Time
+	vpnFailures  map[flowKey]time.Time
 	routeEpoch   uint64
 	closed       bool
 	power        NetworkController
@@ -303,13 +304,31 @@ func (c *Client) apply(p model.Profile) error {
 		return e
 	}
 	c.ready = false
-	// A failed refresh must not interrupt working direct connections every
-	// five seconds. Close them only after a usable VPN is configured below.
+	vpnChanged := !reflect.DeepEqual(transport.ClientConfig(old), transport.ClientConfig(p))
+	appChanged := vpnChanged || old.AppUUID != p.AppUUID
+	// Close affected transports before replacement, so deliberate policy
+	// changes are not mistaken for network failures by tracked connections.
 	for flow, info := range c.active {
-		if info.Route != policy.Direct {
+		if (info.Route == policy.VPN && vpnChanged) || (info.Route == policy.AppVPN && appChanged) {
 			delete(c.active, flow)
 			flow.Close()
 		}
+	}
+	defer func() {
+		// A failed refresh preserves working direct connections, but never
+		// retains an authenticated flow after access becomes inactive.
+		if !c.ready {
+			for flow, info := range c.active {
+				if info.Route != policy.Direct {
+					delete(c.active, flow)
+					flow.Close()
+				}
+			}
+		}
+	}()
+	if vpnChanged || appChanged {
+		clear(c.vpnFailures)
+		c.vpnFailed = false
 	}
 	c.config = next
 	c.routeEpoch++
@@ -336,9 +355,11 @@ func (c *Client) apply(p model.Profile) error {
 	}
 	c.ready = p.Status == "active"
 	if c.ready {
-		for flow := range c.active {
-			delete(c.active, flow)
-			flow.Close()
+		for flow, info := range c.active {
+			if c.routeFlowLocked(info.key()) != info.Route {
+				delete(c.active, flow)
+				flow.Close()
+			}
 		}
 	}
 	c.status = "ready"
@@ -647,7 +668,8 @@ func (c *Client) dialApplication(ctx context.Context, network, target string, po
 		return nil, errors.New("client stopped")
 	}
 	c.observeLocked(target, app, time.Now())
-	route := c.routeLocked(target, app.ID)
+	key := flowKey{Target: target, AppID: app.ID, Network: network, Port: port}
+	route := c.routeFlowLocked(key)
 	fallback := route == policy.Direct && c.wantsVPNLocked(target, app.ID)
 	epoch := c.routeEpoch
 	c.mu.Unlock()
@@ -672,9 +694,13 @@ func (c *Client) dialApplication(ctx context.Context, network, target string, po
 	}
 	if err != nil && route != policy.Direct {
 		c.mu.Lock()
-		c.failVPNLocked(target, app.ID, time.Now())
+		if c.closed || c.routeEpoch != epoch {
+			c.mu.Unlock()
+			return nil, errors.New("policy changed during connection")
+		}
+		c.failVPNLocked(key)
 		c.mu.Unlock()
-		c.Events.ConnectionOutage(time.Now(), "Ошибка VPN для этого адреса. Подключаемся к нему напрямую, без VPN-защиты.", target, app)
+		c.Events.ConnectionOutage(time.Now(), "Ошибка VPN. Подключаемся напрямую, без VPN-защиты.", target, app)
 		route = policy.Direct
 		conn, err = c.Direct.DialContext(ctx, network, addr)
 	}
@@ -683,22 +709,17 @@ func (c *Client) dialApplication(ctx context.Context, network, target string, po
 			if !errors.Is(err, context.Canceled) && ctx.Err() == nil {
 				c.directFailure(target, app.ID, time.Now())
 			}
-		} else {
-			c.mu.Lock()
-			c.vpnFailed = true
-			c.mu.Unlock()
-			c.Events.ConnectionOutage(time.Now(), "Ошибка VPN. Следующие соединения смогут идти напрямую.", target, app)
 		}
 		return nil, err
 	}
 	c.mu.Lock()
-	current := c.routeLocked(target, app.ID)
+	current := c.routeFlowLocked(key)
 	if current != route || c.closed || c.routeEpoch != epoch {
 		c.mu.Unlock()
 		conn.Close()
 		return nil, errors.New("policy changed during connection")
 	}
-	c.active[conn] = activeFlow{Target: target, AppID: app.ID, Route: route}
+	c.active[conn] = activeFlow{Target: target, AppID: app.ID, Network: network, Port: port, Route: route}
 	c.mu.Unlock()
 	return &tracked{Conn: conn, c: c, source: app}, nil
 }
@@ -712,6 +733,8 @@ type tracked struct {
 	closed          atomic.Bool
 	responseOnce    sync.Once
 	responseTimer   atomic.Pointer[time.Timer]
+	writes          atomic.Uint64
+	checkedWrites   atomic.Uint64
 }
 
 const firstResponseTimeout = 20 * time.Second
@@ -747,9 +770,9 @@ func (t *tracked) reportVPNWriteFailure() {
 		t.c.mu.Unlock()
 		return
 	}
-	t.c.failVPNLocked(flow.Target, flow.AppID, time.Now())
+	t.c.failVPNLocked(flow.key())
 	t.c.mu.Unlock()
-	t.c.Events.ConnectionOutage(time.Now(), "Не удалось отправить данные через VPN. Повторные соединения этого приложения с этим адресом идут напрямую, без VPN-защиты.", flow.Target, t.source)
+	t.c.Events.ConnectionOutage(time.Now(), "Не удалось отправить данные через VPN. Повторное соединение с этим адресом пойдёт напрямую, без VPN-защиты.", flow.Target, t.source)
 }
 
 func (t *tracked) reportResponseTimeout() {
@@ -760,35 +783,57 @@ func (t *tracked) reportResponseTimeout() {
 		return
 	}
 	if flow.Route == policy.Direct {
+		if flow.Network == "udp" {
+			// A media socket can retry indefinitely without creating a new NAT
+			// flow. Count a new unanswered window only if more data was sent;
+			// a single datagram must never manufacture repeated failures.
+			writes := t.writes.Load()
+			previous := t.checkedWrites.Swap(writes)
+			if writes > previous && (!t.failureReported.Swap(true) || previous > 0) {
+				t.c.directFailureLocked(flow.Target, flow.AppID, time.Now())
+			}
+			t.c.mu.Unlock()
+			t.startResponseTimer()
+			return
+		}
 		t.c.mu.Unlock()
 		t.reportDirectFailure()
 		return
 	}
-	t.c.failVPNLocked(flow.Target, flow.AppID, time.Now())
+	// A UDP upload can legitimately be one-way. Silence alone is not failure.
+	if flow.Network == "udp" {
+		t.c.mu.Unlock()
+		return
+	}
+	t.c.failVPNLocked(flow.key())
 	t.c.mu.Unlock()
-	t.c.Events.ConnectionOutage(time.Now(), "Адрес не отвечает через VPN. Повторное подключение к нему пойдёт напрямую, без VPN-защиты.", flow.Target, t.source)
+	t.c.Events.ConnectionOutage(time.Now(), "VPN не отвечает. Повторное подключение пойдёт напрямую, без VPN-защиты.", flow.Target, t.source)
 	// Never replay application bytes on another route. Close the stalled flow
 	// so the application can retry, then use the availability fallback.
 	t.Close()
 }
+
+func (t *tracked) startResponseTimer() {
+	t.c.mu.RLock()
+	flow, active := t.c.active[t.Conn]
+	t.c.mu.RUnlock()
+	if !active || t.received.Load() || t.closed.Load() || (flow.Network == "udp" && flow.Route != policy.Direct) {
+		return
+	}
+	timer := time.AfterFunc(firstResponseTimeout, t.reportResponseTimeout)
+	t.responseTimer.Store(timer)
+	if t.received.Load() || t.closed.Load() {
+		timer.Stop()
+	}
+}
+
 func (t *tracked) Write(p []byte) (int, error) {
 	n, err := t.Conn.Write(p)
 	if n > 0 {
-		t.responseOnce.Do(func() {
-			t.c.mu.RLock()
-			_, active := t.c.active[t.Conn]
-			t.c.mu.RUnlock()
-			if !active || t.received.Load() || t.closed.Load() {
-				return
-			}
-			// Start the response timeout only after sending application data.
-			// Direct flows stay open; stalled VPN flows close so callers can retry.
-			timer := time.AfterFunc(firstResponseTimeout, t.reportResponseTimeout)
-			t.responseTimer.Store(timer)
-			if t.received.Load() || t.closed.Load() {
-				timer.Stop()
-			}
-		})
+		t.writes.Add(1)
+		// Direct flows stay open, including while unanswered UDP retries are
+		// observed. A late reply can still clear the suggestion on this socket.
+		t.responseOnce.Do(t.startResponseTimer)
 	}
 	if err != nil {
 		t.reportDirectFailure()
@@ -819,22 +864,33 @@ func (t *tracked) Read(p []byte) (int, error) {
 		t.c.mu.Lock()
 		info, active := t.c.active[t.Conn]
 		protected := active && info.Route != policy.Direct
-		recovered := protected && t.c.ready && t.c.recoverVPNLocked(info.Target, info.AppID, time.Now())
-		t.c.mu.Unlock()
+		recovered := protected && t.c.ready && t.c.vpnFailed
 		if recovered {
+			t.c.recoverVPNLocked(info.key())
+		}
+		fullyRecovered := recovered && !t.c.vpnFailed
+		t.c.mu.Unlock()
+		if fullyRecovered {
 			t.c.Events.ConnectionRecovered(time.Now(), info.Target, t.source)
 		}
 	}
-	if err != nil && (!errors.Is(err, io.EOF) || !t.received.Load()) {
+	// An idle UDP session reaching its read deadline is normal cleanup, not
+	// evidence that the VPN or the media endpoint has stopped working.
+	var timeout net.Error
+	t.c.mu.RLock()
+	info, active := t.c.active[t.Conn]
+	t.c.mu.RUnlock()
+	idle := active && info.Network == "udp" && errors.As(err, &timeout) && timeout.Timeout()
+	if err != nil && !idle && !t.closed.Load() && (!errors.Is(err, io.EOF) || !t.received.Load()) {
 		t.c.mu.Lock()
 		info, active := t.c.active[t.Conn]
 		protected := active && info.Route != policy.Direct
 		if protected {
-			t.c.failVPNLocked(info.Target, info.AppID, time.Now())
+			t.c.failVPNLocked(info.key())
 		}
 		t.c.mu.Unlock()
 		if protected {
-			t.c.Events.ConnectionOutage(time.Now(), "VPN-соединение прервано. Повторные соединения этого приложения с этим адресом идут напрямую, без VPN-защиты.", info.Target, t.source)
+			t.c.Events.ConnectionOutage(time.Now(), "VPN-соединение прервано. Повторное соединение с этим адресом пойдёт напрямую, без VPN-защиты.", info.Target, t.source)
 		} else if active {
 			t.reportDirectFailure()
 		}

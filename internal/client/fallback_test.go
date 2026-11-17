@@ -32,7 +32,7 @@ func TestFailedPeerDoesNotBypassOtherVPNPermissions(t *testing.T) {
 		{"cdn.example", app.ID, policy.AppVPN},
 		{"unapproved.example", other.ID, policy.Direct},
 	} {
-		if got := c.routeLocked(tc.target, tc.app); got != tc.route {
+		if got := c.routeFlowLocked(flowKey{Target: tc.target, AppID: tc.app}); got != tc.route {
 			t.Errorf("%s / %s: got %v want %v", tc.target, tc.app, got, tc.route)
 		}
 	}
@@ -42,25 +42,31 @@ func TestRecoveryIsScopedAndFallbackMemoryIsBounded(t *testing.T) {
 	c := testTrafficClient(t)
 	c.ready = true
 	c.config.Profile.Rules = []string{"first.example", "second.example"}
-	now := time.Now()
-	c.failVPNLocked("first.example", "", now)
-	c.failVPNLocked("second.example", "", now)
-	if c.recoverVPNLocked("first.example", "", now) || !c.vpnFailed {
+
+	c.failVPNLocked(flowKey{Target: "first.example"})
+	c.failVPNLocked(flowKey{Target: "second.example"})
+	c.recoverVPNLocked(flowKey{Target: "first.example"})
+	if !c.vpnFailed {
 		t.Fatal("one reply concealed another failing peer")
 	}
-	if c.routeLocked("first.example", "") != policy.VPN || c.routeLocked("second.example", "") != policy.Direct {
+	if c.routeFlowLocked(flowKey{Target: "first.example"}) != policy.VPN || c.routeFlowLocked(flowKey{Target: "second.example"}) != policy.Direct {
 		t.Fatal("recovery changed unrelated route")
 	}
-	if !c.recoverVPNLocked("second.example", "", now) || c.vpnFailed {
+	c.recoverVPNLocked(flowKey{Target: "second.example"})
+	if c.vpnFailed {
 		t.Fatal("recovery was not reported")
 	}
 	for i := 0; i < 1100; i++ {
-		c.failVPNLocked(time.Unix(int64(i), 0).String(), "", now)
+		c.failVPNLocked(flowKey{Target: time.Unix(int64(i), 0).String()})
 	}
-	if len(c.fallbacks) > 1000 {
+	if len(c.vpnFailures) > 1000 {
 		t.Fatal("unbounded failed peer cache")
 	}
-	if !c.recoverVPNLocked("", "", now.Add(time.Minute)) || len(c.fallbacks) != 0 {
+	for key := range c.vpnFailures {
+		c.vpnFailures[key] = time.Now().Add(-time.Second)
+	}
+	c.recoverVPNLocked(flowKey{})
+	if len(c.vpnFailures) != 0 {
 		t.Fatal("expired fallback entries retained")
 	}
 }

@@ -289,3 +289,29 @@ func TestExpiredDeviceReauthenticatesWithoutDuplicate(t *testing.T) {
 		return nil
 	})
 }
+
+func TestSameAccountDevicesKeepIndependentSessions(t *testing.T) {
+	_, call := deviceTestServer(t)
+	credentials := map[string]any{"access_key": "lnv_" + strings.Repeat("a", 43), "name": "Same model", "platform": "android"}
+	first := call("/api/login", "", credentials, 200)
+	second := call("/api/login", "", credentials, 200)
+	for _, field := range []string{"device_id", "token", "uuid"} {
+		if first[field] == second[field] {
+			t.Fatalf("devices shared %s", field)
+		}
+	}
+	for _, profile := range []map[string]any{first, second} {
+		state := call("/api/sync", profile["token"].(string), nil, 200)
+		if len(state["devices"].([]any)) != 2 {
+			t.Fatal("one device replaced the other")
+		}
+	}
+	call("/api/app-vpn", first["token"].(string), map[string]any{"enabled": true}, 200)
+	credentials["device_id"] = first["device_id"]
+	replacement := call("/api/login", "", credentials, 200)
+	call("/api/sync", first["token"].(string), nil, 401)
+	call("/api/sync", replacement["token"].(string), nil, 200)
+	call("/api/sync", second["token"].(string), nil, 200)
+	call("/api/revoke", replacement["token"].(string), map[string]any{"id": first["device_id"]}, 200)
+	call("/api/sync", second["token"].(string), nil, 200)
+}

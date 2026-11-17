@@ -395,3 +395,43 @@ func TestSuccessfulAndCancelledRequestsDoNotBecomeTimeoutFailures(t *testing.T) 
 		}
 	})
 }
+
+func TestRepeatedSilentUDPSendsOnOneSocketAreSuggested(t *testing.T) {
+	for _, repeat := range []bool{false, true} {
+		synctest.Test(t, func(t *testing.T) {
+			c := testTrafficClient(t)
+			app := testApp("a")
+			observe(t, c, "media.example.com", app, time.Now())
+			left, right := net.Pipe()
+			defer right.Close()
+			c.active[left] = activeFlow{Target: "media.example.com", AppID: app.ID, Network: "udp", Port: 443, Route: policy.Direct}
+			conn := &tracked{Conn: left, c: c, source: app}
+			defer conn.Close()
+			go io.Copy(io.Discard, right)
+			conn.Write([]byte("media request"))
+			time.Sleep(firstResponseTimeout + time.Second)
+			if len(pendingRequests(c)) != 0 {
+				t.Fatal("one silent datagram produced a permission suggestion")
+			}
+			if repeat {
+				conn.Write([]byte("media retry on the same socket"))
+			}
+			time.Sleep(firstResponseTimeout + time.Second)
+			requests := pendingRequests(c)
+			if !repeat && len(requests) != 0 {
+				t.Fatal("the timer manufactured a second failure without another send")
+			}
+			if repeat && (len(requests) != 1 || len(requests[0].Sources) != 1 || requests[0].Sources[0].ID != app.ID) {
+				t.Fatal("unanswered media retries were missing from permissions", requests)
+			}
+			go right.Write([]byte("late media response"))
+			if _, err := io.ReadFull(conn, make([]byte, len("late media response"))); err != nil {
+				t.Fatal("discovery interrupted direct connectivity", err)
+			}
+			time.Sleep(firstResponseTimeout + time.Second)
+			if len(pendingRequests(c)) != 0 {
+				t.Fatal("a late UDP reply did not clear the permission suggestion")
+			}
+		})
+	}
+}
