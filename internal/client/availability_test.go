@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -34,12 +35,71 @@ func TestVPNDialFailureFallsBackAndCanRetryVPN(t *testing.T) {
 	if len(c.Events.List()) != 1 {
 		t.Fatal("fallback notifications spammed", c.Events.List())
 	}
-	c.fallbackUntil = time.Now().Add(-time.Second)
+	for key := range c.vpnFailures {
+		c.vpnFailures[key] = time.Now().Add(-time.Second)
+	}
 	if c.routeLocked("127.0.0.1", "") != policy.VPN {
 		t.Fatal("VPN never retried")
 	}
 	if c.config.Disabled {
 		t.Fatal("fallback overwrote user's enabled mode")
+	}
+}
+
+func TestVPNFallbackIsScopedToEndpointProtocolAndApplication(t *testing.T) {
+	c := testTrafficClient(t)
+	c.ready = true
+	c.config.Profile.AppUUID = "app-key"
+	app, other := testApp("a"), testApp("b")
+	c.apps[app.ID] = model.Application{ApplicationInfo: app, Decision: "trusted"}
+	c.apps[other.ID] = model.Application{ApplicationInfo: other, Decision: "trusted"}
+	failed := flowKey{Target: "media.example.com", AppID: app.ID, Network: "udp", Port: 443}
+	c.failVPNLocked(failed)
+	if c.routeFlowLocked(failed) != policy.Direct {
+		t.Fatal("failed endpoint lost availability fallback")
+	}
+	for _, key := range []flowKey{
+		{Target: failed.Target, AppID: app.ID, Network: "tcp", Port: 443},
+		{Target: failed.Target, AppID: app.ID, Network: "udp", Port: 3478},
+		{Target: failed.Target, AppID: other.ID, Network: "udp", Port: 443},
+		{Target: "another.example.com", AppID: app.ID, Network: "udp", Port: 443},
+	} {
+		if c.routeFlowLocked(key) != policy.AppVPN {
+			t.Fatalf("unrelated media route lost VPN: %+v", key)
+		}
+		c.recoverVPNLocked(key)
+		if !c.vpnFailed || c.routeFlowLocked(failed) != policy.Direct {
+			t.Fatal("another flow hid the failed endpoint")
+		}
+	}
+	c.vpnFailures[failed] = time.Now().Add(-time.Second)
+	if c.routeFlowLocked(failed) != policy.AppVPN {
+		t.Fatal("failed endpoint did not retry VPN after cooldown")
+	}
+	c.recoverVPNLocked(failed)
+	if c.vpnFailed {
+		t.Fatal("endpoint recovery was not reported")
+	}
+}
+
+type idleMediaConn struct{ net.Conn }
+
+func (idleMediaConn) Read([]byte) (int, error) { return 0, os.ErrDeadlineExceeded }
+
+func TestIdleMediaTimeoutDoesNotDisableVPN(t *testing.T) {
+	c := testTrafficClient(t)
+	c.ready = true
+	c.config.Profile.Rules = []string{"example.com"}
+	left, right := net.Pipe()
+	defer right.Close()
+	conn := idleMediaConn{left}
+	c.active[conn] = activeFlow{Target: "example.com", Network: "udp", Port: 443, Route: policy.VPN}
+	flow := &tracked{Conn: conn, c: c}
+	defer flow.Close()
+	flow.received.Store(true)
+	flow.Read(make([]byte, 1))
+	if c.vpnFailed || len(c.vpnFailures) != 0 {
+		t.Fatal("normal idle UDP cleanup triggered direct fallback")
 	}
 }
 
@@ -55,7 +115,7 @@ func TestSilentVPNClosesWithoutReplayingAndNextConnectionIsDirect(t *testing.T) 
 	if _, err := right.Read(make([]byte, 1)); err != io.EOF {
 		t.Fatal("stalled flow was not closed", err)
 	}
-	if c.routeLocked("example.com", "") != policy.Direct {
+	if c.routeFlowLocked(flowKey{Target: "example.com"}) != policy.Direct {
 		t.Fatal("retry remained on broken VPN")
 	}
 	if len(c.active) != 0 {
@@ -73,7 +133,7 @@ func TestCancelledVPNDialDoesNotStartFallback(t *testing.T) {
 		conn.Close()
 		t.Fatal("cancelled dial succeeded")
 	}
-	if !c.fallbackUntil.IsZero() || c.vpnFailed {
+	if len(c.vpnFailures) != 0 || c.vpnFailed {
 		t.Fatal("cancellation changed network routing")
 	}
 }
@@ -112,7 +172,7 @@ func TestVPNWriteFailureEnablesFallbackWithoutARead(t *testing.T) {
 	if _, err := flow.Write([]byte("not replayed")); err == nil {
 		t.Fatal("expected write failure")
 	}
-	if c.routeLocked("example.com", "") != policy.Direct {
+	if c.routeFlowLocked(flowKey{Target: "example.com"}) != policy.Direct {
 		t.Fatal("write-only failure kept selecting VPN")
 	}
 }

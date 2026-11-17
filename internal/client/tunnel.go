@@ -36,7 +36,7 @@ func (c *Client) StartTunnel(ctx context.Context, options tun.Options) (*Tunnel,
 		}
 		return nil, e
 	}
-	st, e := tun.NewStack("gvisor", tun.StackOptions{Context: ctx, Tun: dev, TunOptions: options, Handler: c, Logger: logger.NOP(), UDPTimeout: time.Minute})
+	st, e := tun.NewStack("gvisor", c.stackOptions(ctx, dev, options))
 	if e != nil {
 		dev.Close()
 		return nil, e
@@ -53,6 +53,13 @@ func (c *Client) StartTunnel(ctx context.Context, options tun.Options) (*Tunnel,
 	}
 	c.SetTunnel(true)
 	return &Tunnel{dev, st, c}, nil
+}
+
+func (c *Client) stackOptions(ctx context.Context, dev tun.Tun, options tun.Options) tun.StackOptions {
+	// One application socket can contact several media/CDN/STUN endpoints.
+	// Each destination needs its own owner lookup, permission and upstream.
+	return tun.StackOptions{Context: ctx, Tun: dev, TunOptions: options, Handler: c, Logger: logger.NOP(), UDPTimeout: time.Minute,
+		UDPMapping: tun.NATMappingAddressAndPortDependent, UDPFiltering: tun.NATFilteringAddressAndPortDependent}
 }
 func (t *Tunnel) Close() {
 	t.c.SetTunnel(false)
