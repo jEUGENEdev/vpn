@@ -34,7 +34,7 @@ func TestVPNDialFailureFallsBackAndCanRetryVPN(t *testing.T) {
 	if len(c.Events.List()) != 1 {
 		t.Fatal("fallback notifications spammed", c.Events.List())
 	}
-	c.fallbackUntil = time.Now().Add(-time.Second)
+	c.fallbacks[fallbackKey{"127.0.0.1", ""}] = time.Now().Add(-time.Second)
 	if c.routeLocked("127.0.0.1", "") != policy.VPN {
 		t.Fatal("VPN never retried")
 	}
@@ -73,7 +73,7 @@ func TestCancelledVPNDialDoesNotStartFallback(t *testing.T) {
 		conn.Close()
 		t.Fatal("cancelled dial succeeded")
 	}
-	if !c.fallbackUntil.IsZero() || c.vpnFailed {
+	if len(c.fallbacks) != 0 || c.vpnFailed {
 		t.Fatal("cancellation changed network routing")
 	}
 }

@@ -35,6 +35,7 @@ class LineVpnService : VpnService() {
                 status == "network_error" -> "VPN не запущен. Используется обычная сеть; откройте приложение для повтора."
                 snapshot.optBoolean("power_transition") -> "Переключаем VPN и сетевые настройки…"
                 !snapshot.optBoolean("vpn_enabled", true) -> "VPN выключен. Трафик идёт напрямую."
+                snapshot.optBoolean("partial_fallback") -> "Часть адресов временно напрямую. Остальные разрешённые соединения — через VPN."
                 snapshot.optBoolean("direct_fallback") -> "VPN недоступен. Трафик идёт напрямую, без VPN-защиты."
                 isLockdownEnabled -> "В Android включена блокировка без VPN. Для доступности сети отключите её."
                 else -> "VPN работает. При сбое соединения смогут идти напрямую."

@@ -149,7 +149,7 @@ func (c *Client) routeLocked(target, appID string) policy.Route {
 	if _, err := policy.Normalize(target); err != nil {
 		return policy.Block
 	}
-	if c.config.Disabled || !c.ready || time.Now().Before(c.fallbackUntil) {
+	if c.config.Disabled || !c.ready || time.Now().Before(c.fallbacks[fallbackKey{target, appID}]) {
 		return policy.Direct
 	}
 	route := policy.Decide(c.effectiveRules(), target, c.ready)

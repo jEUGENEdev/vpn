@@ -109,6 +109,31 @@ func TestDeviceSelectionAndCredentialRotation(t *testing.T) {
 	})
 }
 
+func TestSameNameDevicesKeepIndependentAccess(t *testing.T) {
+	s, call := deviceTestServer(t)
+	credentials := map[string]any{"access_key": "lnv_" + strings.Repeat("a", 43), "platform": "android", "name": "Same phone model"}
+	first := call("/api/login", "", credentials, 200)
+	second := call("/api/login", "", credentials, 200)
+	for _, key := range []string{"device_id", "token", "uuid"} {
+		if first[key] == second[key] {
+			t.Fatalf("two installations shared %s", key)
+		}
+	}
+	for _, device := range []map[string]any{first, second} {
+		call("/api/sync", device["token"].(string), nil, 200)
+		call("/api/app-vpn", device["token"].(string), map[string]any{"enabled": true}, 200)
+	}
+	s.Store.View(func(st store.State) error {
+		if len(st.Devices) != 2 {
+			t.Fatal("device records were overwritten")
+		}
+		return nil
+	})
+	call("/api/revoke", first["token"].(string), map[string]any{"id": second["device_id"]}, 200)
+	call("/api/sync", first["token"].(string), nil, 200)
+	call("/api/sync", second["token"].(string), nil, 401)
+}
+
 func TestPairSelectionIsAtomicAndCodeSurvivesChoice(t *testing.T) {
 	s, call := deviceTestServer(t)
 	issuer, _ := s.enroll("a", "Phone", "android")
