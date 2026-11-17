@@ -48,6 +48,11 @@ type Server struct {
 
 var ErrForbidden = errors.New("доступ запрещён")
 
+const maxDiscoveryRequests = 1000
+const maxDismissedTargets = 1000
+
+var errDismissedLimit = errors.New("достигнут лимит сохранённых решений «Оставить напрямую» (1000)")
+
 func New(st *store.Store, c Config, password string, apply func(store.State) error) (*Server, error) {
 	if len(password) < 16 || len(password) > 72 {
 		return nil, errors.New("пароль администратора должен содержать 16–72 байта")
@@ -509,9 +514,10 @@ func (s *Server) discover(w http.ResponseWriter, r *http.Request) {
 		dismissed := []string{}
 		for _, q := range st.Requests {
 			if q.AccountID == a.ID {
-				count++
 				if q.Dismissed {
 					dismissed = append(dismissed, q.Target)
+				} else {
+					count++
 				}
 			}
 		}
@@ -530,7 +536,7 @@ func (s *Server) discover(w http.ResponseWriter, r *http.Request) {
 			key := a.ID + ":" + target
 			q, ok := st.Requests[key]
 			if !ok {
-				if count >= 1000 && failures[target] {
+				if count >= maxDiscoveryRequests && failures[target] {
 					oldest := ""
 					var at time.Time
 					for candidate, old := range st.Requests {
@@ -555,7 +561,7 @@ func (s *Server) discover(w http.ResponseWriter, r *http.Request) {
 						count--
 					}
 				}
-				if count >= 1000 {
+				if count >= maxDiscoveryRequests {
 					continue
 				}
 				count++
@@ -671,25 +677,48 @@ func (s *Server) dismiss(w http.ResponseWriter, r *http.Request) {
 			return ErrForbidden
 		}
 		k := a.ID + ":" + c.Target
+		// A dismissal is a saved user choice, not another observation. A full
+		// discovery queue must not prevent dismissing a local or grouped target.
+		choices := 0
+		for _, request := range st.Requests {
+			if request.AccountID != a.ID || !request.Dismissed {
+				continue
+			}
+			if policy.Matches(request.Target, c.Target) {
+				return nil // An existing parent choice already covers this target.
+			}
+			if !policy.Matches(c.Target, request.Target) {
+				choices++
+			}
+		}
+		if choices >= maxDismissedTargets {
+			return errDismissedLimit
+		}
 		v, ok := st.Requests[k]
 		if !ok {
-			count := 0
-			for _, request := range st.Requests {
-				if request.AccountID == a.ID {
-					count++
-				}
-			}
-			if count >= 1000 {
-				return errors.New("очередь адресов заполнена")
-			}
 			v = model.Request{AccountID: a.ID, Target: c.Target, FirstSeen: time.Now(), LastSeen: time.Now()}
 		}
+		// Compact covered subdomains without discarding unrelated observations
+		// or previous choices. Existing persisted dismissals need no migration.
+		for key, request := range st.Requests {
+			if request.AccountID == a.ID && policy.Matches(c.Target, request.Target) {
+				delete(st.Requests, key)
+			}
+		}
 		v.Dismissed = true
+		v.DirectFailed = false
+		v.FailedDevices = nil
 		st.Requests[k] = v
 		return nil
 	})
 	if e != nil {
-		fail(w, 500, e)
+		status := http.StatusInternalServerError
+		if errors.Is(e, errDismissedLimit) {
+			status = http.StatusConflict
+		} else if errors.Is(e, ErrForbidden) {
+			status = http.StatusForbidden
+		}
+		fail(w, status, e)
 		return
 	}
 	JSON(w, 200, map[string]bool{"ok": true})
