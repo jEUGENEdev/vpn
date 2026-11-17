@@ -9,8 +9,8 @@ cleanup() {
   local status=$?
   trap - EXIT
   set +e
-  adb shell dumpsys connectivity > build/android-connectivity.txt 2>&1
-  adb shell 'ip addr; ip rule; ip route show table all' > build/android-network.txt 2>&1
+  timeout 10s adb shell dumpsys connectivity > build/android-connectivity.txt 2>&1
+  timeout 10s adb shell 'ip addr; ip rule; ip route show table all' > build/android-network.txt 2>&1
   if [[ -n "$vpn_logcat_pid" ]]; then
     kill "$vpn_logcat_pid" 2>/dev/null
     wait "$vpn_logcat_pid" 2>/dev/null
@@ -50,5 +50,10 @@ for ((vpn_run=1; vpn_run<=vpn_smoke_runs; vpn_run++)); do
   adb shell am instrument -w dev.linevpn.app.test/androidx.test.runner.AndroidJUnitRunner | tee "build/android-instrumentation-$vpn_run.txt"
   grep -q '^OK (1 test)' "build/android-instrumentation-$vpn_run.txt"
   kill -0 "$vpn_probe_pid"
+  # Check fixture health outside Android after each scenario. A fixture outage
+  # must not make fail-closed assertions pass; do not retry this control probe.
+  curl --noproxy '*' --fail --silent --show-error --max-time 2 \
+    http://127.0.0.1:8765/probe > build/native-probe/host-response
+  cmp build/native-probe/probe build/native-probe/host-response
   adb exec-out run-as dev.linevpn.app cat files/native-preview.png > build/android-native.png
 done
