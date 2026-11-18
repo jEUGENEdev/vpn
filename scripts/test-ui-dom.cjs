@@ -27,6 +27,8 @@ function load(name, scripts) {
   const w = dom.window;
   w.matchMedia = () => ({matches:false});
   w.setInterval = () => 1;
+  // DOM has no layout engine; scrolling is exercised by the Chromium suite.
+  w.HTMLElement.prototype.scrollIntoView = function() {};
   w.HTMLDialogElement.prototype.showModal = function() { this.open = true; };
   w.HTMLDialogElement.prototype.close = function(value) { this.returnValue = value; this.open = false; this.dispatchEvent(new w.Event('close')); };
   w.sessionStorage.setItem(name === 'client' ? 'local-token' : 'admin-token','test-only');
@@ -44,6 +46,7 @@ function load(name, scripts) {
 function input(w, id, value) {
   const node = w.document.getElementById(id);
   node.focus(); node.value = value; node.dispatchEvent(new w.Event('input'));
+  assert.equal(w.document.activeElement, node, id + ' must be visible and focusable');
 }
 function visible(w, selector) { return [...w.document.querySelectorAll(selector)].filter(node => !node.hidden); }
 
@@ -63,6 +66,7 @@ function visible(w, selector) { return [...w.document.querySelectorAll(selector)
     fixture.policy_sync_error='';
     await w.eval('update()');
     assert.equal($('policy-sync-status').hidden,true,'saved rules still reported unsaved');
+    d.querySelector('[data-view="requests"]').click();
     input(w,'traffic-search','  FIRST   BROWSER ');
     assert.equal(visible(w,'#requests-list > .request-group').length,1,'nested source path not found');
     const group = d.querySelector('#requests-list > .request-group');
@@ -93,6 +97,7 @@ function visible(w, selector) { return [...w.document.querySelectorAll(selector)
       ['devices','#devices-list > .list-row','МОЙ android'],
       ['devices','#devices-list > .list-row','desktop']
     ]) {
+      d.querySelector(`[data-view="${field}"]`).click();
       input(w,field+'-search',query);
       assert.equal(visible(w,selector).length,1,field+' search failed');
       input(w,field+'-search','missing-value');
@@ -104,6 +109,7 @@ function visible(w, selector) { return [...w.document.querySelectorAll(selector)
     assert.match($('rules-list').textContent,/есть запросы с неизвестным источником/);
     assert.match($('rules-list').textContent,/Запросов с этого устройства ещё не наблюдали/);
     assert.equal(visible(w,'#activity-list > .activity-item').length,3);
+    d.querySelector('[data-view="overview"]').click();
     input(w,'activity-search','SECOND browser');
     const older = visible(w,'#activity-list > .activity-item');
     assert.equal(older.length,1,'search did not include old events');
