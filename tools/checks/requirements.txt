@@ -1,4 +1,4 @@
 # Local fixture tests only; no deployment or credentials are needed.
-ansible-core==2.21.6
+ansible-core==2.22.0
 PyYAML==6.0.3
 paramiko==5.1.0
