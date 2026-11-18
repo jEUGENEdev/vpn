@@ -94,7 +94,7 @@ jobs:
           path: ~/.cache/go-build
           key: ${{ runner.os }}-android-go1.27.4-ndk28-${{ hashFiles('go.sum') }}
       - run: scripts/package-android.sh
-      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: steps.android_go_cache.outputs.cache-hit != 'true'
         with:
           path: ~/.cache/go-build
