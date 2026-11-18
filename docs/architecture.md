@@ -5,7 +5,7 @@
 - `internal/transport`: закреплённая версия Xray, VLESS/XHTTP/REALITY, запрет private egress и обязательный socket protect/bind.
 - `internal/server`, `internal/store`: аккаунты, регистрационные заявки, устройства, одноразовая привязка, разрешения, BoltDB.
 - `internal/events`: ограничение частоты уведомлений и группировка доменов.
-- `internal/platform`: очистка legacy WFP/PF/DNS, TUN без постоянной блокировки и привязка исходящих сокетов к физическому интерфейсу.
+- `internal/platform`: постоянная защита WFP/PF, TUN и привязка исходящих сокетов к физическому интерфейсу; восстановление прямого доступа при явном выключении или удалении.
 - `internal/ui`: встроенный интерфейс клиента и админки без внешних CDN/шрифтов/аналитики.
 - `apps/desktop`: Electron UI; фоновая служба существует независимо от окна.
 - `apps/android`, `mobile`: Android VpnService, уведомления и JNI/gomobile.

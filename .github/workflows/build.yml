@@ -31,8 +31,10 @@ jobs:
       - name: Test client UI and capture layouts
         run: |
           npm ci --prefix tools/ui-tests --ignore-scripts --no-audit --no-fund
+          npm ci --prefix apps/desktop --ignore-scripts --no-audit --no-fund
           tools/ui-tests/node_modules/.bin/playwright install --with-deps chromium
           bash scripts/check.sh portable
+          bash scripts/check.sh desktop
           bash scripts/check.sh ui
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()

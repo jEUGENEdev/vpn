@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 suite="${1:-all}"
-case "$suite" in all|go|portable|ui) ;; *) printf 'Usage: %s [all|go|portable|ui]\n' "$0" >&2; exit 2;; esac
+case "$suite" in all|go|portable|ui|desktop) ;; *) printf 'Usage: %s [all|go|portable|ui|desktop]\n' "$0" >&2; exit 2;; esac
 
 if [[ "$suite" == all || "$suite" == go ]]; then
   printf '\nChecking Go formatting, module integrity, race tests and vet\n'
@@ -33,6 +33,11 @@ if [[ "$suite" == all || "$suite" == portable ]]; then
   python3 scripts/test-deploy-actions.py
   python3 scripts/test-deploy-manual.py
   python3 scripts/test-deploy-ssh.py
+fi
+
+if [[ "$suite" == all || "$suite" == desktop ]]; then
+  printf '\nChecking Electron build dependency compatibility\n'
+  node scripts/test-desktop-globs.cjs
 fi
 
 if [[ "$suite" == all || "$suite" == ui ]]; then

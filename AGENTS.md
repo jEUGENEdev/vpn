@@ -63,6 +63,7 @@ bash scripts/check.sh           # Go race/vet, portable fixtures and browser UI
 bash scripts/check.sh go        # Go formatting, module integrity, race and vet
 bash scripts/check.sh portable  # scripts, generated packages, local SSH fixtures
 bash scripts/check.sh ui        # real UI code in jsdom and Chromium
+bash scripts/check.sh desktop   # bounded glob compilation and Electron file filters
 bash scripts/check-security.sh  # workflow lint, secrets, dependency advisories
 ```
 

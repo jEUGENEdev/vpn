@@ -5,7 +5,9 @@
 Рабочая модель угроз — [threat-model.md](threat-model.md). Эти файлы не являются
 заключением о безопасности всех компонентов или реального VPS.
 
-Первый прогон и оставшиеся блокеры: [отчёт от 17 ноября 2026](security-quality-review-2026-11-17.md).
+Первый прогон: [отчёт от 17 ноября 2026](security-quality-review-2026-11-17.md).
+Исправления, повторные проверки и ограниченное исключение сборочной зависимости:
+[отчёт от 18 ноября 2026](security-quality-review-2026-11-18.md).
 
 ## Подготовка локальных проверок
 
@@ -17,6 +19,7 @@ python3 -m venv build/check-env
 . build/check-env/bin/activate
 python3 -m pip install -r tools/checks/requirements.txt
 npm ci --prefix tools/ui-tests --ignore-scripts --no-audit --no-fund
+npm ci --prefix apps/desktop --ignore-scripts --no-audit --no-fund
 tools/ui-tests/node_modules/.bin/playwright install chromium
 bash tools/checks/install.sh
 export PATH="$(go env GOPATH)/bin:$PATH"
@@ -39,9 +42,10 @@ bash scripts/check-security.sh
 | `bash scripts/check.sh go` | gofmt, целостность модулей, полный Go-прогон с race detector и `with_gvisor`, vet |
 | `bash scripts/check.sh portable` | синтаксис JS/shell, сгенерированный MSI, macOS installer fixtures, версии, ручной деплой и SSH на loopback |
 | `bash scripts/check.sh ui` | DOM и браузерные сценарии настоящего клиентского/административного UI |
+| `bash scripts/check.sh desktop` | Ограниченное по времени воспроизведение glob DoS и фильтрация файлов настоящим matcher Electron builder |
 | `bash scripts/check-security.sh` | синтаксис Actions, поиск секретов с редактированием значений, локальный поиск известных уязвимостей Go/npm/Python по публичным базам OSV |
 
-`check.sh` без аргументов запускает все три группы. Нативные smoke-тесты не входят
+`check.sh` без аргументов запускает все четыре группы. Нативные smoke-тесты не входят
 в безопасный локальный прогон: они устанавливают службы и меняют сеть на
 одноразовых Windows/macOS/Android runners. Сборка с Linux не заменяет их.
 Для изменений сети нужны также сценарии из [acceptance.md](acceptance.md),
