@@ -9,6 +9,7 @@
 - [Подключение клиента и аккаунта](docs/client.md)
 - [Правила маршрутизации и ограничения](docs/security.md)
 - [Архитектура и разработка](docs/architecture.md)
+- [Проверки безопасности и качества](docs/security-quality.md) · [правила для агентов](AGENTS.md) · [модель угроз](docs/threat-model.md)
 - [Приёмочные испытания](docs/acceptance.md)
 - [Зависимости и лицензии](THIRD_PARTY.md)
 - [Сборки GitHub Actions](../../actions)

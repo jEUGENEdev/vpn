@@ -107,8 +107,8 @@ func main() {
 		}
 		for _, layer := range layers {
 			err = session.AddRule(&wf.Rule{
-				ID: wf.RuleID(guid("linevpn-ci-control:"+strings.ToLower(path)+layer.String())),
-				Name: "LineVPN CI controller (temporary)",
+				ID:    wf.RuleID(guid("linevpn-ci-control:" + strings.ToLower(path) + layer.String())),
+				Name:  "LineVPN CI controller (temporary)",
 				Layer: layer, Sublayer: sublayer, Provider: provider,
 				Persistent: false, Weight: 1000, Action: wf.ActionPermit, HardAction: true,
 				Conditions: []*wf.Match{{Field: wf.FieldALEAppID, Op: wf.MatchTypeEqual, Value: app}},

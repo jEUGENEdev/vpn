@@ -13,6 +13,10 @@
     "electron": "45.3.3",
     "electron-builder": "26.18.0"
   },
+  "overrides": {
+    "minimatch@^9.0.0": "11.0.9",
+    "minimatch@^10.0.0": "11.0.9"
+  },
   "build": {
     "appId": "dev.linevpn.desktop",
     "productName": "LineVPN",

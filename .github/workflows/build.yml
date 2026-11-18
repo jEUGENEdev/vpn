@@ -11,32 +11,36 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  security:
+    uses: ./.github/workflows/security.yml
   test:
+    needs: security
     timeout-minutes: 15
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with: {go-version: '1.27.4', cache: true}
-      - run: go test -race -tags with_gvisor ./...
-      - run: go vet -tags with_gvisor ./...
-      - run: python3 scripts/test-network-packaging.py
-      - run: python3 scripts/package_version.py --check-newer
-      - run: python3 scripts/test-installer-upgrade.py
-      - uses: actions/setup-node@v4
+      - run: bash scripts/check.sh go
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: {python-version: '3.12'}
+      - run: python3 -m pip install -r tools/checks/requirements.txt
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: {node-version: '24'}
       - name: Test client UI and capture layouts
         run: |
-          mkdir -p build/ui-test
-          npm install --prefix build/ui-test playwright@1.56.1 jsdom@26.1.0
-          JSDOM_MODULE="$GITHUB_WORKSPACE/build/ui-test/node_modules/jsdom" node scripts/test-ui-dom.cjs
-          build/ui-test/node_modules/.bin/playwright install --with-deps chromium
-          PLAYWRIGHT_MODULE="$GITHUB_WORKSPACE/build/ui-test/node_modules/playwright" node scripts/test-ui.cjs
-      - uses: actions/upload-artifact@v4
+          npm ci --prefix tools/ui-tests --ignore-scripts --no-audit --no-fund
+          npm ci --prefix apps/desktop --ignore-scripts --no-audit --no-fund
+          tools/ui-tests/node_modules/.bin/playwright install --with-deps chromium
+          bash scripts/check.sh portable
+          bash scripts/check.sh desktop
+          bash scripts/check.sh ui
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with: {name: ui-previews, path: 'build/ui-*.png'}
       - run: scripts/build-server.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: server-binaries
           path: build/*-linux-amd64
@@ -52,12 +56,13 @@ jobs:
       ANDROID_KEY_ALIAS: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.ANDROID_KEY_ALIAS || '' }}
       ANDROID_KEY_PASSWORD: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.ANDROID_KEY_PASSWORD || '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false}
       - name: Reserve space on the disposable Android runner
         run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android/sdk/ndk
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with: {go-version: '1.27.4', cache: true}
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with: {distribution: temurin, java-version: '17'}
       - name: Restore the existing Android signing key
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -76,20 +81,20 @@ jobs:
           with open(os.environ['GITHUB_ENV'], 'a') as environment:
               environment.write(f'ANDROID_KEYSTORE={target}\n')
           PY
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
           packages: platform-tools
           log-accepted-android-sdk-licenses: false
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
         with: {gradle-version: '8.11.1', cache-read-only: false}
       - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;28.0.13004108'
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         id: android_go_cache
         with:
           path: ~/.cache/go-build
           key: ${{ runner.os }}-android-go1.27.4-ndk28-${{ hashFiles('go.sum') }}
       - run: scripts/package-android.sh
-      - uses: actions/cache/save@v4
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         if: steps.android_go_cache.outputs.cache-hit != 'true'
         with:
           path: ~/.cache/go-build
@@ -103,14 +108,14 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - uses: reactivecircus/android-emulator-runner@v2
+      - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
           api-level: 35
           target: google_apis
           arch: x86_64
           profile: pixel_6
           script: scripts/test-android.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: android-native-check
@@ -123,7 +128,7 @@ jobs:
           vpn_version="$(python3 scripts/package_version.py)"
           if [[ "$LINEVPN_ANDROID_TEST_ONLY" != 1 ]]; then python3 scripts/verify_android_update.py apps/android/app/build/outputs/apk/debug/app-debug.apk; fi
           cp apps/android/app/build/outputs/apk/debug/app-debug.apk "build/installers/LineVPN-$vpn_version-android-preview.apk"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: installer-android
           path: build/installers/*.apk
@@ -136,21 +141,22 @@ jobs:
     needs: test
     runs-on: windows-2025
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with: {go-version: '1.27.4', cache: true}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: {node-version: '24', cache: npm, cache-dependency-path: apps/desktop/package-lock.json}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with: {python-version: '3.12'}
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with: {dotnet-version: '8.0.x'}
       - name: Verify Windows socket ownership
         run: go test ./internal/owner
       - run: ./scripts/package-windows.ps1
       - name: Verify service stop, crash and uninstall network recovery
         run: ./scripts/test-windows.ps1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: windows-native-check
@@ -158,7 +164,7 @@ jobs:
             build/windows-native.txt
             build/windows-install.log
             build/windows-update.log
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: installer-windows
           path: build/*.msi
@@ -176,10 +182,11 @@ jobs:
     env:
       LINEVPN_MACOS_SIGNING: preview
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with: {go-version: '1.27.4', cache: true}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: {node-version: '24', cache: npm, cache-dependency-path: apps/desktop/package-lock.json}
       - name: Verify macOS socket ownership
         run: go test ./internal/owner
@@ -187,7 +194,7 @@ jobs:
       - name: Verify service lifecycle and network recovery on matching host architecture
         if: (matrix.arch == 'arm64' && runner.arch == 'ARM64') || (matrix.arch == 'amd64' && runner.arch == 'X64')
         run: scripts/test-macos.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: macos-native-check-${{ matrix.arch }}
@@ -199,7 +206,7 @@ jobs:
             build/macos-service.log
             build/macos-package.log
             build/macos-network.log
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: installer-macos-${{ matrix.arch }}
           path: apps/desktop/dist/*.dmg
@@ -212,21 +219,21 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           lfs: true
           fetch-depth: 0
           ref: ${{ github.head_ref || github.ref_name }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with: {pattern: 'installer-*', path: build/installers, merge-multiple: true}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with: {name: ui-previews, path: docs/screenshots}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with: {name: android-native-check, path: build/native-preview}
       - run: cp build/native-preview/android-native.png docs/screenshots/android-native.png
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with: {distribution: temurin, java-version: '17'}
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
           packages: 'build-tools;35.0.0'
           log-accepted-android-sdk-licenses: false

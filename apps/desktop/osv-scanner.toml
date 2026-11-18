@@ -1,0 +1,7 @@
+# Applies only to this directory's build-tool lockfile. No package-wide ignore.
+# Owner: jEUGENEdev. Reassess on 2026-11-25 or when the dependency graph changes.
+# Reachability and payload evidence: docs/security-quality-review-2026-11-18.md.
+[[IgnoredVulns]]
+id = "GHSA-fc5q-39xc-vjpf"
+effectiveUntil = 2026-11-25
+reason = "picomatch 4.0.7 is only used through electron-builder -> @electron/rebuild -> node-gyp -> tinyglobby. node-gyp uses literal build/*.sln and build/*.mk patterns; no user glob input or production npm dependencies. It is not shipped in app.asar. No patched upstream release exists on 2026-11-18."

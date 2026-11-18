@@ -18,7 +18,21 @@ function toast(message){$('toast').textContent=message;$('toast').hidden=false;c
 async function api(path,data){const res=await fetch('/local/'+path,{method:data===undefined?'GET':'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:data===undefined?undefined:JSON.stringify(data)});const out=await res.json();if(!res.ok)throw Error(out.error||'Ошибка запроса');return out}
 async function act(path,data){try{const out=await api(path,data);await update();return out}catch(e){toast(e.message);throw e}}
 function element(tag,text,cls){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e}
-function button(text,cls,fn){const b=element('button',text,cls);b.onclick=async()=>{const hadFocus=document.activeElement===b;b.disabled=true;try{await fn()}catch(e){}finally{b.disabled=false;if(hadFocus&&document.activeElement===document.body&&b.isConnected&&b.getClientRects().length)b.focus({preventScroll:true})}};return b}
+function button(text,cls,fn){
+  const b=element('button',text,cls);
+  b.onclick=async()=>{
+    const hadFocus=document.activeElement===b;
+    b.disabled=true;
+    try{await fn()}catch(e){}finally{
+      b.disabled=false;
+      const focused=document.activeElement;
+      // A native dialog may retain focus in its hidden contents after close.
+      // Restore the trigger only when focus has not moved to another control.
+      if(hadFocus&&(focused===document.body||focused?.closest('dialog:not([open])'))&&b.isConnected&&b.getClientRects().length)b.focus({preventScroll:true});
+    }
+  };
+  return b;
+}
 const viewTitles={overview:'Всё под контролем.',requests:'Вы выбираете маршрут.',rules:'Ваши разрешения.',devices:'Ваши устройства.',applications:'Приложения и маршруты.'};
 function view(name) {
   if(!viewTitles[name])return;

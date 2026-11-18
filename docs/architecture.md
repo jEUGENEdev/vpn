@@ -5,7 +5,7 @@
 - `internal/transport`: закреплённая версия Xray, VLESS/XHTTP/REALITY, запрет private egress и обязательный socket protect/bind.
 - `internal/server`, `internal/store`: аккаунты, регистрационные заявки, устройства, одноразовая привязка, разрешения, BoltDB.
 - `internal/events`: ограничение частоты уведомлений и группировка доменов.
-- `internal/platform`: очистка legacy WFP/PF/DNS, TUN без постоянной блокировки и привязка исходящих сокетов к физическому интерфейсу.
+- `internal/platform`: постоянная защита WFP/PF, TUN и привязка исходящих сокетов к физическому интерфейсу; восстановление прямого доступа при явном выключении или удалении.
 - `internal/ui`: встроенный интерфейс клиента и админки без внешних CDN/шрифтов/аналитики.
 - `apps/desktop`: Electron UI; фоновая служба существует независимо от окна.
 - `apps/android`, `mobile`: Android VpnService, уведомления и JNI/gomobile.
@@ -25,13 +25,16 @@ scripts/build-server.sh
 Проверки интерфейса без системного браузера и полный браузерный прогон:
 
 ```bash
-npm install --prefix build/ui-test playwright@1.56.1 jsdom@26.1.0
-JSDOM_MODULE="$PWD/build/ui-test/node_modules/jsdom" node scripts/test-ui-dom.cjs
-build/ui-test/node_modules/.bin/playwright install chromium
-PLAYWRIGHT_MODULE="$PWD/build/ui-test/node_modules/playwright" node scripts/test-ui.cjs
+npm ci --prefix tools/ui-tests --ignore-scripts --no-audit --no-fund
+tools/ui-tests/node_modules/.bin/playwright install chromium
+bash scripts/check.sh ui
 ```
 
 DOM-проверки исполняют настоящий код клиента и админки с тестовыми данными: источники событий, поиск, сохранение состояния строк и адреса действий. Они не проверяют визуальную раскладку; для неё нужен полный прогон Playwright.
+
+Общий локальный прогон, security checks и правила ревью описаны в
+[проверках безопасности и качества](security-quality.md); инструкции для агентов
+находятся в корневом `AGENTS.md`.
 
 Интеграционный тест транспортного слоя поднимает настоящий Xray-клиент и сервер с XHTTP/REALITY и проверяет TCP/UDP round trip, затем удаляет разрешение и проверяет отсутствие соединений к целевому listener. Интернет и реальный VPS для этого теста не нужны.
 
