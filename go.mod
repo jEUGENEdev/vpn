@@ -4,7 +4,7 @@ go 1.27
 
 require (
 	github.com/miekg/dns v1.1.73
-	github.com/sagernet/sing v0.8.12-0.20260717023913-84ab32b56cb8
+	github.com/sagernet/sing v0.9.6
 	github.com/sagernet/sing-tun v0.9.6
 	github.com/tailscale/wf v0.0.0-20240214030419-6fbb0a674ee6
 	github.com/xtls/xray-core v1.260327.1-0.20261109052709-676eaf66f8f0
