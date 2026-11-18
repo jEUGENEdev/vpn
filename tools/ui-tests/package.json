@@ -4,7 +4,7 @@
   "private": true,
   "description": "Pinned dependencies for LineVPN DOM and browser regression tests",
   "devDependencies": {
-    "jsdom": "26.1.0",
+    "jsdom": "31.0.1",
     "playwright": "1.56.1"
   }
 }
