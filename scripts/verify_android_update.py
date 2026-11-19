@@ -1,4 +1,4 @@
-"""Reject a distributable APK that cannot update the currently published app."""
+"""Verify the pinned Android signing identity and optional update compatibility."""
 import argparse
 import hashlib
 import json
@@ -11,10 +11,13 @@ from package_version import ROOT, android_code, product_version
 
 
 def expected_certificate():
-    manifest = json.loads((ROOT / "installers/current/manifest.json").read_text())
+    # An explicitly reviewed identity change must not rewrite the historical APK
+    # manifest or imply that Android accepts updates from the old certificate.
+    identity = ROOT / "packaging/android/signing-certificate.json"
+    manifest = json.loads((identity if identity.exists() else ROOT / "installers/current/manifest.json").read_text())
     value = manifest.get("android_certificate_sha256", "").lower().replace(":", "")
     if not re.fullmatch(r"[0-9a-f]{64}", value):
-        raise ValueError("Published Android certificate fingerprint is missing; verify the previous APK first")
+        raise ValueError("Pinned Android certificate fingerprint is missing or invalid")
     return value
 
 
@@ -32,7 +35,7 @@ def check_keystore():
     if result.returncode:
         raise ValueError("Cannot read the existing Android signing certificate")
     if hashlib.sha256(result.stdout).hexdigest() != expected_certificate():
-        raise ValueError("Android signing certificate differs from the published app; update would be rejected")
+        raise ValueError("Android signing certificate differs from the pinned identity")
 
 
 def inspect_apk(apk):
@@ -70,4 +73,6 @@ if __name__ == "__main__":
         check_apk(args.apk, args.previous) if args.apk else check_keystore()
     except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
         raise SystemExit(str(error)) from None
-    print("PASS: Android update signing" + (", package ID and version" if args.apk else " key"))
+    print("PASS: Android signing identity" + (", package ID and version" if args.apk else " key"))
+    if args.previous:
+        print("PASS: update compatible with the supplied previous APK")

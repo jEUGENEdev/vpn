@@ -10,7 +10,7 @@ if len([p for p in files if p.suffix=='.apk'])!=1 or len([p for p in files if p.
 # Verify the actual APK again before replacing published files.
 from verify_android_update import check_apk
 check_apk(next(p for p in files if p.suffix == '.apk'))
-manifest={'version':version+'-preview','android_version_code':android_code(version),'android_certificate_sha256':certificate,'source_commit':os.environ['SOURCE_COMMIT'],'built_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'status':'preview-native-acceptance-required','signing':{'android':'persistent preview certificate, verified against the previous published APK','macos':'ad-hoc signed app and agent; not Apple notarized; PKG unsigned','windows':'not Authenticode signed'},'files':[]}
+manifest={'version':version+'-preview','android_version_code':android_code(version),'android_certificate_sha256':certificate,'source_commit':os.environ['SOURCE_COMMIT'],'built_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'status':'preview-native-acceptance-required','signing':{'android':'persistent certificate verified against the pinned identity; see docs/android-signing.md for legacy migration','macos':'ad-hoc signed app and agent; not Apple notarized; PKG unsigned','windows':'not Authenticode signed'},'files':[]}
 # Reject invalid artifacts before touching the existing published set.
 for p in files:
  if p.stat().st_size<100000:raise SystemExit(f'Not a plausible installer: {p}')

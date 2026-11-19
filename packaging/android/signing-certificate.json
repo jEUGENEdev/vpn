@@ -1,0 +1,6 @@
+{
+  "android_certificate_sha256": "a5ed967ba9dd5cc7626793c6b8eae8ab7d8a904e855355b71d6ba9b17e84b8a5",
+  "created_at": "2026-11-19",
+  "previous_android_certificate_sha256": "b13dfe366940dc70d27e244c8bf17ed18ff3dfdad93713bdbc1b91cbfa85f0b1",
+  "migration": "New permanent key authorized by repository owner after the previous key was unavailable. Not compatible with in-place updates from the old 0.2.0 preview. See docs/android-signing.md."
+}

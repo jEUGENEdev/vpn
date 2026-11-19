@@ -62,6 +62,24 @@ class VersionTests(unittest.TestCase):
 
 
 class AndroidTests(unittest.TestCase):
+    def test_explicit_signing_identity_preserves_historical_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            previous = root / 'installers/current/manifest.json'
+            previous.parent.mkdir(parents=True)
+            previous.write_text(json.dumps({'android_certificate_sha256': 'a' * 64}))
+            identity = root / 'packaging/android/signing-certificate.json'
+            identity.parent.mkdir(parents=True)
+            identity.write_text(json.dumps({'android_certificate_sha256': 'b' * 64}))
+            with patch.object(android, 'ROOT', root):
+                self.assertEqual(android.expected_certificate(), 'b' * 64)
+                identity.write_text(json.dumps({'android_certificate_sha256': 'invalid'}))
+                with self.assertRaises(ValueError):
+                    android.expected_certificate()
+                identity.unlink()
+                self.assertEqual(android.expected_certificate(), 'a' * 64)
+            self.assertEqual(json.loads(previous.read_text())['android_certificate_sha256'], 'a' * 64)
+
     def test_missing_key_does_not_generate_one(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(android.subprocess, 'run') as run:
             with self.assertRaisesRegex(ValueError, 'ANDROID_KEYSTORE'):
