@@ -45,41 +45,50 @@
       "platform": "Windows x64",
       "size": 183398400,
       "sha256": "7c789be9a9b7337047db4cced958a721137caa2cd5df9d0c81d8ef19e9c25698",
-      "source_commit": "19ad13ce50a40a4fda439a562a831ad4ded8946a"
+      "source_commit": "19ad13ce50a40a4fda439a562a831ad4ded8946a",
+      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.2.1-preview.20261118/LineVPN-0.2.1-19ad13c-windows-x64.msi"
     },
     {
       "name": "LineVPN-0.2.1-19ad13c-macos-arm64.dmg",
       "platform": "macOS Apple Silicon",
       "size": 133239850,
       "sha256": "f9809f9ea87d31e6c1e7994618a9f600fa6ca966e4f736ee4d59a50c3d54446c",
-      "source_commit": "19ad13ce50a40a4fda439a562a831ad4ded8946a"
+      "source_commit": "19ad13ce50a40a4fda439a562a831ad4ded8946a",
+      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.2.1-preview.20261118/LineVPN-0.2.1-19ad13c-macos-arm64.dmg"
     },
     {
       "name": "LineVPN-0.2.1-19ad13c-macos-x64.dmg",
       "platform": "macOS Intel",
       "size": 140538689,
       "sha256": "3a3b282b4001d73d377140bbbe8c6aa0a9bd7bbcd924747c7f3288d438e22d46",
-      "source_commit": "19ad13ce50a40a4fda439a562a831ad4ded8946a"
+      "source_commit": "19ad13ce50a40a4fda439a562a831ad4ded8946a",
+      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.2.1-preview.20261118/LineVPN-0.2.1-19ad13c-macos-x64.dmg"
     },
     {
       "name": "linevpn-server-19ad13c-linux-amd64",
       "platform": "Linux amd64 server",
       "size": 33026208,
       "sha256": "026bc2ab0a3946ba54d997691c3180b8e615fea98ea4b2cb9a7f0f3d8c5624fd",
-      "source_commit": "19ad13ce50a40a4fda439a562a831ad4ded8946a"
+      "source_commit": "19ad13ce50a40a4fda439a562a831ad4ded8946a",
+      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.2.1-preview.20261118/linevpn-server-19ad13c-linux-amd64"
     },
     {
       "name": "linevpn-keygen-19ad13c-linux-amd64",
       "platform": "Linux amd64 keygen",
       "size": 32252064,
       "sha256": "b310ce58f1cdc72f92581f2003939805cca85f67356ffe805694a9d4abfe5ffb",
-      "source_commit": "19ad13ce50a40a4fda439a562a831ad4ded8946a"
+      "source_commit": "19ad13ce50a40a4fda439a562a831ad4ded8946a",
+      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.2.1-preview.20261118/linevpn-keygen-19ad13c-linux-amd64"
     }
   ],
-  "planned_release_tag": "v0.2.1-preview.20261118",
-  "publication": {
-    "github_status": "not_published",
-    "reason": "Browser file upload did not complete on two attempts",
-    "delivered_as_separate_files": true
+  "storage": "github-release-assets",
+  "release_tag": "v0.2.1-preview.20261118",
+  "release_url": "https://github.com/jEUGENEdev/vpn/releases/tag/v0.2.1-preview.20261118",
+  "freshness_verification": {
+    "date": "2026-11-19",
+    "main_commit": "b6d5b0122a64b978e703f247bc25c9533f9847aa",
+    "runtime_build_inputs_unchanged": true,
+    "binary_sha256_rechecked": true
   }
 }
+
