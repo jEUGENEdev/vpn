@@ -25,9 +25,10 @@
     {
       "name": "LineVPN-0.2.1-2dc8d55-android-preview.apk",
       "size": 85808763,
-      "sha256": "58e73b228cb68ba0635ebcf625227d2b2b839f6d21f6ffcbbb62710f3857e720"
+      "sha256": "58e73b228cb68ba0635ebcf625227d2b2b839f6d21f6ffcbbb62710f3857e720",
+      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.2.1-preview.20261118/LineVPN-0.2.1-2dc8d55-android-preview.apk"
     }
   ],
   "release_tag": "v0.2.1-preview.20261118",
-  "publication_status": "built-awaiting-release-publication"
+  "publication_status": "published"
 }
