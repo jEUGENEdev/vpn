@@ -59,7 +59,7 @@ func (c *Client) loadApplications() error {
 		return errors.New("слишком много приложений")
 	}
 	for id, a := range apps {
-		if id != a.ID || !validApplication(a.ApplicationInfo) || (a.Decision != "pending" && a.Decision != "addresses" && a.Decision != "trusted") {
+		if id != a.ID || !validApplication(a.ApplicationInfo) || (a.Decision != "pending" && a.Decision != "addresses" && a.Decision != "trusted" && a.Decision != "denied") {
 			return errors.New("неверное разрешение приложения")
 		}
 	}
@@ -146,8 +146,8 @@ func (c *Client) observeLocked(target string, app model.ApplicationInfo, now tim
 	}
 }
 
-// Address rules always win. Trust extends routing only for an OS-identified
-// application, and requires a separate device credential acknowledged by API.
+// A destination permission never grants application consent. Full mode is an
+// explicit device-wide grant; selective mode requires an OS-identified app.
 func (c *Client) routeLocked(target, appID string) policy.Route {
 	if _, err := policy.Normalize(target); err != nil {
 		return policy.Block
@@ -156,8 +156,17 @@ func (c *Client) routeLocked(target, appID string) policy.Route {
 		return policy.Direct
 	}
 	ready := c.ready && !c.powerPending && c.powerError == ""
+	if c.config.TrafficMode == TrafficAll {
+		if !ready || c.config.Profile.AppUUID == "" {
+			return policy.Block
+		}
+		return policy.AppVPN
+	}
 	route := policy.Decide(c.effectiveRules(), target, ready)
 	if route != policy.Direct {
+		if !c.applicationAllowedLocked(appID) {
+			return policy.Block
+		}
 		return route
 	}
 	if app, ok := c.apps[appID]; ok && app.Decision == "trusted" {
@@ -169,10 +178,18 @@ func (c *Client) routeLocked(target, appID string) policy.Route {
 	return route
 }
 
-func (c *Client) wantsVPNLocked(target, appID string) bool {
-	return !c.config.Disabled && (policy.Approved(c.effectiveRules(), target) || c.apps[appID].Decision == "trusted")
+func (c *Client) applicationAllowedLocked(appID string) bool {
+	decision := c.apps[appID].Decision
+	return decision == "addresses" || decision == "trusted"
 }
-func (c *Client) hasTrustedAppsLocked() bool {
+
+func (c *Client) wantsVPNLocked(target, appID string) bool {
+	return !c.config.Disabled && (c.config.TrafficMode == TrafficAll || policy.Approved(c.effectiveRules(), target) || c.apps[appID].Decision == "trusted")
+}
+func (c *Client) needsApplicationTunnelLocked() bool {
+	if c.config.TrafficMode == TrafficAll {
+		return true
+	}
 	for _, a := range c.apps {
 		if a.Decision == "trusted" {
 			return true
@@ -185,7 +202,7 @@ func (c *Client) hasTrustedAppsLocked() bool {
 func (c *Client) ensureApplicationTunnel(ctx context.Context) error {
 	c.mu.RLock()
 	disabled := c.config.Disabled
-	enabled := c.hasTrustedAppsLocked()
+	enabled := c.needsApplicationTunnelLocked()
 	configured := c.config.Profile.AppUUID != ""
 	logged := c.config.Profile.Token != ""
 	c.mu.RUnlock()
@@ -205,7 +222,7 @@ func (c *Client) applicationAction(ctx context.Context, data any) (any, error) {
 	}
 	id, _ := fields["id"].(string)
 	decision, _ := fields["decision"].(string)
-	if decision != "trusted" && decision != "addresses" {
+	if decision != "trusted" && decision != "addresses" && decision != "denied" {
 		return nil, errors.New("неверное решение")
 	}
 	c.change.Lock()
@@ -260,6 +277,11 @@ func (c *Client) applicationSnapshotLocked() ([]model.Application, []model.Appli
 	for _, a := range apps {
 		if a.Decision == "pending" {
 			for target, o := range c.observed {
+				if _, seen := o.Sources[a.ID]; seen && policy.Approved(c.effectiveRules(), target) && time.Since(o.LastSeen) < 30*time.Minute {
+					a.Target = target
+					pending = append(pending, a)
+					break
+				}
 				if c.isDismissedLocked(target) || policy.Approved(c.effectiveRules(), target) {
 					continue
 				}

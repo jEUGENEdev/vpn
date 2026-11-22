@@ -290,3 +290,5 @@ dialog p { font-size: .9375rem; color: var(--muted); line-height: 1.65; }
 }
 
 .vpn-issues-list{max-height:12rem;overflow:auto;padding-left:1.25rem;font-size:.85rem;overflow-wrap:anywhere}.vpn-issues-list li{margin:.5rem 0}
+
+.traffic-mode-panel{margin:0 0 20px;padding:20px;display:grid;grid-template-columns:minmax(0,1fr);gap:10px}.traffic-mode-panel label{font-weight:700}.traffic-mode-panel select{width:100%;max-width:100%;min-width:0}.traffic-mode-panel p{margin:0}

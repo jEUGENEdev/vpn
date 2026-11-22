@@ -32,6 +32,7 @@ func TestProtectedOutagesNeverOpenDirectSockets(t *testing.T) {
 					}
 					defer c.Close()
 					app := testApp("a")
+					c.apps[app.ID] = model.Application{ApplicationInfo: app, Decision: "addresses"}
 					switch protection {
 					case "address":
 						c.config.Profile.Rules = []string{target}
@@ -98,10 +99,12 @@ func TestFailedProfileRefreshClosesNewlyProtectedDirectFlow(t *testing.T) {
 
 func TestVPNReadFailureKeepsRetriesProtected(t *testing.T) {
 	c := testTrafficClient(t)
+	app := testApp("a")
+	c.apps[app.ID] = model.Application{ApplicationInfo: app, Decision: "addresses"}
 	c.ready = true
 	c.config.Profile.Rules = []string{"example.org"}
 	left, right := net.Pipe()
-	c.active[left] = activeFlow{Target: "example.org", Network: "tcp", Port: 443, Route: policy.VPN}
+	c.active[left] = activeFlow{Target: "example.org", AppID: app.ID, Network: "tcp", Port: 443, Route: policy.VPN}
 	flow := &tracked{Conn: left, c: c}
 	defer flow.Close()
 	// EOF is an upstream failure only after the client actually sent data.
@@ -115,7 +118,7 @@ func TestVPNReadFailureKeepsRetriesProtected(t *testing.T) {
 	}
 	right.Close()
 	_, _ = flow.Read(make([]byte, 1))
-	if !c.vpnFailed || c.routeFlowLocked(flowKey{Target: "example.org", Network: "tcp", Port: 443}) != policy.VPN {
+	if !c.vpnFailed || c.routeFlowLocked(flowKey{Target: "example.org", AppID: app.ID, Network: "tcp", Port: 443}) != policy.VPN {
 		t.Fatal("read failure bypassed VPN")
 	}
 }

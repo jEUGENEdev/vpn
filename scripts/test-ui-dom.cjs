@@ -36,6 +36,8 @@ function load(name, scripts) {
     if (options.method === 'POST') {
       const body = JSON.parse(options.body);
       writes.push({url,body});
+      if (url === '/local/traffic-mode') fixture.traffic_mode = body.mode;
+      if (url === '/local/applications') fixture.applications.find(a => a.id === body.id).decision = body.decision;
       if (url === '/api/admin/account') accounts.accounts.find(a => a.id === body.id).status = body.status;
     }
     return {ok:true,status:200,json:async () => copy(name === 'client' ? fixture : accounts)};
@@ -56,6 +58,48 @@ function visible(w, selector) { return [...w.document.querySelectorAll(selector)
   try {
     await tick();
     assert.equal($('dashboard').hidden,false,'client failed to render');
+    assert.ok($('traffic-mode'), 'missing device-wide traffic mode control');
+    assert.equal($('traffic-mode').value, 'selective');
+    let changing=$('traffic-mode').onchange;
+    $('traffic-mode').value='all';
+    let transition=changing();
+    await tick();
+    assert.equal($('confirm').open,true,'full mode lacks explicit device-wide consent');
+    assert.equal(fixture.traffic_mode,undefined,'mode changed before consent');
+    $('confirm').close('cancel');await transition;
+    assert.equal($('traffic-mode').value,'selective','cancel did not restore selection');
+    $('traffic-mode').value='all';transition=changing();await tick();
+    $('confirm').close('ok');await transition;
+    assert.equal(fixture.traffic_mode,'all');
+    assert.match($('traffic-mode-description').textContent,/всех приложений/);
+    assert.match($('hero-description').textContent,/DNS/);
+    assert.equal($('other-route-tag').textContent,'Только VPN');
+    fixture.pending_applications=[{...app,decision:'pending'}];
+    await w.eval('update()');
+    assert.equal($('application-prompt').open,false,'full mode still asks for individual app permission');
+    fixture.pending_applications=[];
+    $('traffic-mode').value='selective';transition=changing();await tick();
+    $('confirm').close('ok');await transition;
+    assert.equal(fixture.traffic_mode,'selective');
+    assert.equal(fixture.applications[0].decision,'addresses','mode changed saved application decisions');
+    const originalFetch=w.fetch;
+    w.fetch=async(url,options)=>url==='/local/traffic-mode'?{ok:false,json:async()=>({error:'save failed'})}:originalFetch(url,options);
+    $('traffic-mode').value='all';transition=changing();await tick();$('confirm').close('ok');await transition;
+    assert.equal($('traffic-mode').value,'selective','failed save falsely displayed full mode');
+    assert.match($('toast').textContent,/save failed/);
+    w.fetch=originalFetch;
+    assert.equal(writes.filter(x=>x.url==='/local/traffic-mode').length,2,'unexpected mode writes');
+    const firstAppCard=$('applications-list').firstElementChild;
+    firstAppCard.querySelector('.deny-vpn').click();await tick();await tick();
+    assert.deepEqual(writes.at(-1),{url:'/local/applications',body:{id:app.id,decision:'denied'}});
+    assert.match(firstAppCard.textContent,/VPN запрещён/);
+    assert.equal(firstAppCard.querySelector('.deny-vpn').disabled,true);
+    assert.equal(fixture.applications[1].decision,'addresses','denial changed another application');
+    firstAppCard.querySelector('.secondary:not(.deny-vpn)').click();await tick();await tick();
+    assert.equal(fixture.applications[0].decision,'addresses');
+    assert.match(firstAppCard.textContent,/VPN только для разрешённых адресов/);
+    writes.length=0;
+
     fixture.policy_sync_pending=2;
     fixture.policy_sync_error='Для сохранения решений обновите сервер';
     await w.eval('update()');

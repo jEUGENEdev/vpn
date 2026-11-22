@@ -29,6 +29,7 @@ import (
 
 type Config struct {
 	Disabled     bool          `json:"vpn_disabled,omitempty"`
+	TrafficMode  string        `json:"traffic_mode,omitempty"`
 	BootstrapKey string        `json:"bootstrap_key,omitempty"`
 	Pinned       []string      `json:"pending_protection,omitempty"`
 	API          string        `json:"api"`
@@ -70,11 +71,13 @@ type Client struct {
 	power        NetworkController
 	powerPending bool
 	powerError   string
+	dnsSlots     chan struct{}
 
 	policySyncError string
 }
 
 var ErrVPNUnavailable = errors.New("VPN недоступен; прямое подключение запрещено")
+var ErrApplicationPermission = errors.New("приложению не разрешён VPN; защищённый адрес заблокирован")
 
 type APIError struct {
 	Status  int
@@ -89,11 +92,16 @@ func New(dir string, dialer *transport.Dialer) (*Client, error) {
 		return nil, e
 	}
 	c := &Client{identity: nativeDeviceIdentity(), dir: dir, Direct: dialer, DNS: f, Events: events.New(), pending: map[string]time.Time{}, sent: map[string]time.Time{}, resolved: map[string]time.Time{}, dismissed: map[string]bool{}, active: map[io.Closer]activeFlow{}, apps: map[string]model.Application{}, observed: map[string]*observation{}, status: "setup", requests: []model.Request{}, devices: []model.Device{}}
+	c.dnsSlots = make(chan struct{}, 64)
 	raw, e := os.ReadFile(filepath.Join(dir, "profile.json"))
 	if e == nil {
 		if e = json.Unmarshal(raw, &c.config); e != nil {
 			f.Close()
 			return nil, fmt.Errorf("повреждён профиль: %w", e)
+		}
+		if !validTrafficMode(c.config.TrafficMode) {
+			f.Close()
+			return nil, errors.New("неизвестный режим трафика в профиле")
 		}
 		if _, e = policy.Clean(append(c.config.Profile.Rules, c.config.Pinned...)); e != nil {
 			f.Close()
@@ -537,7 +545,7 @@ func (c *Client) State() any {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	status := c.status
-	appPending := c.hasTrustedAppsLocked() && c.config.Profile.AppUUID == ""
+	appPending := c.needsApplicationTunnelLocked() && c.config.Profile.AppUUID == ""
 	if c.ready && (c.vpnFailed || appPending) {
 		status = "degraded"
 	}
@@ -556,9 +564,22 @@ func (c *Client) State() any {
 	requests := c.requestsLocked()
 	apps, pendingApps := c.applicationSnapshotLocked()
 	rules := c.effectiveRules()
-	return map[string]any{"policy_sync_pending": c.pendingPolicyCountLocked(), "policy_sync_error": c.policySyncError, "vpn_issues": c.vpnIssuesLocked(), "sync_pending": c.syncPending, "device": c.identity, "status": status, "vpn_enabled": !c.config.Disabled, "fail_closed": true, "protection_blocked": !c.config.Disabled && (!c.ready || c.vpnFailed || appPending || !c.tunnel || c.powerError != ""), "partial_outage": !c.config.Disabled && c.ready && c.tunnel && (c.vpnFailed || appPending), "power_transition": c.powerPending, "power_error": c.powerError, "auth_required": c.status == "auth_required" || (c.config.Profile.AccountID != "" && c.config.Profile.Token == ""), "login": c.config.Profile.Login, "tunnel": c.tunnel, "guard": c.guard, "account_id": c.config.Profile.AccountID, "device_id": c.config.Profile.DeviceID, "server": c.config.API, "rules": rules, "rule_sources": c.ruleSourcesLocked(rules), "pending_protection": c.config.Pinned, "requests": requests, "request_groups": groupRequests(requests), "applications": apps, "pending_applications": pendingApps, "app_tunnel": c.ready && c.config.Profile.AppUUID != "", "attribution_available": c.ownerLookup != nil, "devices": c.devices, "events": c.Events.List(), "last_sync": c.lastSync, "revision": c.config.Profile.Revision}
+	return map[string]any{"traffic_mode": c.trafficModeLocked(), "policy_sync_pending": c.pendingPolicyCountLocked(), "policy_sync_error": c.policySyncError, "vpn_issues": c.vpnIssuesLocked(), "sync_pending": c.syncPending, "device": c.identity, "status": status, "vpn_enabled": !c.config.Disabled, "fail_closed": true, "protection_blocked": !c.config.Disabled && (!c.ready || c.vpnFailed || appPending || !c.tunnel || c.powerError != ""), "partial_outage": !c.config.Disabled && c.ready && c.tunnel && (c.vpnFailed || appPending), "power_transition": c.powerPending, "power_error": c.powerError, "auth_required": c.status == "auth_required" || (c.config.Profile.AccountID != "" && c.config.Profile.Token == ""), "login": c.config.Profile.Login, "tunnel": c.tunnel, "guard": c.guard, "account_id": c.config.Profile.AccountID, "device_id": c.config.Profile.DeviceID, "server": c.config.API, "rules": rules, "rule_sources": c.ruleSourcesLocked(rules), "pending_protection": c.config.Pinned, "requests": requests, "request_groups": groupRequests(requests), "applications": apps, "pending_applications": pendingApps, "app_tunnel": c.ready && c.config.Profile.AppUUID != "", "attribution_available": c.ownerLookup != nil, "devices": c.devices, "events": c.Events.List(), "last_sync": c.lastSync, "revision": c.config.Profile.Revision}
 }
 func (c *Client) Action(ctx context.Context, path string, data any) (any, error) {
+	if path == "traffic-mode" {
+		fields, _ := data.(map[string]any)
+		mode, _ := fields["mode"].(string)
+		if mode != TrafficSelective && mode != TrafficAll {
+			return nil, errors.New("выберите selective или all")
+		}
+		if err := c.SetTrafficMode(mode); err != nil {
+			return nil, err
+		}
+		// Persist protection first. A failed/offline sync cannot restore direct.
+		_ = c.Sync(ctx)
+		return c.State(), nil
+	}
 	if path == "vpn" {
 		fields, ok := data.(map[string]any)
 		if !ok {
@@ -695,19 +716,36 @@ func (c *Client) Dial(ctx context.Context, network, target string, port uint16) 
 	return c.dialApplication(ctx, network, target, port, model.ApplicationInfo{})
 }
 func (c *Client) dialApplication(ctx context.Context, network, target string, port uint16, app model.ApplicationInfo) (net.Conn, error) {
+	return c.dialAtEpoch(ctx, network, target, port, app, nil)
+}
+
+// A DNS request selected in full mode must not become a direct query if the
+// user changes modes before its upstream connection is opened.
+func (c *Client) dialAtEpoch(ctx context.Context, network, target string, port uint16, app model.ApplicationInfo, requiredEpoch *uint64) (net.Conn, error) {
+	if !validApplication(app) {
+		app = model.ApplicationInfo{}
+	}
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return nil, errors.New("client stopped")
 	}
+	if requiredEpoch != nil && c.routeEpoch != *requiredEpoch {
+		c.mu.Unlock()
+		return nil, errors.New("policy changed before connection")
+	}
 	c.observeLocked(target, app, time.Now())
 	key := flowKey{Target: target, AppID: app.ID, Network: network, Port: port}
 	route := c.routeFlowLocked(key)
 	protected := c.wantsVPNLocked(target, app.ID)
+	missingConsent := !c.config.Disabled && c.config.TrafficMode != TrafficAll && policy.Approved(c.effectiveRules(), target) && !c.applicationAllowedLocked(app.ID)
 	epoch := c.routeEpoch
 	c.mu.Unlock()
 	addr := net.JoinHostPort(target, fmt.Sprint(port))
 	if route == policy.Block {
+		if missingConsent {
+			return nil, ErrApplicationPermission
+		}
 		if protected {
 			c.Events.ConnectionOutage(time.Now(), "VPN недоступен. Прямое подключение запрещено; ждём восстановления VPN или ручного выключения.", target, app)
 			return nil, ErrVPNUnavailable

@@ -15,6 +15,7 @@ func TestFailedPeerDoesNotBypassOtherVPNPermissions(t *testing.T) {
 	c.config.Profile.Rules = []string{"media.example", "other.example"}
 	app := testApp("a")
 	other := testApp("b")
+	c.apps[other.ID] = model.Application{ApplicationInfo: other, Decision: "addresses"}
 	c.apps[app.ID] = model.Application{ApplicationInfo: app, Decision: "trusted"}
 	c.config.Profile.AppUUID = "configured"
 	left, right := net.Pipe()
@@ -41,19 +42,21 @@ func TestFailedPeerDoesNotBypassOtherVPNPermissions(t *testing.T) {
 
 func TestRecoveryIsScopedAndFailureMemoryIsBounded(t *testing.T) {
 	c := testTrafficClient(t)
+	app := testApp("a")
+	c.apps[app.ID] = model.Application{ApplicationInfo: app, Decision: "addresses"}
 	c.ready = true
 	c.config.Profile.Rules = []string{"first.example", "second.example"}
 
-	c.failVPNLocked(flowKey{Target: "first.example"})
-	c.failVPNLocked(flowKey{Target: "second.example"})
-	c.recoverVPNLocked(flowKey{Target: "first.example"})
+	c.failVPNLocked(flowKey{Target: "first.example", AppID: app.ID})
+	c.failVPNLocked(flowKey{Target: "second.example", AppID: app.ID})
+	c.recoverVPNLocked(flowKey{Target: "first.example", AppID: app.ID})
 	if !c.vpnFailed {
 		t.Fatal("one reply concealed another failing peer")
 	}
-	if c.routeFlowLocked(flowKey{Target: "first.example"}) != policy.VPN || c.routeFlowLocked(flowKey{Target: "second.example"}) != policy.VPN {
+	if c.routeFlowLocked(flowKey{Target: "first.example", AppID: app.ID}) != policy.VPN || c.routeFlowLocked(flowKey{Target: "second.example", AppID: app.ID}) != policy.VPN {
 		t.Fatal("recovery changed unrelated route")
 	}
-	c.recoverVPNLocked(flowKey{Target: "second.example"})
+	c.recoverVPNLocked(flowKey{Target: "second.example", AppID: app.ID})
 	if c.vpnFailed {
 		t.Fatal("recovery was not reported")
 	}
