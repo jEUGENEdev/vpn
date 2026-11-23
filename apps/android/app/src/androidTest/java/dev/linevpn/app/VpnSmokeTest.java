@@ -28,6 +28,28 @@ public class VpnSmokeTest {
     private static final String PROBE_BODY = "linevpn-native-ok";
     private android.app.Instrumentation getInstrumentation() { return InstrumentationRegistry.getInstrumentation(); }
     private Network vpnNetwork;
+    private JSONObject probeOtherApplication() throws Exception {
+        CountDownLatch ready = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<String> result = new java.util.concurrent.atomic.AtomicReference<>();
+        Intent probe = new Intent().setComponent(new android.content.ComponentName(
+                getInstrumentation().getContext().getPackageName(), "dev.linevpn.app.ScopeProbeReceiver"));
+        getInstrumentation().getTargetContext().sendOrderedBroadcast(probe, null, new android.content.BroadcastReceiver() {
+            @Override public void onReceive(android.content.Context context, Intent intent) {
+                result.set(getResultData()); ready.countDown();
+            }
+        }, new android.os.Handler(android.os.Looper.getMainLooper()), 0, null, null);
+        assertTrue("Separate app probe timed out", ready.await(10, TimeUnit.SECONDS));
+        assertNotNull("Separate app receiver did not run", result.get());
+        JSONObject state = new JSONObject(result.get());
+        assertNotEquals("Probe must run outside the VPN app UID", android.os.Process.myUid(), state.getInt("uid"));
+        return state;
+    }
+    private void assertExcludedApplication() throws Exception {
+        JSONObject probe = probeOtherApplication();
+        assertFalse("Unapproved app sees VPN as its active network", probe.getBoolean("vpn"));
+        assertFalse("Unapproved app inherits synthetic DNS", probe.getBoolean("synthetic_dns"));
+        assertEquals("Unapproved app lost ordinary connectivity: " + probe, PROBE_BODY, probe.optString("body"));
+    }
     private void awaitVPNNetwork(ConnectivityManager connectivity, boolean enabled) throws Exception {
         long deadline = SystemClock.elapsedRealtime() + 10000;
         while (SystemClock.elapsedRealtime() < deadline) {
@@ -213,6 +235,27 @@ public class VpnSmokeTest {
         String local = Mobile.url(); int hash = local.indexOf("#token=");
         assertTrue(hash > 0);
         String base = local.substring(0,hash), token = URLDecoder.decode(local.substring(hash+7),"UTF-8");
+        assertExcludedApplication();
+        String otherID = null;
+        org.json.JSONArray inventory = new JSONObject(Mobile.snapshot()).getJSONArray("applications");
+        for (int i = 0; i < inventory.length(); i++) {
+            JSONObject entry = inventory.getJSONObject(i);
+            if (entry.getString("path").equals(getInstrumentation().getContext().getPackageName())) otherID = entry.getString("id");
+        }
+        assertNotNull("Excluded app must be selectable before sending traffic through TUN", otherID);
+        request(base+"local/applications",token,new JSONObject().put("id",otherID).put("decision","trusted").toString());
+        JSONObject protectedProbe = probeOtherApplication();
+        assertTrue("Approved app still bypasses Android VPN", protectedProbe.getBoolean("vpn"));
+        assertFalse("Offline trusted app leaked directly", protectedProbe.has("body"));
+        request(base+"local/applications",token,new JSONObject().put("id",otherID).put("decision","denied").toString());
+        assertExcludedApplication();
+        request(base+"local/traffic-mode",token,"{\"mode\":\"all\"}");
+        JSONObject fullProbe = probeOtherApplication();
+        assertTrue("Full mode omitted an unapproved app", fullProbe.getBoolean("vpn"));
+        assertFalse("Full mode leaked directly", fullProbe.has("body"));
+        request(base+"local/traffic-mode",token,"{\"mode\":\"selective\"}");
+        assertExcludedApplication();
+        awaitVPNNetwork(connectivity, true);
         JSONObject snapshot = new JSONObject(Mobile.snapshot());
         org.json.JSONArray proposals = snapshot.getJSONArray("requests");
         for (int i=0; i<proposals.length(); i++) assertNotEquals("Healthy direct traffic must not prompt", "10.0.2.2", proposals.getJSONObject(i).getString("target"));
@@ -224,8 +267,10 @@ public class VpnSmokeTest {
         }
         assertNotNull("VpnService must identify the UID/package owning the probe", applicationID);
         request(base+"local/applications",token,new JSONObject().put("id",applicationID).put("decision","trusted").toString());
+        awaitVPNNetwork(connectivity, true);
         try { request(PROBE_URL,null,null); fail("Offline trusted app bypassed VPN"); } catch (IOException expected) { }
         request(base+"local/applications",token,new JSONObject().put("id",applicationID).put("decision","addresses").toString());
+        awaitVPNNetwork(connectivity, true);
         assertEquals("Revoking application trust must restore the direct route", PROBE_BODY,
                 request(PROBE_URL,null,null).trim());
         // No server has been configured. Approval must remain saved locally
@@ -233,6 +278,8 @@ public class VpnSmokeTest {
         try { request(base+"local/rules",token,"{\"action\":\"approve\",\"target\":\"10.0.2.2\",\"revision\":0}"); fail("Missing server must fail approval sync"); }
         catch (IOException expected) { }
         assertTrue(new JSONObject(Mobile.snapshot()).getJSONArray("pending_protection").toString().contains("10.0.2.2"));
+        // Address rules protect admitted apps; they cannot capture an excluded UID.
+        assertExcludedApplication();
         try { request(PROBE_URL,null,null); fail("Offline approved address bypassed VPN"); } catch (IOException expected) { }
         Log.i("LineVpnSmoke", "DNS, direct, application trust, restoration and protected failure passed");
         for (int cycle = 0; cycle < 2; cycle++) {

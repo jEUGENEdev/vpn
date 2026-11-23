@@ -2,6 +2,9 @@ package dev.linevpn.app
 
 import android.app.*
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
 import android.net.VpnService
 import android.os.*
 import android.content.pm.ServiceInfo
@@ -22,6 +25,18 @@ class LineVpnService : VpnService() {
         retainedTunnel = null
     }
     private val applicationResolver by lazy { ApplicationResolver(this) }
+    private val packagesChanged = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (destroyed || intent.getBooleanExtra(Intent.EXTRA_REPLACING, false) && intent.action == Intent.ACTION_PACKAGE_REMOVED) return
+            worker.execute {
+                if (!destroyed) try { Mobile.refreshApplications() }
+                catch (e: Exception) {
+                    android.util.Log.e("LineVPN", "Application scope update failed", e)
+                    NativeNotifications.show(this@LineVpnService, "outage", "Не удалось обновить список приложений", "Откройте приложение и повторите запуск VPN.")
+                }
+            }
+        }
+    }
     private val seenEvents = linkedSetOf<String>()
     private val monitor = object : Runnable { override fun run() {
         if (destroyed) return
@@ -44,7 +59,8 @@ class LineVpnService : VpnService() {
                 snapshot.optBoolean("partial_outage") -> "Сбой части VPN-соединений. Прямое подключение для них запрещено."
                 snapshot.optBoolean("protection_blocked") -> "VPN недоступен. Защищённые соединения ожидают восстановления."
                 snapshot.optBoolean("sync_pending") -> "Не удалось обновить правила. Работающие VPN-соединения сохранены."
-                !isLockdownEnabled -> "VPN работает. Для защиты при остановке приложения включите блокировку без VPN в Android."
+                isLockdownEnabled && snapshot.optString("traffic_mode") != "all" -> "Android блокирует интернет у приложений вне VPN. Проверьте системную блокировку без VPN."
+                !isLockdownEnabled -> "VPN работает. Защита при остановке зависит от системной блокировки Android."
                 else -> "VPN работает. При сбое защищённые соединения блокируются."
             }
 
@@ -58,6 +74,14 @@ class LineVpnService : VpnService() {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("protection", "Состояние защиты", NotificationManager.IMPORTANCE_LOW))
         manager.createNotificationChannel(NotificationChannel("events", "Сбои и предложения", NotificationManager.IMPORTANCE_DEFAULT))
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_ADDED)
+            addAction(Intent.ACTION_PACKAGE_REMOVED)
+            addAction(Intent.ACTION_PACKAGE_REPLACED)
+            addDataScheme("package")
+        }
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(packagesChanged, filter, Context.RECEIVER_NOT_EXPORTED)
+        else registerReceiver(packagesChanged, filter)
     }
     private fun notification(text: String): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
@@ -75,21 +99,26 @@ class LineVpnService : VpnService() {
                     override fun checkDisable() {
                         if (isLockdownEnabled) throw IllegalStateException("Сначала отключите «Блокировать соединения без VPN» в системных настройках VPN. Android иначе заблокирует интернет.")
                     }
-                    override fun openTunnel(): Long {
+                    override fun installedApplications(): String = applicationResolver.installed().toString()
+                    override fun openTunnel(all: Boolean, applications: String): Long {
                         return synchronized(tunnelLock) {
                         if (destroyed) throw IllegalStateException("VPN service stopped")
-                        val descriptor = Builder().setSession("Сеть").setMtu(1400)
+                        val builder = Builder().setSession("Сеть").setMtu(1400)
                             .addAddress("172.29.255.1", 30).addAddress("fd04:6c69:6e65:ffff::1", 126)
                             .addRoute("0.0.0.0", 0).addRoute("::", 0).addDnsServer("172.29.255.2")
-                            .setBlocking(true).establish() ?: throw IllegalStateException("VPN permission revoked")
+                            .setBlocking(true)
+                        applicationResolver.applyScope(builder, all, applications)
+                        val descriptor = builder.establish() ?: throw IllegalStateException("VPN permission revoked")
                         // Keep the interface alive if Go fails to start its packet stack.
                         // Only explicit off (without lockdown) releases the retained FD.
-                        try {
-                            val nativeFd = ParcelFileDescriptor.dup(descriptor.fileDescriptor).detachFd().toLong()
-                            retainedTunnel?.close()
-                            retainedTunnel = descriptor
-                            nativeFd
-                        } catch (e: Exception) { descriptor.close(); throw e }
+                        val previous = retainedTunnel
+                        retainedTunnel = descriptor
+                        try { previous?.close() } catch (e: Exception) {
+                            android.util.Log.w("LineVPN", "Previous tunnel descriptor close failed", e)
+                        }
+                        // establish() has already replaced the old interface.
+                        // Duplication failure must retain the NEW interface too.
+                        ParcelFileDescriptor.dup(descriptor.fileDescriptor).detachFd().toLong()
                         }
                     }
                     override fun closeTunnel() { releaseTunnel() }
@@ -116,7 +145,7 @@ class LineVpnService : VpnService() {
         return START_STICKY
     }
     override fun onRevoke() { destroyed = true; main.removeCallbacksAndMessages(null); NativeNotifications.show(this, "outage", "Разрешение VPN отозвано", "Туннель закрыт. Соединения используют обычную сеть, без VPN-защиты."); Mobile.stop(); releaseTunnel(); stopSelf() }
-    override fun onDestroy() { destroyed = true; main.removeCallbacksAndMessages(null); Mobile.stop(); releaseTunnel(); worker.shutdown(); super.onDestroy() }
+    override fun onDestroy() { destroyed = true; unregisterReceiver(packagesChanged); main.removeCallbacksAndMessages(null); Mobile.stop(); releaseTunnel(); worker.shutdown(); super.onDestroy() }
 }
 
 object NativeNotifications {

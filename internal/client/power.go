@@ -22,7 +22,10 @@ type NetworkController interface {
 func (c *Client) SetNetworkController(controller NetworkController) {
 	c.change.Lock()
 	defer c.change.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.power = controller
+	_, c.appScope = controller.(ApplicationScopeController)
 }
 
 func (c *Client) VPNEnabled() bool { return !c.disabled() }

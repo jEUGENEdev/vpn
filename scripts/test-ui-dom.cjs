@@ -95,6 +95,13 @@ function visible(w, selector) { return [...w.document.querySelectorAll(selector)
     assert.match(firstAppCard.textContent,/VPN запрещён/);
     assert.equal(firstAppCard.querySelector('.deny-vpn').disabled,true);
     assert.equal(fixture.applications[1].decision,'addresses','denial changed another application');
+    const beforeScope={native_app_scope:fixture.native_app_scope,guard:fixture.guard,status:fixture.status,protection_blocked:fixture.protection_blocked};
+    Object.assign(fixture,{native_app_scope:true,guard:false,status:'blocked',protection_blocked:true});
+    await w.eval('update()');
+    assert.match(firstAppCard.querySelector('.row-copy p').textContent,/Вне VPN.*обычная сеть и DNS/,'excluded app falsely shown as protected during an outage');
+    Object.assign(fixture,{guard:true});await w.eval('update()');
+    assert.match(firstAppCard.querySelector('.row-copy p').textContent,/заблокирован настройкой Android/);
+    Object.assign(fixture,beforeScope);await w.eval('update()');
     firstAppCard.querySelector('.secondary:not(.deny-vpn)').click();await tick();await tick();
     assert.equal(fixture.applications[0].decision,'addresses');
     assert.match(firstAppCard.textContent,/VPN только для разрешённых адресов/);
@@ -361,6 +368,13 @@ async function testCombinedAuthentication() {
     Object.assign(state,{status:'ready',protection_blocked:false,partial_outage:false,guard:true});
     await w.eval('update()');
     assert.equal($('guard-warning').hidden,true,'working Android lockdown shown as a warning');
+    Object.assign(state,{native_app_scope:true,traffic_mode:'selective',guard:true});
+    await w.eval('update()');
+    assert.equal($('guard-warning').hidden,false,'Android selective lockdown silently disconnects excluded apps');
+    assert.match($('guard-title').textContent,/блокирует приложения вне VPN/);
+    assert.match($('traffic-mode-description').textContent,/обычный DNS/);
+    assert.match($('traffic-mode-description').textContent,/может быть обнаружено/);
+    Object.assign(state,{native_app_scope:false});
     // Even failed native enable must leave the explicit off button usable.
     Object.assign(state,{status:'network_error',power_error:'TUN failed'});
     await w.eval('update()');

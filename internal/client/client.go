@@ -48,6 +48,7 @@ type Client struct {
 	vpn          transport.Runtime
 	appVPN       transport.Runtime
 	apps         map[string]model.Application
+	appInventory map[string]bool
 	observed     map[string]*observation
 	ownerLookup  owner.Lookup
 	Direct       *transport.Dialer
@@ -71,6 +72,7 @@ type Client struct {
 	power        NetworkController
 	powerPending bool
 	powerError   string
+	appScope     bool
 	dnsSlots     chan struct{}
 
 	policySyncError string
@@ -295,9 +297,15 @@ func (c *Client) apply(p model.Profile) error {
 	return c.applyProfile(p, nil)
 }
 
-func (c *Client) applyProfile(p model.Profile, acknowledged []model.ApplicationRuleChange) error {
+func (c *Client) applyProfile(p model.Profile, acknowledged []model.ApplicationRuleChange) (result error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	prepared := false
+	defer func() {
+		c.mu.Unlock()
+		if prepared {
+			result = errors.Join(result, c.applyApplicationScope())
+		}
+	}()
 	if c.closed {
 		return errors.New("client stopped")
 	}
@@ -338,6 +346,16 @@ func (c *Client) applyProfile(p model.Profile, acknowledged []model.ApplicationR
 			}
 		}
 	}()
+	if c.appScope {
+		mode := c.trafficModeLocked()
+		c.mu.Unlock()
+		e = c.prepareApplicationScope(mode, apps)
+		c.mu.Lock()
+		if e != nil {
+			return e
+		}
+		prepared = true
+	}
 	raw, _ := json.Marshal(next)
 	if e = secure.Save(filepath.Join(c.dir, "profile.json"), raw); e != nil {
 		c.ready = false
@@ -571,7 +589,7 @@ func (c *Client) State() any {
 	requests := c.requestsLocked()
 	apps, pendingApps := c.applicationSnapshotLocked()
 	rules := c.effectiveRules()
-	return map[string]any{"traffic_mode": c.trafficModeLocked(), "policy_sync_pending": c.pendingPolicyCountLocked(), "policy_sync_error": c.policySyncError, "vpn_issues": c.vpnIssuesLocked(), "sync_pending": c.syncPending, "device": c.identity, "status": status, "vpn_enabled": !c.config.Disabled, "fail_closed": true, "protection_blocked": !c.config.Disabled && (!c.ready || c.vpnFailed || appPending || !c.tunnel || c.powerError != ""), "partial_outage": !c.config.Disabled && c.ready && c.tunnel && (c.vpnFailed || appPending), "power_transition": c.powerPending, "power_error": c.powerError, "auth_required": c.status == "auth_required" || (c.config.Profile.AccountID != "" && c.config.Profile.Token == ""), "login": c.config.Profile.Login, "tunnel": c.tunnel, "guard": c.guard, "account_id": c.config.Profile.AccountID, "device_id": c.config.Profile.DeviceID, "server": c.config.API, "rules": rules, "rule_sources": c.ruleSourcesLocked(rules), "pending_protection": c.config.Pinned, "requests": requests, "request_groups": groupRequests(requests), "applications": apps, "pending_applications": pendingApps, "app_tunnel": c.ready && c.config.Profile.AppUUID != "", "attribution_available": c.ownerLookup != nil, "devices": c.devices, "events": c.Events.List(), "last_sync": c.lastSync, "revision": c.config.Profile.Revision}
+	return map[string]any{"native_app_scope": c.appScope, "traffic_mode": c.trafficModeLocked(), "policy_sync_pending": c.pendingPolicyCountLocked(), "policy_sync_error": c.policySyncError, "vpn_issues": c.vpnIssuesLocked(), "sync_pending": c.syncPending, "device": c.identity, "status": status, "vpn_enabled": !c.config.Disabled, "fail_closed": true, "protection_blocked": !c.config.Disabled && (!c.ready || c.vpnFailed || appPending || !c.tunnel || c.powerError != ""), "partial_outage": !c.config.Disabled && c.ready && c.tunnel && (c.vpnFailed || appPending), "power_transition": c.powerPending, "power_error": c.powerError, "auth_required": c.status == "auth_required" || (c.config.Profile.AccountID != "" && c.config.Profile.Token == ""), "login": c.config.Profile.Login, "tunnel": c.tunnel, "guard": c.guard, "account_id": c.config.Profile.AccountID, "device_id": c.config.Profile.DeviceID, "server": c.config.API, "rules": rules, "rule_sources": c.ruleSourcesLocked(rules), "pending_protection": c.config.Pinned, "requests": requests, "request_groups": groupRequests(requests), "applications": apps, "pending_applications": pendingApps, "app_tunnel": c.ready && c.config.Profile.AppUUID != "", "attribution_available": c.ownerLookup != nil, "devices": c.devices, "events": c.Events.List(), "last_sync": c.lastSync, "revision": c.config.Profile.Revision}
 }
 func (c *Client) Action(ctx context.Context, path string, data any) (any, error) {
 	if path == "traffic-mode" {

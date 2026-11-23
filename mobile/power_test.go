@@ -14,17 +14,58 @@ import (
 )
 
 type idleService struct {
-	opens    int
-	closes   int
-	lockdown bool
+	opens          int
+	closes         int
+	lockdown       bool
+	all            bool
+	applications   string
+	catalogueError error
 }
 
 func (*idleService) Protect(int64) bool                                             { return true }
 func (*idleService) DeviceName() string                                             { return "Test phone" }
 func (*idleService) ResolveApplication(string, string, int64, string, int64) string { return "{}" }
-func (p *idleService) OpenTunnel() (int64, error) {
+func (p *idleService) InstalledApplications() (string, error)                       { return "[]", p.catalogueError }
+func (p *idleService) OpenTunnel(all bool, applications string) (int64, error) {
 	p.opens++
+	p.all, p.applications = all, applications
 	return 0, errors.New("VPN permission revoked")
+}
+
+func TestAndroidCatalogueFailureKeepsRecoveryUI(t *testing.T) {
+	p := &idleService{catalogueError: errors.New("package inventory unavailable")}
+	url, err := Start(t.TempDir(), p)
+	if err != nil {
+		t.Fatal("catalogue failure lost the recovery UI", err)
+	}
+	defer Stop()
+	if url == "" || p.opens != 1 || !strings.Contains(Snapshot(), "package inventory unavailable") {
+		t.Fatal(Snapshot(), p.opens)
+	}
+	if err := current.c.SetVPNEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(Snapshot(), `"status":"disabled"`) {
+		t.Fatal(Snapshot())
+	}
+}
+
+func TestAndroidScopeReplacementFailureRetainsOldTunnel(t *testing.T) {
+	c, err := client.New(t.TempDir(), &transport.Dialer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	p := &idleService{}
+	tunnel := &testTunnel{c: c}
+	c.SetTunnel(true)
+	c.SetNetworkController(&session{c: c, p: p, t: tunnel, scope: "false:[]"})
+	if err := c.SetTrafficMode(client.TrafficAll); err == nil {
+		t.Fatal("native failure hidden")
+	}
+	if p.opens != 1 || !p.all || p.closes != 0 || tunnel.closes != 0 || c.State().(map[string]any)["traffic_mode"] != client.TrafficSelective {
+		t.Fatal("failed establish released previous protection", p, tunnel)
+	}
 }
 func (p *idleService) CloseTunnel() error { p.closes++; return nil }
 func (p *idleService) CheckDisable() error {
@@ -116,9 +157,13 @@ func TestAndroidLockdownOffUsesDirectWithoutReleasingTunnel(t *testing.T) {
 	}
 	defer c.Close()
 	p := &idleService{lockdown: true}
+	// Full-mode off/on can reuse the same device-wide local interface.
+	if err := c.SetTrafficMode(client.TrafficAll); err != nil {
+		t.Fatal(err)
+	}
 	tunnel := &testTunnel{c: c}
 	c.SetTunnel(true)
-	c.SetNetworkController(&session{c: c, p: p, t: tunnel})
+	c.SetNetworkController(&session{c: c, p: p, t: tunnel, scope: "true:null"})
 	if err = c.SetVPNEnabled(false); err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +178,7 @@ func TestAndroidLockdownOffUsesDirectWithoutReleasingTunnel(t *testing.T) {
 	if err = c.SetVPNEnabled(true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = c.Dial(context.Background(), "tcp", "127.0.0.1", 443); !errors.Is(err, client.ErrApplicationPermission) || dials != 1 {
+	if _, err = c.Dial(context.Background(), "tcp", "127.0.0.1", 443); !errors.Is(err, client.ErrVPNUnavailable) || dials != 1 {
 		t.Fatal("offline re-enable leaked", err, dials)
 	}
 	p.lockdown = false
