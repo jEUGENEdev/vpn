@@ -21,4 +21,4 @@ Windows: запустить MSI поверх установленной верс
 
 **Preview:** установка и сетевое поведение на физических устройствах не проверены. Windows без Authenticode; macOS ad-hoc без нотарификации, PKG не подписан Apple. GitHub Actions заблокирован оплатой/лимитом аккаунта; использована локальная сборка. Полный Go race/vet, проверки интерфейса и содержимого пакетов пройдены; ограничения Chromium/Ansible описаны в отчёте.
 
-Предыдущие комплекты: [Android 0.2.1](../android-preview-20261119/), [Windows/macOS 0.2.1](../desktop-preview-20261118/), [релизы](https://github.com/jEUGENEdev/vpn/releases).
+Предыдущие комплекты: [Android 0.2.1](https://github.com/jEUGENEdev/vpn/releases/tag/v0.2.1-preview.20261118), [Windows/macOS 0.2.1](https://github.com/jEUGENEdev/vpn/releases/tag/v0.2.1-preview.20261118), [релизы](https://github.com/jEUGENEdev/vpn/releases).

@@ -45,6 +45,20 @@ func TestNormalize(t *testing.T) {
 		}
 	}
 }
+
+func TestEquivalentIPSpellingsRetainProtection(t *testing.T) {
+	for _, pair := range [][2]string{
+		{"0000:0000:3101::ac40:9000", "0:0:3101::ac40:9000"},
+		{"2A06:98C1:3101:0:0:0:AC40:9000", "2a06:98c1:3101::ac40:9000"},
+		{"::ffff:172.64.144.0", "172.64.144.0"},
+	} {
+		for _, target := range pair {
+			if !Approved([]string{pair[0]}, target) || !Matches(pair[1], target) {
+				t.Fatalf("equivalent IP spelling lost protection: %v / %s", pair, target)
+			}
+		}
+	}
+}
 func TestNoFallback(t *testing.T) {
 	for _, ready := range []bool{true, false} {
 		if Decide(nil, "example.com", ready) != Direct {

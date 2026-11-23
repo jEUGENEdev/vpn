@@ -75,9 +75,11 @@ func fake6(id uint32) netip.Addr {
 	return netip.AddrFrom16(b)
 }
 func IsFake(ip netip.Addr) bool {
+	ip = ip.Unmap()
 	return netip.MustParsePrefix("198.18.0.0/15").Contains(ip) || netip.MustParsePrefix("fd04:6c69:6e65::/96").Contains(ip)
 }
 func (f *FakeDNS) Lookup(ip netip.Addr) (string, bool) {
+	ip = ip.Unmap()
 	if !IsFake(ip) {
 		return ip.String(), false
 	}

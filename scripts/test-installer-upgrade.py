@@ -14,13 +14,13 @@ import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
-from package_version import ROOT, android_code, check_newer, product_version, version_parts
+from package_version import ROOT, android_code, check_consistent, check_newer, product_version, version_parts
 import verify_android_update as android
 
 
 class VersionTests(unittest.TestCase):
     def test_new_release_and_platform_order(self):
-        check_newer()
+        check_consistent()
         versions = ['0.2.0', '0.2.1', '0.2.999', '0.3.0', '1.0.0']
         self.assertEqual(sorted(versions, key=version_parts), versions)
         self.assertEqual(sorted(versions, key=android_code), versions)
@@ -28,6 +28,20 @@ class VersionTests(unittest.TestCase):
         for value in ['0.2.1.1', '0.2.1-preview', '0.2.1000', '256.0.0', '0.01.1']:
             with self.assertRaises(ValueError):
                 version_parts(value)
+
+    def test_catalog_can_match_source_but_republication_requires_a_bump(self):
+        import package_version
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'apps/desktop').mkdir(parents=True)
+            (root / 'installers/current').mkdir(parents=True)
+            (root / 'apps/desktop/package.json').write_text(json.dumps({'version': '0.3.1'}))
+            (root / 'apps/desktop/package-lock.json').write_text(json.dumps({'version': '0.3.1', 'packages': {'': {'version': '0.3.1'}}}))
+            (root / 'installers/current/manifest.json').write_text(json.dumps({'version': '0.3.1-preview'}))
+            with patch.object(package_version, 'ROOT', root):
+                check_consistent()
+                with self.assertRaises(ValueError):
+                    check_newer()
 
     def test_windows_product_identity_and_transaction(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -130,13 +144,13 @@ class AndroidTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             source, dest = Path(directory) / 'incoming', Path(directory) / 'current'
             source.mkdir(); dest.mkdir()
-            for name in ('client.apk', 'client.msi', 'arm64.dmg', 'x64.dmg'):
+            for name in ('client.apk', 'client.msi', 'Set-macos-universal.dmg'):
                 (source / name).write_bytes(b'incomplete')
             (dest / 'existing.msi').write_bytes(b'previous installer')
             (dest / 'manifest.json').write_bytes(b'previous manifest')
             before = {p.name: p.read_bytes() for p in dest.iterdir()}
             for error in (ValueError('bad signature'), None):
-                with patch.object(sys, 'argv', ['publish-installers.py', str(source), str(dest)]), patch.dict(os.environ, SOURCE_COMMIT='fixture'), patch.object(android, 'check_apk', side_effect=error):
+                with patch.object(sys, 'argv', ['publish-installers.py', str(source), str(dest)]), patch.dict(os.environ, SOURCE_COMMIT='fixture'), patch.object(android, 'check_apk', side_effect=error), patch('package_version.check_newer'):
                     with self.assertRaises((ValueError, SystemExit)):
                         runpy.run_path(str(ROOT / 'scripts/publish-installers.py'), run_name='__main__')
                 self.assertEqual({p.name: p.read_bytes() for p in dest.iterdir()}, before)
@@ -164,7 +178,20 @@ elif name == 'PlistBuddy':
 elif name == 'pgrep':
     gui = 'Contents/MacOS' in sys.argv[-1]
     stuck = os.environ.get('STUCK_GUI' if gui else 'STUCK_WORKER') == '1'
+    if not gui and os.environ.get('ORPHAN_WORKER') == '1' and not (root/'worker-stopped').exists():
+        stuck = True
     sys.exit(0 if stuck else 1)
+elif name == 'pkill':
+    if 'Contents/MacOS' not in sys.argv[-1]:
+        (root/'worker-stopped').touch()
+elif name == 'linevpn-agent':
+    sys.exit(int(os.environ.get('RECOVERY_CODE', '0')))
+elif name == 'uname':
+    print(os.environ.get('MAC_ARCH', 'arm64'))
+elif name == 'sysctl':
+    print(os.environ.get('APPLE_SILICON', '0'))
+elif name == 'installer':
+    sys.exit(int(os.environ.get('INSTALL_CODE', '0')))
 elif name == 'launchctl':
     if sys.argv[1] == 'print':
         counter = root/'stopping'
@@ -191,7 +218,7 @@ class MacOSScriptTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.commands = self.root / 'commands'
         self.commands.mkdir()
-        names = ['pkgutil', 'PlistBuddy', 'pgrep', 'pkill', 'launchctl', 'id', 'dscl', 'sleep', 'linevpn-agent', 'pfctl']
+        names = ['pkgutil', 'PlistBuddy', 'pgrep', 'pkill', 'launchctl', 'id', 'dscl', 'sleep', 'linevpn-agent', 'pfctl', 'uname', 'sysctl', 'installer']
         for name in names:
             file = self.commands / name
             file.write_text('#!' + sys.executable + '\n' + FAKE_COMMAND)
@@ -200,6 +227,9 @@ class MacOSScriptTests(unittest.TestCase):
         self.data.mkdir()
         self.applications = self.root / 'Applications'
         self.applications.mkdir()
+        self.support = self.root / 'support'
+        self.support.mkdir()
+        (self.support / 'linevpn-agent').symlink_to(self.commands / 'linevpn-agent')
         self.files = {
             'profile.json': b'{"profile":{"device_id":"existing-device","token":"fixture","rules":["example.org"]},"vpn_disabled":true}',
             'applications.json': b'{"fixture":{"decision":"trusted"}}',
@@ -207,23 +237,31 @@ class MacOSScriptTests(unittest.TestCase):
         }
         for name, content in self.files.items():
             (self.data / name).write_bytes(content)
-        for name in ('preinstall', 'postinstall'):
-            source = (ROOT / 'packaging/macos' / name).read_text()
+        for name in ('preinstall', 'postinstall', 'uninstall.sh', 'stop-service.sh', 'recover-network.sh', 'manage.sh'):
+            path = ROOT / 'packaging/macos' / name
+            if not path.exists():
+                continue
+            source = path.read_text()
             # Privilege/root paths are substituted in the temporary test copy.
             source = source.replace('"$EUID"', '"0"').replace('/var/lib/linevpn', str(self.data))
             source = source.replace('/etc/pf.conf', str(self.root / 'pf.conf'))
             source = source.replace('/Applications/', str(self.applications) + '/')
+            source = source.replace('/Library/Application Support/LineVPN', str(self.support))
+            source = source.replace('/Library/LaunchDaemons/', str(self.root) + '/LaunchDaemons/')
+            source = source.replace('/var/run/', str(self.root) + '/').replace('/var/log/', str(self.root) + '/')
             source = source.replace("'/Library/Application Support/LineVPN/linevpn-agent'", str(self.commands / 'linevpn-agent'))
             for command in names:
                 for prefix in ('/usr/bin/', '/usr/sbin/', '/bin/', '/sbin/', '/usr/libexec/'):
                     source = source.replace(prefix + command, str(self.commands / command))
             (self.root / name).write_text(source)
+            (self.support / name).write_text(source)
         (self.root / 'pf.conf').write_text('# fixture system PF configuration\n')
         (self.root / 'version').write_text(product_version() + '\n')
         self.env = dict(os.environ, FIXTURE_ROOT=str(self.root), PATH=str(self.commands) + os.pathsep + os.environ['PATH'])
 
     def run_script(self, script, target='/', **env):
-        result = subprocess.run(['bash', str(self.root / script), 'fixture.pkg', '/', target], env=dict(self.env, **env), text=True, capture_output=True, timeout=5)
+        args = ['fixture.pkg', '/', target] if script in ('preinstall', 'postinstall') else []
+        result = subprocess.run(['bash', str(self.root / script), *args], env=dict(self.env, **env), text=True, capture_output=True, timeout=15)
         for name, content in self.files.items():
             self.assertEqual((self.data / name).read_bytes(), content, f'{name} changed')
         return result
@@ -283,6 +321,77 @@ class MacOSScriptTests(unittest.TestCase):
         for flag in ('STUCK_SERVICE', 'STUCK_WORKER', 'STUCK_GUI'):
             with self.subTest(flag=flag):
                 self.assertNotEqual(self.run_script('preinstall', BOOTOUT_CODE='3', **{flag: '1'}).returncode, 0)
+
+    def test_upgrade_stops_an_orphan_without_recovering_network(self):
+        result = self.run_script('preinstall', ORPHAN_WORKER='1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(any(call[0] == 'pkill' and 'Contents/MacOS' not in call[-1] for call in self.trace()))
+        self.assertFalse(any('-recover-network' in call for call in self.trace()))
+
+    def test_uninstall_waits_for_launchd_and_preserves_profile(self):
+        result = self.run_script('uninstall.sh', STOP_POLLS='2')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.support.exists())
+        self.assertTrue(any('-recover-network' in call for call in self.trace()))
+
+    def test_uninstall_refuses_recovery_while_worker_is_alive(self):
+        result = self.run_script('uninstall.sh', STUCK_WORKER='1')
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.support.exists())
+        self.assertFalse(any('-recover-network' in call for call in self.trace()))
+
+    def test_failed_recovery_keeps_installed_files(self):
+        result = self.run_script('uninstall.sh', RECOVERY_CODE='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue((self.support / 'linevpn-agent').exists())
+
+    def test_uninstall_removes_only_owned_pf_hooks(self):
+        pf = self.root / 'pf.conf'
+        original = '# fixture\nanchor "other"\nanchor "linevpn"\nanchor "linevpn" out quick\n'
+        pf.write_text(original)
+        result = self.run_script('uninstall.sh')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(pf.read_text(), '# fixture\nanchor "other"\n')
+
+    def test_postinstall_migrates_legacy_pf_hook_without_flushing_rules(self):
+        pf = self.root / 'pf.conf'
+        pf.write_text('# fixture\nanchor "other"\nanchor "linevpn" out quick\n')
+        result = self.run_script('postinstall')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(pf.read_text(), '# fixture\nanchor "other"\nanchor "linevpn"\n')
+        self.assertFalse(any(call[0] == 'pfctl' and '-F' in call for call in self.trace()))
+
+    def run_manager(self, action, **env):
+        for arch in ('arm64', 'x64'):
+            (self.root / f'payload-{arch}.pkg').write_bytes(b'fixture')
+            recovery = self.root / f'recovery-{arch}'
+            if not recovery.exists():
+                recovery.symlink_to(self.commands / 'linevpn-agent')
+        return subprocess.run(['bash', str(self.root / 'manage.sh'), action],
+                              env=dict(self.env, **env), text=True, capture_output=True, timeout=15)
+
+    def test_manager_selects_native_payload_including_rosetta(self):
+        for arch, translated, expected in [('arm64', '0', 'arm64'), ('x86_64', '0', 'x64'), ('x86_64', '1', 'arm64')]:
+            result = self.run_manager('install', MAC_ARCH=arch, APPLE_SILICON=translated)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            call = [c for c in self.trace() if c[0] == 'installer'][-1]
+            self.assertIn(str(self.root / f'payload-{expected}.pkg'), call)
+        self.assertFalse(any('-recover-network' in call for call in self.trace()))
+
+    def test_manager_can_remove_broken_old_install_without_its_scripts(self):
+        (self.support / 'linevpn-agent').unlink()
+        (self.support / 'uninstall.sh').write_text('exit 99\n')
+        result = self.run_manager('uninstall', STOP_POLLS='2')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.support.exists())
+        for name, content in self.files.items():
+            self.assertEqual((self.data / name).read_bytes(), content)
+
+    def test_manager_reports_install_failure_and_releases_lock(self):
+        result = self.run_manager('install', INSTALL_CODE='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Журнал установки', result.stderr)
+        self.assertFalse((self.root / 'dev.linevpn.installer.lock').exists())
 
     def test_postinstall_will_not_start_a_duplicate_service(self):
         self.assertNotEqual(self.run_script('postinstall', STUCK_SERVICE='1').returncode, 0)

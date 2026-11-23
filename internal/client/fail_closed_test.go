@@ -19,7 +19,7 @@ import (
 // the first failed VPN dial and all retries must leave it untouched.
 func TestProtectedOutagesNeverOpenDirectSockets(t *testing.T) {
 	for _, network := range []string{"tcp", "udp"} {
-		for _, target := range []string{"127.0.0.1", "::1", "media.example.org"} {
+		for _, target := range []string{"127.0.0.1", "::1", "2a06:98c1:3101::ac40:9000", "0000:0000:3101::ac40:9000", "media.example.org"} {
 			for _, protection := range []string{"address", "pending", "application"} {
 				t.Run(network+"/"+target+"/"+protection, func(t *testing.T) {
 					var direct atomic.Int32

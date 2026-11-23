@@ -9,7 +9,7 @@ if (process.platform === 'win32') {
   args = ['-NoProfile', '-File', path.join(root, 'scripts/package-windows.ps1')];
 } else if (process.platform === 'darwin') {
   command = 'bash';
-  args = [path.join(root, 'scripts/package-macos.sh'), process.argv[2] || (process.arch === 'arm64' ? 'arm64' : 'amd64')];
+  args = [path.join(root, 'scripts/package-macos.sh')];
 } else {
   console.error('Build the Windows installer on Windows and the macOS installer on macOS.');
   process.exit(1);

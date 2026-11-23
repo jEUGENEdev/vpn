@@ -27,21 +27,29 @@ def android_code(value):
     return major * 1_000_000 + minor * 1_000 + patch
 
 
+def check_consistent():
+    current = product_version()
+    lock = json.loads((ROOT / "apps/desktop/package-lock.json").read_text())
+    if lock["version"] != current or lock["packages"][""]["version"] != current:
+        raise ValueError("Desktop lockfile version does not match package.json")
+
+
 def check_newer():
+    check_consistent()
     current = product_version()
     previous = json.loads((ROOT / "installers/current/manifest.json").read_text())["version"].split("-", 1)[0]
     if version_parts(current) <= version_parts(previous):
         raise ValueError("Bump apps/desktop/package.json and package-lock.json before publishing another release")
-    lock = json.loads((ROOT / "apps/desktop/package-lock.json").read_text())
-    if lock["version"] != current or lock["packages"][""]["version"] != current:
-        raise ValueError("Desktop lockfile version does not match package.json")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--android-code", action="store_true")
     parser.add_argument("--check-newer", action="store_true")
+    parser.add_argument("--check-consistent", action="store_true")
     args = parser.parse_args()
     if args.check_newer:
         check_newer()
+    if args.check_consistent:
+        check_consistent()
     print(android_code(product_version()) if args.android_code else product_version())

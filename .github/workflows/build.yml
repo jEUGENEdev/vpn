@@ -170,7 +170,7 @@ jobs:
           path: build/*.msi
           if-no-files-found: error
   macos:
-    timeout-minutes: 25
+    timeout-minutes: 45
     needs: test
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -190,7 +190,7 @@ jobs:
         with: {node-version: '24', cache: npm, cache-dependency-path: apps/desktop/package-lock.json}
       - name: Verify macOS socket ownership
         run: go test ./internal/owner
-      - run: scripts/package-macos.sh ${{ matrix.arch }}
+      - run: scripts/package-macos.sh
       - name: Verify service lifecycle and network recovery on matching host architecture
         if: (matrix.arch == 'arm64' && runner.arch == 'ARM64') || (matrix.arch == 'amd64' && runner.arch == 'X64')
         run: scripts/test-macos.sh
@@ -207,8 +207,9 @@ jobs:
             build/macos-package.log
             build/macos-network.log
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: matrix.arch == 'arm64'
         with:
-          name: installer-macos-${{ matrix.arch }}
+          name: installer-macos
           path: apps/desktop/dist/*.dmg
           if-no-files-found: error
   publish-current:

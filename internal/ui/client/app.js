@@ -67,7 +67,7 @@ $('sync-warning').textContent='Не удалось обновить правил
 const issues=off?[]:(state.vpn_issues||[]);
 $('vpn-issues').hidden=!issues.length;
 $('vpn-issues-summary').textContent='Соединения без подтверждённого восстановления: '+issues.length;
-$('vpn-issues-list').replaceChildren(...issues.map(issue=>element('li',issue.target+':'+issue.port+' · '+String(issue.network||'tcp').toUpperCase()+' · '+(issue.source?.name||'Источник не определён')+' · '+new Date(issue.at).toLocaleTimeString())));
+$('vpn-issues-list').replaceChildren(...issues.map(issue=>element('li',(issue.target.includes(':')?'['+issue.target+']':issue.target)+':'+issue.port+' · '+String(issue.network||'tcp').toUpperCase()+' · '+(issue.source?.name||'Источник не определён')+' · Только через VPN · '+new Date(issue.at).toLocaleTimeString())));
 if(powerBusy||state.power_transition||state.power_error||state.status==='system_blocked'){
   $('status-badge').dataset.status='warning';
   $('status-label').textContent=(powerBusy||state.power_transition)?'ПЕРЕКЛЮЧАЕМ СЕТЬ':state.status==='system_blocked'?'ИНТЕРНЕТ ЗАБЛОКИРОВАН ANDROID':'ОШИБКА НАСТРОЙКИ СЕТИ';
