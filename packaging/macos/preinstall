@@ -13,8 +13,21 @@ done
 
 vpn_version="$(cat "$(dirname "$0")/version")"
 vpn_installed="$(/usr/sbin/pkgutil --pkg-info dev.linevpn.service 2>/dev/null | /usr/bin/awk '/^version:/ {print $2}' || true)"
-vpn_app_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' /Applications/LineVPN.app/Contents/Info.plist 2>/dev/null || true)"
-vpn_set_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' /Applications/Сеть.app/Contents/Info.plist 2>/dev/null || true)"
+installed_app_version() {
+  local vpn_bundle="$1" vpn_value
+  # PlistBuddy prints "File Doesn't Exist, Will Create" to stdout for an
+  # absent plist. Neither a fresh install nor the unused app name has a version.
+  [[ -d "$vpn_bundle" ]] || return 0
+  if [[ ! -f "$vpn_bundle/Contents/Info.plist" ]] ||
+     ! vpn_value="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$vpn_bundle/Contents/Info.plist" 2>/dev/null)" ||
+     [[ -z "$vpn_value" ]]; then
+    printf 'Cannot read installed Сеть version: %s/Contents/Info.plist\n' "$vpn_bundle" >&2
+    return 1
+  fi
+  printf '%s\n' "$vpn_value"
+}
+vpn_app_version="$(installed_app_version /Applications/LineVPN.app)"
+vpn_set_version="$(installed_app_version /Applications/Сеть.app)"
 for vpn_previous in "$vpn_installed" "$vpn_app_version" "$vpn_set_version"; do
 if [[ -n "$vpn_previous" ]]; then
   # All shipped receipts use three numeric components. Unknown receipts must

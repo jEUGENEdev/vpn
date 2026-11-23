@@ -57,6 +57,21 @@ def install(path, repair=False):
     result = subprocess.run(command, timeout=240, stdout=subprocess.DEVNULL)
     assert result.returncode in (0, 3010), f'Installer failed: {result.returncode}'
     ready(False)
+    if system == 'Windows':
+        installed = pathlib.Path(os.environ['ProgramFiles']) / 'LineVPN'
+        payload = ROOT / 'apps/desktop/dist/win-unpacked'
+        for name in ('LineVPN.exe', 'resources/app.asar', 'resources/agent/linevpn-agent.exe'):
+            assert hashlib.sha256((installed / name).read_bytes()).digest() == hashlib.sha256((payload / name).read_bytes()).digest(), f'Stale or missing installed file: {name}'
+        subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', r'''
+$ErrorActionPreference = 'Stop'
+$exe = Join-Path $env:ProgramFiles 'LineVPN/LineVPN.exe'
+$version = [Diagnostics.FileVersionInfo]::GetVersionInfo($exe)
+if ($version.ProductName -ne 'Сеть' -or $version.FileDescription -ne 'Сеть') { throw 'Stale Electron branding' }
+$link = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'Сеть.lnk'
+if (-not (Test-Path $link)) { throw 'Missing Сеть Start menu shortcut' }
+$shell = New-Object -ComObject WScript.Shell
+if ($shell.CreateShortcut($link).TargetPath -ne $exe) { throw 'Wrong Сеть shortcut target' }
+'''], check=True)
     for name, digest in before.items():
         assert hashlib.sha256((data / name).read_bytes()).hexdigest() == digest, f'Update changed {name}'
     state = api()
@@ -90,6 +105,15 @@ else:
         subprocess.run(['wix', 'build', str(work / 'upgrade.wxs'), '-arch', 'x64', '-o', str(fixture)], check=True)
         installed = pathlib.Path(os.environ['ProgramFiles']) / 'LineVPN'
         try:
+            # Old manual previews retained Electron's file version. Reproduce
+            # that installed state before the major upgrade, not only repair.
+            subprocess.run(['node', '-e', r'''
+const {editWindowsResources} = require('./apps/desktop/node_modules/app-builder-lib/out/util/resEdit.js');
+editWindowsResources({file: process.argv[1],
+  versionStrings: {ProductName: 'Electron', FileDescription: 'Electron'},
+  fileVersion: '45.3.3', productVersion: '45.3.3'
+}).catch(error => {console.error(error); process.exit(1);});
+''', str(installed / 'LineVPN.exe')], check=True)
             install(fixture)
             assert (installed / 'upgrade-fixture.txt').read_text() == 'new package payload'
             # Return to the released version only after explicit fixture removal.
