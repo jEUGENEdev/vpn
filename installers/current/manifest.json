@@ -1,9 +1,9 @@
 {
-  "version": "0.3.1-preview",
-  "android_version_code": 3001,
+  "version": "0.3.2-preview",
+  "android_version_code": 3002,
   "android_certificate_sha256": "a5ed967ba9dd5cc7626793c6b8eae8ab7d8a904e855355b71d6ba9b17e84b8a5",
-  "source_commit": "613e19213aa3543e2dc8b7eaa35647e27b3992be",
-  "built_at": "2026-11-23T15:59:02.821028+00:00",
+  "source_commit": "b08c0ed9de69c149d9862d128008d303976667dd",
+  "built_at": "2026-11-23T17:06:49.253983+00:00",
   "status": "preview-native-acceptance-required",
   "signing": {
     "android": "persistent certificate verified against the pinned identity; see docs/android-signing.md for legacy migration",
@@ -12,57 +12,58 @@
   },
   "files": [
     {
-      "name": "Set-0.3.1-android-preview.apk",
+      "name": "Set-0.3.2-android-preview.apk",
       "size": 86007639,
-      "sha256": "d9ad615f794a1d81a14e68a7f7865168b52979674d757668adb232ff3c0f9af7",
-      "source_commit": "613e19213aa3543e2dc8b7eaa35647e27b3992be",
-      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.3.1-preview.20261123/Set-0.3.1-android-preview.apk",
-      "platform": "Android 10+ · ARM64 / x86_64"
+      "sha256": "7cdfd62d9e3912b5a0617f056697927ea8942ae9ce7d9fff9bff7b39cd36b6df",
+      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.3.2-preview.20261123/Set-0.3.2-android-preview.apk",
+      "platform": "Android 10+ · ARM64 / x86_64",
+      "source_commit": "b08c0ed9de69c149d9862d128008d303976667dd"
     },
     {
-      "name": "Set-0.3.1-macos-universal.dmg",
-      "size": 307788939,
-      "sha256": "c67ca98344e9ff203050074e7cefbcf2a4c701f3bbe57a534ddd8247f1ac5b02",
-      "source_commit": "613e19213aa3543e2dc8b7eaa35647e27b3992be",
-      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.3.1-preview.20261123/Set-0.3.1-macos-universal.dmg",
-      "platform": "macOS · Intel / Apple Silicon"
+      "name": "Set-0.3.2-macos-universal.dmg",
+      "size": 307788145,
+      "sha256": "bddc964ce3ebead67879fee82fbb5665ee1136a49c3519d372c218d4ffa0a481",
+      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.3.2-preview.20261123/Set-0.3.2-macos-universal.dmg",
+      "platform": "macOS · Intel / Apple Silicon",
+      "source_commit": "ff81de82cb6760e0fd6a911f0582a08f60d7fc57"
     },
     {
-      "name": "Set-0.3.1-windows-x64.msi",
+      "name": "Set-0.3.2-windows-x64.msi",
       "size": 184195584,
-      "sha256": "3d9e79b4111aaf3c705aea43312772465ecf85c88580a229f69835482c075dd7",
-      "source_commit": "613e19213aa3543e2dc8b7eaa35647e27b3992be",
-      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.3.1-preview.20261123/Set-0.3.1-windows-x64.msi",
-      "platform": "Windows · x64"
+      "sha256": "4806cab77881041a8934525446a8e87c54818d8df5531be8b9745d1f1aeef5b7",
+      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.3.2-preview.20261123/Set-0.3.2-windows-x64.msi",
+      "platform": "Windows · x64",
+      "source_commit": "ff81de82cb6760e0fd6a911f0582a08f60d7fc57"
     },
     {
-      "name": "linevpn-server-613e192-linux-amd64",
+      "name": "linevpn-server-b08c0ed-linux-amd64",
       "size": 33054880,
       "sha256": "5dbc634ee47aa8ec920a89b1c90a2d6afb1b4d204bbe9a36b9b3c9ccf5113cc1",
-      "source_commit": "613e19213aa3543e2dc8b7eaa35647e27b3992be",
-      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.3.1-preview.20261123/linevpn-server-613e192-linux-amd64",
-      "platform": "Сервер Linux · amd64"
+      "source_commit": "b08c0ed9de69c149d9862d128008d303976667dd",
+      "platform": "Сервер Linux · amd64",
+      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.3.2-preview.20261123/linevpn-server-b08c0ed-linux-amd64"
     },
     {
-      "name": "linevpn-keygen-613e192-linux-amd64",
+      "name": "linevpn-keygen-b08c0ed-linux-amd64",
       "size": 32256160,
       "sha256": "9f87af7ff49bda55bc2338c1c6bc98f99aab34d39fbe675e033bd9a147355e82",
-      "source_commit": "613e19213aa3543e2dc8b7eaa35647e27b3992be",
-      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.3.1-preview.20261123/linevpn-keygen-613e192-linux-amd64",
-      "platform": "Генератор профиля Linux · amd64"
+      "source_commit": "b08c0ed9de69c149d9862d128008d303976667dd",
+      "platform": "Генератор профиля Linux · amd64",
+      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.3.2-preview.20261123/linevpn-keygen-b08c0ed-linux-amd64"
     }
   ],
   "built_date": "2026-11-23",
   "build_method": "manual-linux-cross-build",
-  "source_tree": "c5dac8582851f77459125c9d189a5869de0c0f6c",
+  "source_tree": "b116c76fca33652a75222ba48d4f139754d2c320",
   "integrated_prs": [
-    41
+    42
   ],
-  "merge_commit": "59e95c59d0a872a18be7c925156f3e6a7c2b19ed",
+  "merge_commit": "b08c0ed9de69c149d9862d128008d303976667dd",
   "native_platform_tests": false,
   "vps_deployment_performed": false,
-  "release_tag": "v0.3.1-preview.20261123",
-  "release_url": "https://github.com/jEUGENEdev/vpn/releases/tag/v0.3.1-preview.20261123",
+  "release_tag": "v0.3.2-preview.20261123",
+  "release_url": "https://github.com/jEUGENEdev/vpn/releases/tag/v0.3.2-preview.20261123",
   "storage": "github-release-assets",
-  "macos_downloads": 1
+  "macos_downloads": 1,
+  "provenance_note": "Desktop was built from ff81de82; its Git tree is identical to merge b08c0ed9. Android, server and keygen were built from the same source tree after merge."
 }

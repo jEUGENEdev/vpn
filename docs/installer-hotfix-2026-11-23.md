@@ -4,6 +4,12 @@
 Изменены установщики и проверки упаковки; сервер и сетевой runtime не менялись.
 Обновление сервера для этого исправления не требуется.
 
+PR #42 объединён в `main`: `b08c0ed9de69c149d9862d128008d303976667dd`.
+[Полный комплект 0.3.2 preview](https://github.com/jEUGENEdev/vpn/releases/tag/v0.3.2-preview.20261123) включает APK, MSI и один universal DMG.
+Дерево исходников `b116c76fca33652a75222ba48d4f139754d2c320` одинаково
+у merge-коммита и desktop build-коммита `ff81de82cb6760e0fd6a911f0582a08f60d7fc57`.
+Android, server и keygen собраны из того же дерева после слияния.
+
 ## macOS: ошибка до замены файлов
 
 Журнал пользователя указывает на `preinstall: Cannot compare installed Сеть version`.
@@ -56,12 +62,18 @@ repair того же ProductCode, но не при major upgrade. Это доп�
 | Проверка | Результат |
 |---|---|
 | `python3 scripts/test-installer-upgrade.py` | 30 PASS; 1 SKIP — настоящий Apple PlistBuddy недоступен на Linux |
+| `bash scripts/check.sh go` | PASS: полный race/vet и проверка модулей |
+| `bash scripts/check-security.sh` | PASS: actionlint, Gitleaks, OSV; прежний неиспользуемый OSV ignore отмечен предупреждением |
+| DOM и отдельный SSH fixture | PASS |
+| Chromium / один Ansible fixture | Не выполнены из-за ограничений Unix-сокетов; не считаются PASS |
+| GitHub Actions run `45221197132` | Завершился до выполнения шагов; нативные задания пропущены |
 | `bash scripts/check.sh desktop` | PASS: упаковка, фильтры, desktop control, имена/иконки |
 | `test-network-packaging.py`, `test-branding.py`, синтаксис, `git diff --check` | PASS |
 | DMG и оба PKG | Извлечены; проверены версии 0.3.2, точные скрипты, executable modes, root-owned архивы, подписи и hashes ресурсов |
 | MSI | Извлечены и сверены все 75 файлов; проверены File.Version, ProductCode/UpgradeCode, порядок транзакции, repair, ограничения recovery и новый ярлык |
 | Все три desktop ASAR | Runtime JS, UI, иконки и версия побайтно сверены с исходниками |
-| Настоящая установка macOS/Windows | Не выполнялась: matching OS hosts недоступны |
+| Android APK | PASS: постоянная подпись, обновление с опубликованного 0.3.1, package ID, 0.3.2 / 3002, отсутствие debuggable, ARM64/x86_64 и ZIP/ELF 16 KiB alignment |
+| Настоящая установка Android/macOS/Windows | Не выполнялась: matching OS hosts недоступны |
 
 Исходная локальная копия сверена с GitHub по Git blob SHA: все 264 доступных
 файла базы совпадают. 11 отсутствующих документационных screenshots не используются
@@ -71,6 +83,7 @@ repair того же ProductCode, но не при major upgrade. Это доп�
 
 | Файл | SHA-256 |
 |---|---|
+| `Set-0.3.2-android-preview.apk` | `7cdfd62d9e3912b5a0617f056697927ea8942ae9ce7d9fff9bff7b39cd36b6df` |
 | `Set-0.3.2-macos-universal.dmg` | `bddc964ce3ebead67879fee82fbb5665ee1136a49c3519d372c218d4ffa0a481` |
 | `Set-0.3.2-windows-x64.msi` | `4806cab77881041a8934525446a8e87c54818d8df5531be8b9745d1f1aeef5b7` |
 
@@ -78,5 +91,11 @@ repair того же ProductCode, но не при major upgrade. Это доп�
 macOS использует ad-hoc подпись без нотарификации, Windows — без Authenticode.
 Проверка архивов и подписанных байтов не заменяет Apple Installer/Gatekeeper
 или Windows Installer на реальной ОС. Штатные нативные проверки усилены, но
-не выдаются за выполненные. Опубликованный каталог 0.3.1 этим PR не заменяется
-неполным комплектом; Android не пересобирался.
+не выдаются за выполненные.
+
+После слияния подготовлен полный комплект 0.3.2 и обновлён `installers/current`.
+Android использует versionCode **3002** и прежний постоянный сертификат;
+совместимость подписи и версии проверена по APK 0.3.1. Серверные бинарники
+пересобраны для полноты комплекта; протокол и серверное поведение не менялись,
+VPS не обновлялся. Во вложениях релиза находятся manifest, контрольные суммы,
+этот отчёт и архив рецептов/проверок. Приватные ключи в архив не включаются.
