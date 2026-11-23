@@ -1,69 +1,57 @@
 {
-  "version": "0.3.2-preview",
-  "android_version_code": 3002,
+  "version": "0.3.3-preview",
+  "android_version_code": 3003,
   "android_certificate_sha256": "a5ed967ba9dd5cc7626793c6b8eae8ab7d8a904e855355b71d6ba9b17e84b8a5",
-  "source_commit": "b08c0ed9de69c149d9862d128008d303976667dd",
-  "built_at": "2026-11-23T17:06:49.253983+00:00",
+  "source_commit": "9be48a1257ef4337fc3fad1a774715a9e3a32771",
+  "source_tree": "6aa3db03a6b37d63861a8341954f902877984050",
+  "merge_commit": "9be48a1257ef4337fc3fad1a774715a9e3a32771",
+  "integrated_prs": [
+    43
+  ],
+  "built_at": "2026-11-23T18:22:38.216041+00:00",
+  "built_date": "2026-11-23",
   "status": "preview-native-acceptance-required",
+  "build_method": "manual-linux-cross-build",
+  "native_platform_tests": false,
+  "vps_deployment_performed": false,
+  "backend_update_required": false,
+  "release_tag": null,
+  "release_url": null,
+  "storage": "chatgpt-library-owner-access",
+  "macos_downloads": 1,
   "signing": {
-    "android": "persistent certificate verified against the pinned identity; see docs/android-signing.md for legacy migration",
+    "android": "persistent certificate verified against pinned identity and previous 0.3.2 APK",
     "macos": "ad-hoc signed app and agent; not Apple notarized; PKG unsigned",
     "windows": "not Authenticode signed"
   },
   "files": [
     {
-      "name": "Set-0.3.2-android-preview.apk",
-      "size": 86007639,
-      "sha256": "7cdfd62d9e3912b5a0617f056697927ea8942ae9ce7d9fff9bff7b39cd36b6df",
-      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.3.2-preview.20261123/Set-0.3.2-android-preview.apk",
-      "platform": "Android 10+ · ARM64 / x86_64",
-      "source_commit": "b08c0ed9de69c149d9862d128008d303976667dd"
-    },
-    {
-      "name": "Set-0.3.2-macos-universal.dmg",
-      "size": 307788145,
-      "sha256": "bddc964ce3ebead67879fee82fbb5665ee1136a49c3519d372c218d4ffa0a481",
-      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.3.2-preview.20261123/Set-0.3.2-macos-universal.dmg",
-      "platform": "macOS · Intel / Apple Silicon",
-      "source_commit": "ff81de82cb6760e0fd6a911f0582a08f60d7fc57"
-    },
-    {
-      "name": "Set-0.3.2-windows-x64.msi",
-      "size": 184195584,
-      "sha256": "4806cab77881041a8934525446a8e87c54818d8df5531be8b9745d1f1aeef5b7",
-      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.3.2-preview.20261123/Set-0.3.2-windows-x64.msi",
+      "name": "Set-0.3.3-windows-x64.msi",
+      "size": 184218112,
+      "sha256": "e7398a3c70ea236834a900593e77135233f7ca1a75d81577b2ed477bb48047b6",
+      "download_url": "https://chatgpt.com/library?file_id=libfile_fde3_f-f0bb5743e1508191aee40006604c7345_fc3cc296b86481919e16d10029f6df30&account_id=personal",
       "platform": "Windows · x64",
-      "source_commit": "ff81de82cb6760e0fd6a911f0582a08f60d7fc57"
+      "source_commit": "9be48a1257ef4337fc3fad1a774715a9e3a32771"
     },
     {
-      "name": "linevpn-server-b08c0ed-linux-amd64",
-      "size": 33054880,
-      "sha256": "5dbc634ee47aa8ec920a89b1c90a2d6afb1b4d204bbe9a36b9b3c9ccf5113cc1",
-      "source_commit": "b08c0ed9de69c149d9862d128008d303976667dd",
-      "platform": "Сервер Linux · amd64",
-      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.3.2-preview.20261123/linevpn-server-b08c0ed-linux-amd64"
+      "name": "Set-0.3.3-macos-universal.dmg",
+      "size": 307789643,
+      "sha256": "df29bb891be58457ec27a6d75ef1ea9a3bb8a4665c7de910c51ef5551b48bc08",
+      "download_url": "https://chatgpt.com/library?file_id=libfile_fde3_f-783a4afba9588191ab51d02209f5d5f1_fc3cc296b86481919e16d10029f6df30&account_id=personal",
+      "platform": "macOS · Intel / Apple Silicon",
+      "source_commit": "9be48a1257ef4337fc3fad1a774715a9e3a32771"
     },
     {
-      "name": "linevpn-keygen-b08c0ed-linux-amd64",
-      "size": 32256160,
-      "sha256": "9f87af7ff49bda55bc2338c1c6bc98f99aab34d39fbe675e033bd9a147355e82",
-      "source_commit": "b08c0ed9de69c149d9862d128008d303976667dd",
-      "platform": "Генератор профиля Linux · amd64",
-      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.3.2-preview.20261123/linevpn-keygen-b08c0ed-linux-amd64"
+      "name": "Set-0.3.3-android-preview.apk",
+      "size": 86007639,
+      "sha256": "fd9f0172b8bf4b6fdfd962b04694365abc19e274be19b628b83f3a81422d1ad1",
+      "download_url": "https://chatgpt.com/library?file_id=libfile_fde3_f-e9fc7ad899188191936e66426e5bb028_fc3cc296b86481919e16d10029f6df30&account_id=personal",
+      "platform": "Android 10+ · ARM64 / x86_64",
+      "source_commit": "9be48a1257ef4337fc3fad1a774715a9e3a32771"
     }
   ],
-  "built_date": "2026-11-23",
-  "build_method": "manual-linux-cross-build",
-  "source_tree": "b116c76fca33652a75222ba48d4f139754d2c320",
-  "integrated_prs": [
-    42
-  ],
-  "merge_commit": "b08c0ed9de69c149d9862d128008d303976667dd",
-  "native_platform_tests": false,
-  "vps_deployment_performed": false,
-  "release_tag": "v0.3.2-preview.20261123",
-  "release_url": "https://github.com/jEUGENEdev/vpn/releases/tag/v0.3.2-preview.20261123",
-  "storage": "github-release-assets",
-  "macos_downloads": 1,
-  "provenance_note": "Desktop was built from ff81de82; its Git tree is identical to merge b08c0ed9. Android, server and keygen were built from the same source tree after merge."
+  "provenance_note": "All three installers built after PR #43 merge from source tree 6aa3db03a6b37d63861a8341954f902877984050.",
+  "publication_status": "built-and-delivered-github-upload-incomplete",
+  "planned_release_tag": "v0.3.3-preview.20261123",
+  "publication_note": "Installers were built and delivered to the repository owner. Browser attachment attempts did not complete; no GitHub release for 0.3.3 was published. Download links use the owner existing file access."
 }
