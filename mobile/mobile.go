@@ -64,9 +64,7 @@ func Start(dir string, p Protector) (string, error) {
 		return nil
 	}
 	d := &transport.Dialer{Control: control}
-	d.Resolver = &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-		return (&net.Dialer{Control: control, Timeout: 8 * time.Second}).DialContext(ctx, "udp", "1.1.1.1:53")
-	}}
+	d.Resolver = transport.DirectResolver(control)
 	transport.InstallDialer(d)
 	c, e := client.New(filepath.Join(dir, "core"), d)
 	if e != nil {

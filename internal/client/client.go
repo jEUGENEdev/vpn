@@ -441,7 +441,14 @@ func (c *Client) sync(ctx context.Context, background bool) error {
 	ready := c.ready
 	disabled := c.config.Disabled
 	c.mu.RUnlock()
-	if (!ready && !disabled && s.Profile.Status == "active") || old.Status != s.Profile.Status || old.Revision != s.Profile.Revision || old.UUID != s.Profile.UUID || old.AppUUID != s.Profile.AppUUID || old.Login != s.Profile.Login || !reflect.DeepEqual(old.ApplicationRules, s.Profile.ApplicationRules) || len(c.pendingPins()) > 0 {
+	// Server transport settings can change without changing the account's
+	// policy revision (for example an SNI, REALITY key or XHTTP path change).
+	// Compare the same generated configuration that applyProfile installs.
+	transportChanged := !reflect.DeepEqual(transport.ClientConfig(old), transport.ClientConfig(s.Profile))
+	if (!ready && !disabled && s.Profile.Status == "active") ||
+		old.Status != s.Profile.Status || old.Revision != s.Profile.Revision ||
+		transportChanged || old.AppUUID != s.Profile.AppUUID || old.Login != s.Profile.Login ||
+		!reflect.DeepEqual(old.ApplicationRules, s.Profile.ApplicationRules) || len(c.pendingPins()) > 0 {
 		if e := c.apply(s.Profile); e != nil {
 			return e
 		}

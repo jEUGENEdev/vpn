@@ -1,6 +1,24 @@
 package policy
 
-import "testing"
+import (
+	"net/netip"
+	"testing"
+)
+
+func TestPublicRejectsSpecialPurposeIPv6(t *testing.T) {
+	for _, address := range []string{"2001:db8::1", "3fff::1", "3fff:fff:ffff::1", "100:0:0:1::1", "5f00::1", "2606:4700:4700::1111%eth0"} {
+		t.Run(address, func(t *testing.T) {
+			if Public(netip.MustParseAddr(address)) {
+				t.Fatal("non-public IPv6 destination allowed")
+			}
+		})
+	}
+	for _, address := range []string{"1.1.1.1", "::ffff:1.1.1.1", "2606:4700:4700::1111", "2001:4860:4860::8888"} {
+		if !Public(netip.MustParseAddr(address)) {
+			t.Fatalf("ordinary public destination denied: %s", address)
+		}
+	}
+}
 
 func TestBoundaryAndInheritance(t *testing.T) {
 	for _, c := range []struct {
