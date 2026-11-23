@@ -22,6 +22,12 @@ import (
 
 // Exercises actual Xray VLESS + XHTTP + REALITY sockets, not a mocked proxy.
 func TestREALITYXHTTPRoundTripAndDeny(t *testing.T) {
+	for _, destinationIP := range []string{"127.0.0.1", "::1"} {
+		t.Run(destinationIP, func(t *testing.T) { realityRoundTripAndDeny(t, destinationIP) })
+	}
+}
+
+func realityRoundTripAndDeny(t *testing.T, destinationIP string) {
 	originHeaders := make(chan http.Header, 1)
 	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/transparent-origin" {
@@ -33,7 +39,7 @@ func TestREALITYXHTTPRoundTripAndDeny(t *testing.T) {
 	target.EnableHTTP2 = true
 	target.StartTLS()
 	defer target.Close()
-	echo, e := net.Listen("tcp", "127.0.0.1:0")
+	echo, e := net.Listen("tcp", net.JoinHostPort(destinationIP, "0"))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -61,7 +67,11 @@ func TestREALITYXHTTPRoundTripAndDeny(t *testing.T) {
 	uuid := secure.UUID()
 	o := ServerOptions{Listen: "127.0.0.1", Port: port, PrivateKey: secret, PublicKey: pub, SNI: "example.com", Target: target.Listener.Addr().String(), ShortID: "12ab34cd", Path: "/test-xhttp"}
 	st := store.Empty()
-	st.Accounts["a"] = store.Account{Account: model.Account{ID: "a", Status: "active", Rules: []string{"127.0.0.1"}}}
+	approved := []string{"127.0.0.1"}
+	if destinationIP != "127.0.0.1" {
+		approved = append(approved, destinationIP)
+	}
+	st.Accounts["a"] = store.Account{Account: model.Account{ID: "a", Status: "active", Rules: approved}}
 	st.Devices["d"] = store.Device{Device: model.Device{ID: "d", AccountID: "a", Expires: time.Now().Add(time.Hour)}, Secret: uuid, AppSecret: secure.UUID()}
 	InstallDialer(&Dialer{})
 	var server, client, appClient Runtime
@@ -122,7 +132,7 @@ func TestREALITYXHTTPRoundTripAndDeny(t *testing.T) {
 			t.Fatalf("origin received proxy marker %s", name)
 		}
 	}
-	udpEcho, e := net.ListenPacket("udp", "127.0.0.1:0")
+	udpEcho, e := net.ListenPacket("udp", net.JoinHostPort(destinationIP, "0"))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -269,7 +279,7 @@ func TestREALITYXHTTPRoundTripAndDeny(t *testing.T) {
 	}
 	udpDeadline.Stop()
 	// Keep address rules permitted: denial below must come from deletion.
-	a.Rules = []string{"127.0.0.1"}
+	a.Rules = approved
 	st.Accounts["a"] = a
 	delete(st.Devices, "d")
 	if e = server.Apply(loopbackTestConfig(ServerConfig(st, o, time.Now()))); e != nil {
@@ -327,7 +337,7 @@ func TestREALITYXHTTPRoundTripAndDeny(t *testing.T) {
 // Xray 26.11 blocks private destinations in Freedom by default. Only this local
 // transport test overrides that guard; production retains it and PublicOnly.
 func loopbackTestConfig(c obj) obj {
-	c["outbounds"].([]obj)[1]["settings"] = obj{"finalRules": []obj{{"action": "allow", "ip": []string{"127.0.0.1/32"}}}}
+	c["outbounds"].([]obj)[1]["settings"] = obj{"finalRules": []obj{{"action": "allow", "ip": []string{"127.0.0.1/32", "::1/128"}}}}
 	return c
 }
 
