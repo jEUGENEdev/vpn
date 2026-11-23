@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import plistlib
 import subprocess
 import sys
 import tempfile
@@ -71,6 +72,21 @@ class VersionTests(unittest.TestCase):
             self.assertEqual(repair.attrib['Before'], 'CostInitialize')
             self.assertIn('Installed AND NOT REMOVE AND NOT UPGRADINGPRODUCTCODE', repair.attrib['Condition'])
             self.assertEqual(p.find('w:SetProperty[@Id="REINSTALLMODE"]', ns).attrib['Value'], 'amus')
+            # In a major upgrade the new ProductCode is not Installed yet.
+            # File/icon replacement must also cover a legacy Electron EXE whose
+            # Windows file version is higher than our product version.
+            overwrite = p.find('w:SetProperty[@Id="REINSTALLMODE"]', ns)
+            self.assertNotIn('Installed', overwrite.attrib['Condition'])
+            self.assertIn('NOT REMOVE', overwrite.attrib['Condition'])
+            self.assertIn('NOT UPGRADINGPRODUCTCODE', overwrite.attrib['Condition'])
+            menu = p.find('w:StandardDirectory[@Id="ProgramMenuFolder"]', ns)
+            shortcut = menu.find('w:Component/w:Shortcut', ns)
+            self.assertIsNotNone(shortcut, 'Сеть must have a current, directly discoverable Start menu shortcut')
+            self.assertEqual(shortcut.attrib['Name'], 'Сеть')
+            component = menu.find('w:Component', ns)
+            self.assertNotEqual(component.attrib['Guid'], '{9A5D6DC0-5C93-4DC6-82BC-9857E58B9B20}', 'renamed/moved shortcut must not reuse the legacy component')
+            marker = component.find('w:RegistryValue', ns)
+            self.assertEqual(marker.attrib['Name'], 'StartMenuShortcut')
             self.assertIsNone(first.find('.//w:StandardDirectory[@Id="CommonAppDataFolder"]', ns), 'user state must remain outside MSI ownership')
             self.assertEqual(len(first.findall('.//w:ServiceInstall', ns)), 1)
 
@@ -159,7 +175,7 @@ class AndroidTests(unittest.TestCase):
 # These commands never operate on the real host. Their calls form an execution
 # trace so tests can check both successful and failed installer paths.
 FAKE_COMMAND = r'''
-import json, os, pathlib, sys
+import json, os, pathlib, plistlib, sys
 name = pathlib.Path(sys.argv[0]).name
 root = pathlib.Path(os.environ['FIXTURE_ROOT'])
 with (root/'trace').open('a') as log:
@@ -169,12 +185,21 @@ if name == 'pkgutil':
     if not version: sys.exit(1)
     print('version: ' + version)
 elif name == 'PlistBuddy':
-    if 'CFBundleIdentifier' in sys.argv[2]:
-        print(pathlib.Path(sys.argv[-1]).read_text())
-        sys.exit(0)
-    version = os.environ.get('APP_VERSION', '')
-    if not version: sys.exit(1)
-    print(version)
+    path = pathlib.Path(sys.argv[-1])
+    if not path.is_file():
+        # Apple PlistBuddy writes this diagnostic to stdout even when stderr
+        # is redirected. A failed read must never become an installed version.
+        print("File Doesn't Exist, Will Create: " + str(path))
+        sys.exit(1)
+    key = sys.argv[2].split(':', 1)[1]
+    values = plistlib.loads(path.read_bytes())
+    if key == 'CFBundleShortVersionString' and os.environ.get('FAIL_VERSION_READ') == '1':
+        print('0.1.0')  # Even plausible output is invalid when the read failed.
+        sys.exit(1)
+    if key not in values:
+        print('Print: Entry, "' + key + '", Does Not Exist', file=sys.stderr)
+        sys.exit(1)
+    print(values[key])
 elif name == 'pgrep':
     gui = 'Contents/MacOS' in sys.argv[-1]
     stuck = os.environ.get('STUCK_GUI' if gui else 'STUCK_WORKER') == '1'
@@ -283,15 +308,90 @@ class MacOSScriptTests(unittest.TestCase):
         self.assertTrue(any(call[:2] == ['launchctl', 'bootstrap'] for call in self.trace()))
 
     def test_downgrade_rejected_before_stopping_anything(self):
-        for version_source in ('INSTALLED_VERSION', 'APP_VERSION'):
-            self.assertNotEqual(self.run_script('preinstall', **{version_source: '1.0.0'}).returncode, 0)
+        self.assertNotEqual(self.run_script('preinstall', INSTALLED_VERSION='1.0.0').returncode, 0)
+        for name in ('LineVPN.app', 'Сеть.app'):
+            with self.subTest(name=name):
+                bundle = self.bundle(name, version='1.0.0')
+                self.assertNotEqual(self.run_script('preinstall').returncode, 0)
+                (bundle / 'Contents/Info.plist').unlink()
+                (bundle / 'Contents').rmdir()
+                bundle.rmdir()
         self.assertFalse(any(call[0] in ('launchctl', 'pkill') for call in self.trace()))
 
-    def bundle(self, name, identifier='dev.linevpn.desktop'):
+    def bundle(self, name, identifier='dev.linevpn.desktop', version=None):
         bundle = self.applications / name
         (bundle / 'Contents').mkdir(parents=True)
-        (bundle / 'Contents/Info.plist').write_text(identifier)
+        (bundle / 'Contents/Info.plist').write_bytes(plistlib.dumps({
+            'CFBundleIdentifier': identifier,
+            'CFBundleShortVersionString': product_version() if version is None else version,
+        }))
         return bundle
+
+    def test_missing_bundles_do_not_turn_plistbuddy_diagnostics_into_versions(self):
+        # Fresh install and reinstall after explicit removal have neither name.
+        result = self.run_script('preinstall')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(any(call[0] == 'PlistBuddy' for call in self.trace()))
+        self.assertTrue(any(call[:2] == ['launchctl', 'bootout'] for call in self.trace()))
+        self.assertFalse(any('-recover-network' in call for call in self.trace()))
+
+    def test_upgrade_with_only_one_bundle_name_preserves_state(self):
+        for name in ('LineVPN.app', 'Сеть.app'):
+            with self.subTest(name=name):
+                bundle = self.bundle(name, version='0.2.0')
+                (self.root / 'trace').unlink(missing_ok=True)
+                result = self.run_script('preinstall', INSTALLED_VERSION='0.2.0')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                reads = [call[-1] for call in self.trace() if call[0] == 'PlistBuddy']
+                self.assertTrue(reads)
+                self.assertEqual(set(reads), {str(bundle / 'Contents/Info.plist')})
+                self.assertFalse(any('-recover-network' in call for call in self.trace()))
+                (bundle / 'Contents/Info.plist').unlink()
+                (bundle / 'Contents').rmdir()
+                bundle.rmdir()
+
+    def test_failed_version_read_rejects_before_stopping_anything(self):
+        self.bundle('LineVPN.app')
+        self.bundle('Сеть.app')
+        result = self.run_script('preinstall', FAIL_VERSION_READ='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Cannot read installed Сеть version', result.stderr)
+        self.assertFalse(any(call[0] in ('launchctl', 'pkill') for call in self.trace()))
+
+    def test_missing_or_empty_version_in_existing_bundle_rejected(self):
+        bundle = self.bundle('Сеть.app', version='')
+        info = bundle / 'Contents/Info.plist'
+        for missing_key in (False, True):
+            with self.subTest(missing_key=missing_key):
+                if missing_key:
+                    info.write_bytes(plistlib.dumps({'CFBundleIdentifier': 'dev.linevpn.desktop'}))
+                result = self.run_script('preinstall', INSTALLED_VERSION='0.2.0')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('Cannot read installed Сеть version', result.stderr)
+                self.assertFalse(any(call[0] in ('launchctl', 'pkill') for call in self.trace()))
+
+    def test_unknown_installed_version_still_rejected(self):
+        self.bundle('Сеть.app', version='not-a-version')
+        result = self.run_script('preinstall')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Cannot compare installed Сеть version', result.stderr)
+        self.assertFalse(any(call[0] in ('launchctl', 'pkill') for call in self.trace()))
+
+    @unittest.skipUnless(sys.platform == 'darwin', 'requires Apple PlistBuddy')
+    def test_native_plistbuddy_install_paths(self):
+        # Read real temporary plists with Apple's tool; service/process commands
+        # remain fixtures. This test does not install anything or need root.
+        script = self.root / 'preinstall'
+        script.write_text(script.read_text().replace(str(self.commands / 'PlistBuddy'), '/usr/libexec/PlistBuddy'))
+        for name in (None, 'LineVPN.app', 'Сеть.app'):
+            with self.subTest(bundle=name):
+                bundle = self.bundle(name, version='0.2.0') if name else None
+                result = self.run_script('preinstall')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if bundle:
+                    (bundle / 'Contents/Info.plist').unlink()
+                    (bundle / 'Contents').rmdir()
+                    bundle.rmdir()
 
     def test_renamed_bundle_migrates_only_after_replacement(self):
         old = self.bundle('LineVPN.app')

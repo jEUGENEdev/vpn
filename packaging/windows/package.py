@@ -25,7 +25,11 @@ node(p,'MajorUpgrade',DowngradeErrorMessage='Установлена более �
 # Opening the SAME MSI again repairs the existing product, including unversioned
 # Go/JS files. Explicit removal and major-upgrade removal never enter this path.
 node(p,'SetProperty',Id='REINSTALL',Value='ALL',Before='CostInitialize',Sequence='both',Condition='Installed AND NOT REMOVE AND NOT UPGRADINGPRODUCTCODE AND NOT REINSTALL')
-node(p,'SetProperty',Id='REINSTALLMODE',Value='amus',Before='CostInitialize',Sequence='both',Condition='Installed AND NOT REMOVE AND NOT UPGRADINGPRODUCTCODE AND NOT REINSTALLMODE')
+# A major upgrade has a new ProductCode, so Installed is false. Replace our
+# payload even when an old preview retained Electron's higher EXE version or
+# an MSI omitted file-version metadata. Also refresh shortcuts and icon cache.
+# Do not set REINSTALL=ALL for a new product: it would skip initial installation.
+node(p,'SetProperty',Id='REINSTALLMODE',Value='amus',Before='CostInitialize',Sequence='both',Condition='NOT REMOVE AND NOT UPGRADINGPRODUCTCODE AND NOT REINSTALLMODE')
 program=node(p,'StandardDirectory',Id='ProgramFiles64Folder');install=node(program,'Directory',Id='INSTALLFOLDER',Name='LineVPN')
 feature=node(p,'Feature',Id='Main',Title='Сеть',Level='1');dirs={pathlib.Path('.'):install}
 for i,file in enumerate(sorted(root.rglob('*'))):
@@ -42,8 +46,14 @@ for i,file in enumerate(sorted(root.rglob('*'))):
   node(c,'ServiceInstall',Id='InstallAgent',Name='LineVPN',DisplayName='Сеть',Description='VPN routing with protection until explicit off',Type='ownProcess',Start='auto',ErrorControl='normal',Account='LocalSystem',Arguments='-service')
   node(c,'ServiceControl',Id='ControlAgent',Name='LineVPN',Start='install',Stop='both',Remove='uninstall',Wait='yes')
  node(feature,'ComponentRef',Id=cid)
-programmenu=node(p,'StandardDirectory',Id='ProgramMenuFolder');folder=node(programmenu,'Directory',Id='LineMenu',Name='Сеть');c=node(folder,'Component',Id='Shortcut',Guid='{9A5D6DC0-5C93-4DC6-82BC-9857E58B9B20}')
-node(c,'Shortcut',Id='StartShortcut',Name='Сеть',Target='[INSTALLFOLDER]LineVPN.exe',Icon='SetIcon',IconIndex='0',WorkingDirectory='INSTALLFOLDER');node(c,'RemoveFolder',Id='RemoveShortcutFolder',On='uninstall');node(c,'RegistryValue',Root='HKLM',Key='Software\\LineVPN',Name='installed',Type='integer',Value='1',KeyPath='yes');node(feature,'ComponentRef',Id='Shortcut')
+# A new shortcut location needs its own component and registry key path. The
+# old MSI removes its registered menu folder during the transactional upgrade.
+# Do not remove generic Electron shortcuts belonging to other applications.
+programmenu=node(p,'StandardDirectory',Id='ProgramMenuFolder')
+c=node(programmenu,'Component',Id='SetStartMenuShortcut',Guid=str(uuid.uuid5(uuid.NAMESPACE_URL,'dev.linevpn.windows.shortcut:ProgramMenuFolder/Сеть.lnk')),Bitness='always64')
+node(c,'Shortcut',Id='StartShortcut',Name='Сеть',Target='[INSTALLFOLDER]LineVPN.exe',Icon='SetIcon',IconIndex='0',WorkingDirectory='INSTALLFOLDER')
+node(c,'RegistryValue',Root='HKLM',Key='Software\\LineVPN\\Installer',Name='StartMenuShortcut',Type='integer',Value='1',KeyPath='yes')
+node(feature,'ComponentRef',Id='SetStartMenuShortcut')
 # Run elevated after the service stops but BEFORE deleting its executable.
 # A cleanup failure aborts removal, leaving the recovery tool available.
 node(p,'CustomAction',Id='RecoverNetwork',FileRef='Agent',ExeCommand='-recover-network',Execute='deferred',Impersonate='no',Return='check')

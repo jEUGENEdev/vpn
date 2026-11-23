@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 vpn_dmg="${1:?DMG path required}"
 vpn_signing="${2:-preview}"
+python3 scripts/test-installer-upgrade.py MacOSScriptTests.test_native_plistbuddy_install_paths
 vpn_mount="$(mktemp -d "${TMPDIR:-/tmp}/linevpn-image.XXXXXX")"
 cleanup() { hdiutil detach "$vpn_mount" -quiet || true; rmdir "$vpn_mount" || true; }
 trap cleanup EXIT
