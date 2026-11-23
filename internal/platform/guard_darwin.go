@@ -27,7 +27,7 @@ func Guard(name string) error {
 	}
 	hook, e = exec.Command("/sbin/pfctl", "-sr").Output()
 	if e != nil || !strings.Contains(string(hook), `anchor "linevpn"`) {
-		return errors.New("LineVPN PF anchor missing; reinstall the client")
+		return errors.New("Не найдено правило защиты приложения «Сеть»; переустановите клиент")
 	}
 	rules, e := guardRules(name)
 	if e != nil {

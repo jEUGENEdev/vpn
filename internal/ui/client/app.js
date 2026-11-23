@@ -15,7 +15,7 @@ applyTheme();
 $('theme').onclick=()=>{theme=theme==='dark'?'light':'dark';applyTheme();localStorage.setItem('theme',theme)};
 
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,6500)}
-async function api(path,data){const res=await fetch('/local/'+path,{method:data===undefined?'GET':'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:data===undefined?undefined:JSON.stringify(data)});const out=await res.json();if(!res.ok)throw Error(out.error||'Ошибка запроса');return out}
+async function api(path,data){if(window.linevpn?.request)return window.linevpn.request(path,data);const res=await fetch('/local/'+path,{method:data===undefined?'GET':'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:data===undefined?undefined:JSON.stringify(data)});const out=await res.json();if(!res.ok)throw Error(out.error||'Ошибка запроса');return out}
 async function act(path,data){try{const out=await api(path,data);await update();return out}catch(e){toast(e.message);throw e}}
 function element(tag,text,cls){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e}
 function button(text,cls,fn,isDisabled=()=>false){
@@ -43,7 +43,7 @@ function view(name) {
     if(active)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');
   }
   $('page-title').textContent=viewTitles[name];
-  document.title=viewTitles[name]+' — Линия VPN';
+  document.title=viewTitles[name]+' — Сеть';
   // The overview CTA disappears on navigation. Give keyboard users a stable target.
   $('page-title').focus({preventScroll:true});
   $('main-content').scrollIntoView({block:'start'});

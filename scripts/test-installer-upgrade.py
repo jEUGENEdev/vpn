@@ -155,6 +155,9 @@ if name == 'pkgutil':
     if not version: sys.exit(1)
     print('version: ' + version)
 elif name == 'PlistBuddy':
+    if 'CFBundleIdentifier' in sys.argv[2]:
+        print(pathlib.Path(sys.argv[-1]).read_text())
+        sys.exit(0)
     version = os.environ.get('APP_VERSION', '')
     if not version: sys.exit(1)
     print(version)
@@ -195,6 +198,8 @@ class MacOSScriptTests(unittest.TestCase):
             file.chmod(0o755)
         self.data = self.root / 'state'
         self.data.mkdir()
+        self.applications = self.root / 'Applications'
+        self.applications.mkdir()
         self.files = {
             'profile.json': b'{"profile":{"device_id":"existing-device","token":"fixture","rules":["example.org"]},"vpn_disabled":true}',
             'applications.json': b'{"fixture":{"decision":"trusted"}}',
@@ -207,6 +212,7 @@ class MacOSScriptTests(unittest.TestCase):
             # Privilege/root paths are substituted in the temporary test copy.
             source = source.replace('"$EUID"', '"0"').replace('/var/lib/linevpn', str(self.data))
             source = source.replace('/etc/pf.conf', str(self.root / 'pf.conf'))
+            source = source.replace('/Applications/', str(self.applications) + '/')
             source = source.replace("'/Library/Application Support/LineVPN/linevpn-agent'", str(self.commands / 'linevpn-agent'))
             for command in names:
                 for prefix in ('/usr/bin/', '/usr/sbin/', '/bin/', '/sbin/', '/usr/libexec/'):
@@ -241,6 +247,30 @@ class MacOSScriptTests(unittest.TestCase):
     def test_downgrade_rejected_before_stopping_anything(self):
         for version_source in ('INSTALLED_VERSION', 'APP_VERSION'):
             self.assertNotEqual(self.run_script('preinstall', **{version_source: '1.0.0'}).returncode, 0)
+        self.assertFalse(any(call[0] in ('launchctl', 'pkill') for call in self.trace()))
+
+    def bundle(self, name, identifier='dev.linevpn.desktop'):
+        bundle = self.applications / name
+        (bundle / 'Contents').mkdir(parents=True)
+        (bundle / 'Contents/Info.plist').write_text(identifier)
+        return bundle
+
+    def test_renamed_bundle_migrates_only_after_replacement(self):
+        old = self.bundle('LineVPN.app')
+        self.assertEqual(self.run_script('postinstall').returncode, 0)
+        self.assertTrue(old.exists(), 'old app removed before replacement exists')
+        new = self.bundle('Сеть.app')
+        self.assertEqual(self.run_script('preinstall').returncode, 0)
+        self.assertEqual(self.run_script('postinstall').returncode, 0)
+        self.assertFalse(old.exists())
+        self.assertTrue(new.exists())
+
+    def test_foreign_bundle_is_not_replaced(self):
+        for name in ('LineVPN.app', 'Сеть.app'):
+            with self.subTest(name=name):
+                bundle = self.bundle(name, 'org.example.another-app')
+                self.assertNotEqual(self.run_script('preinstall').returncode, 0)
+                self.assertTrue(bundle.exists())
         self.assertFalse(any(call[0] in ('launchctl', 'pkill') for call in self.trace()))
 
     def test_wrong_volume_rejected_before_host_changes(self):

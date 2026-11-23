@@ -4,7 +4,12 @@ if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Use an isolated CI runner for this 
 Set-Location (Join-Path $PSScriptRoot '..')
 $vpnVersion = python scripts/package_version.py
 if ($LASTEXITCODE -ne 0) { throw 'Invalid installer version' }
-$msi = (Resolve-Path "build/LineVPN-$vpnVersion-windows-x64.msi").Path
+$msi = (Resolve-Path "build/Сеть-$vpnVersion-windows-x64.msi").Path
+function Get-SetState {
+    $output = python scripts/desktop_control_fixture.py state
+    if ($LASTEXITCODE -ne 0) { throw 'Local service unavailable' }
+    return ($output | ConvertFrom-Json)
+}
 $agent = Join-Path $env:ProgramFiles 'LineVPN/resources/agent/linevpn-agent.exe'
 $log = Join-Path (Get-Location) 'build/windows-install.log'
 $nativeOK = $false
@@ -18,9 +23,7 @@ try {
     $state = $null
     for ($i=0; $i -lt 20; $i++) {
         try {
-            $token = (Get-Content (Join-Path $env:ProgramData 'LineVPN/ui-token') -Raw).Trim()
-            $headers = @{Authorization = 'Bearer ' + $token}
-            $state = Invoke-RestMethod -Uri http://127.0.0.1:17891/local/state -Headers $headers -TimeoutSec 2
+            $state = Get-SetState
             break
         } catch { Start-Sleep -Seconds 1 }
     }
@@ -30,18 +33,20 @@ try {
     if (-not ($answer.IPAddress -match '^198\.(18|19)\.')) { throw 'TUN DNS did not return a fake IP' }
     & curl.exe --silent --output NUL --connect-timeout 4 --max-time 8 http://1.1.1.1/cdn-cgi/trace
     if ($LASTEXITCODE -ne 0) { throw 'Unapproved direct connection failed' }
-    $state = Invoke-RestMethod -Uri http://127.0.0.1:17891/local/state -Headers $headers -TimeoutSec 3
+    $state = Get-SetState
     if (@($state.requests | Where-Object { $_.target -eq '1.1.1.1' }).Count -ne 0) { throw 'Healthy direct traffic produced a proposal' }
     $curlApp = @($state.applications | Where-Object { $_.name -eq 'curl.exe' })[0]
     if (-not $curlApp.id) { throw 'Native connection owner was not identified' }
     $decision = @{id=$curlApp.id;decision='trusted'} | ConvertTo-Json
-    Invoke-RestMethod -Uri http://127.0.0.1:17891/local/applications -Headers $headers -Method Post -ContentType 'application/json' -Body $decision -TimeoutSec 3 | Out-Null
+    $decision | python scripts/desktop_control_fixture.py applications | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not approve application through private control' }
     & curl.exe --silent --output NUL --connect-timeout 2 --max-time 3 http://1.1.1.1/cdn-cgi/trace
     if ($LASTEXITCODE -eq 0) { throw 'Offline trusted app bypassed VPN' }
     $decision = @{id=$curlApp.id;decision='addresses'} | ConvertTo-Json
-    Invoke-RestMethod -Uri http://127.0.0.1:17891/local/applications -Headers $headers -Method Post -ContentType 'application/json' -Body $decision -TimeoutSec 3 | Out-Null
-    try { Invoke-RestMethod -Uri http://127.0.0.1:17891/local/rules -Headers $headers -Method Post -ContentType 'application/json' -Body '{"target":"1.1.1.1","action":"approve","revision":0}' -TimeoutSec 3 | Out-Null } catch { }
-    $state = Invoke-RestMethod -Uri http://127.0.0.1:17891/local/state -Headers $headers -TimeoutSec 2
+    $decision | python scripts/desktop_control_fixture.py applications | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not restore address policy through private control' }
+    try { '{"target":"1.1.1.1","action":"approve","revision":0}' | python scripts/desktop_control_fixture.py rules | Out-Null } catch { }
+    $state = Get-SetState
     if ($state.pending_protection -notcontains '1.1.1.1') { throw 'Approval not protected locally' }
     & curl.exe --silent --output NUL --connect-timeout 2 --max-time 3 http://1.1.1.1/cdn-cgi/trace
     if ($LASTEXITCODE -eq 0) { throw 'Offline approved address bypassed VPN' }
@@ -56,7 +61,7 @@ try {
     if ($repair.ExitCode -notin @(0, 3010)) { throw "MSI repeat installation failed: $($repair.ExitCode)" }
     python scripts/test-upgrade-state.py check $dataPath build/windows-upgrade-state.json
     if ($LASTEXITCODE -ne 0) { throw 'Repair changed saved client data' }
-    $products = @(Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' | Get-ItemProperty | Where-Object { $_.DisplayName -eq 'LineVPN' })
+    $products = @(Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' | Get-ItemProperty | Where-Object { $_.DisplayName -in @('Сеть', 'LineVPN') })
     if ($products.Count -ne 1 -or $products[0].DisplayVersion -ne $vpnVersion) { throw 'Duplicate or stale installed product after repair' }
     Start-Service LineVPN
     python scripts/test-desktop-update.py $msi

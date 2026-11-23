@@ -19,5 +19,5 @@ python packaging/windows/package.py apps/desktop/dist/win-unpacked build/LineVPN
 if ($LASTEXITCODE -ne 0) { throw 'MSI source generation failed' }
 dotnet tool install --global wix --version 5.0.2
 if ($LASTEXITCODE -ne 0) { throw 'WiX installation failed' }
-wix build build/LineVPN.wxs -arch x64 -o "build/LineVPN-$vpnVersion-windows-x64.msi"
+wix build build/LineVPN.wxs -arch x64 -o "build/Сеть-$vpnVersion-windows-x64.msi"
 if ($LASTEXITCODE -ne 0) { throw 'MSI build failed' }

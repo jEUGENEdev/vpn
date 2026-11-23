@@ -1,8 +1,8 @@
 {
   "name": "linevpn-desktop",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
-  "description": "Линия — VPN с разрешениями для адресов",
+  "description": "Сеть — VPN с разрешениями для приложений и адресов",
   "author": "jEUGENEdev",
   "main": "main.cjs",
   "scripts": {
@@ -19,13 +19,22 @@
   },
   "build": {
     "appId": "dev.linevpn.desktop",
-    "productName": "LineVPN",
+    "productName": "Сеть",
     "directories": {
       "output": "dist"
     },
     "files": [
       "main.cjs",
-      "preload.cjs"
+      "preload.cjs",
+      "control.cjs",
+      "branding/*.png",
+      {
+        "from": "../../internal/ui/client",
+        "to": "ui",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "extraResources": [
       {
@@ -39,20 +48,23 @@
       ],
       "category": "public.app-category.utilities",
       "hardenedRuntime": true,
-      "artifactName": "LineVPN-${version}-macos-${arch}.${ext}",
-      "notarize": false
+      "artifactName": "Сеть-${version}-macos-${arch}.${ext}",
+      "notarize": false,
+      "icon": "branding/set.icns"
     },
     "win": {
       "target": [
         "msi"
       ],
-      "requestedExecutionLevel": "asInvoker"
+      "requestedExecutionLevel": "asInvoker",
+      "icon": "branding/set.ico"
     },
     "msi": {
       "perMachine": true,
       "runAfterFinish": false,
       "warningsAsErrors": false
     },
-    "afterSign": "notarize.cjs"
+    "afterSign": "notarize.cjs",
+    "executableName": "LineVPN"
   }
 }

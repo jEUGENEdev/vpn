@@ -17,15 +17,17 @@ ns='http://wixtoolset.org/schemas/v4/wxs'; ET.register_namespace('',ns)
 def node(parent,tag,**attrs):return ET.SubElement(parent,'{'+ns+'}'+tag,attrs)
 # The same release is maintenance/repair; a new version gets a new ProductCode.
 product_code = str(uuid.uuid5(uuid.NAMESPACE_URL, 'dev.linevpn.windows.x64:' + version))
-w=ET.Element('{'+ns+'}Wix'); p=node(w,'Package',Name='LineVPN',Manufacturer='jEUGENEdev',Version=version,ProductCode=product_code,UpgradeCode='{0ACF9EA2-83F8-4EE0-8877-E3BAE8A42E91}',Scope='perMachine',InstallerVersion='500',Codepage='1251',Language='1049')
+w=ET.Element('{'+ns+'}Wix'); p=node(w,'Package',Name='Сеть',Manufacturer='jEUGENEdev',Version=version,ProductCode=product_code,UpgradeCode='{0ACF9EA2-83F8-4EE0-8877-E3BAE8A42E91}',Scope='perMachine',InstallerVersion='500',Codepage='1251',Language='1049')
+node(p,'Icon',Id='SetIcon',SourceFile=str(pathlib.Path(__file__).resolve().parents[2] / 'apps/desktop/branding/set.ico'))
+node(p,'Property',Id='ARPPRODUCTICON',Value='SetIcon')
 # Remove the previous product inside the transaction so a failed upgrade rolls back.
-node(p,'MajorUpgrade',DowngradeErrorMessage='A newer LineVPN version is installed.',Schedule='afterInstallInitialize');node(p,'MediaTemplate',EmbedCab='yes',CompressionLevel='high')
+node(p,'MajorUpgrade',DowngradeErrorMessage='Установлена более новая версия приложения «Сеть».',Schedule='afterInstallInitialize');node(p,'MediaTemplate',EmbedCab='yes',CompressionLevel='high')
 # Opening the SAME MSI again repairs the existing product, including unversioned
 # Go/JS files. Explicit removal and major-upgrade removal never enter this path.
 node(p,'SetProperty',Id='REINSTALL',Value='ALL',Before='CostInitialize',Sequence='both',Condition='Installed AND NOT REMOVE AND NOT UPGRADINGPRODUCTCODE AND NOT REINSTALL')
 node(p,'SetProperty',Id='REINSTALLMODE',Value='amus',Before='CostInitialize',Sequence='both',Condition='Installed AND NOT REMOVE AND NOT UPGRADINGPRODUCTCODE AND NOT REINSTALLMODE')
 program=node(p,'StandardDirectory',Id='ProgramFiles64Folder');install=node(program,'Directory',Id='INSTALLFOLDER',Name='LineVPN')
-feature=node(p,'Feature',Id='Main',Title='LineVPN',Level='1');dirs={pathlib.Path('.'):install}
+feature=node(p,'Feature',Id='Main',Title='Сеть',Level='1');dirs={pathlib.Path('.'):install}
 for i,file in enumerate(sorted(root.rglob('*'))):
  if not file.is_file():continue
  rel=file.relative_to(root); parent=rel.parent
@@ -37,11 +39,11 @@ for i,file in enumerate(sorted(root.rglob('*'))):
  fid='Agent' if rel.as_posix()=='resources/agent/linevpn-agent.exe' else 'F'+str(i)
  node(c,'File',Id=fid,Source=str(file),KeyPath='yes')
  if fid=='Agent':
-  node(c,'ServiceInstall',Id='InstallAgent',Name='LineVPN',DisplayName='Линия VPN',Description='VPN routing with protection until explicit off',Type='ownProcess',Start='auto',ErrorControl='normal',Account='LocalSystem',Arguments='-service')
+  node(c,'ServiceInstall',Id='InstallAgent',Name='LineVPN',DisplayName='Сеть',Description='VPN routing with protection until explicit off',Type='ownProcess',Start='auto',ErrorControl='normal',Account='LocalSystem',Arguments='-service')
   node(c,'ServiceControl',Id='ControlAgent',Name='LineVPN',Start='install',Stop='both',Remove='uninstall',Wait='yes')
  node(feature,'ComponentRef',Id=cid)
-programmenu=node(p,'StandardDirectory',Id='ProgramMenuFolder');folder=node(programmenu,'Directory',Id='LineMenu',Name='LineVPN');c=node(folder,'Component',Id='Shortcut',Guid='{9A5D6DC0-5C93-4DC6-82BC-9857E58B9B20}')
-node(c,'Shortcut',Id='StartShortcut',Name='Линия VPN',Target='[INSTALLFOLDER]LineVPN.exe',WorkingDirectory='INSTALLFOLDER');node(c,'RemoveFolder',Id='RemoveShortcutFolder',On='uninstall');node(c,'RegistryValue',Root='HKLM',Key='Software\\LineVPN',Name='installed',Type='integer',Value='1',KeyPath='yes');node(feature,'ComponentRef',Id='Shortcut')
+programmenu=node(p,'StandardDirectory',Id='ProgramMenuFolder');folder=node(programmenu,'Directory',Id='LineMenu',Name='Сеть');c=node(folder,'Component',Id='Shortcut',Guid='{9A5D6DC0-5C93-4DC6-82BC-9857E58B9B20}')
+node(c,'Shortcut',Id='StartShortcut',Name='Сеть',Target='[INSTALLFOLDER]LineVPN.exe',Icon='SetIcon',IconIndex='0',WorkingDirectory='INSTALLFOLDER');node(c,'RemoveFolder',Id='RemoveShortcutFolder',On='uninstall');node(c,'RegistryValue',Root='HKLM',Key='Software\\LineVPN',Name='installed',Type='integer',Value='1',KeyPath='yes');node(feature,'ComponentRef',Id='Shortcut')
 # Run elevated after the service stops but BEFORE deleting its executable.
 # A cleanup failure aborts removal, leaving the recovery tool available.
 node(p,'CustomAction',Id='RecoverNetwork',FileRef='Agent',ExeCommand='-recover-network',Execute='deferred',Impersonate='no',Return='check')

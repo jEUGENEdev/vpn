@@ -2,37 +2,45 @@
 # Stop the old processes BEFORE Installer replaces their executable/scripts.
 set -euo pipefail
 [[ "$EUID" -eq 0 ]] || { echo 'Installer must run as root.' >&2; exit 1; }
-[[ "${3:-/}" == / ]] || { echo 'Install LineVPN on the running system volume.' >&2; exit 1; }
+[[ "${3:-/}" == / ]] || { echo 'Install Сеть on the running system volume.' >&2; exit 1; }
+
+for vpn_bundle in /Applications/Сеть.app /Applications/LineVPN.app; do
+  if [[ -d "$vpn_bundle" ]] && [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$vpn_bundle/Contents/Info.plist" 2>/dev/null || true)" != dev.linevpn.desktop ]]; then
+    echo 'Another application occupies the installation path; it will not be replaced.' >&2
+    exit 1
+  fi
+done
 
 vpn_version="$(cat "$(dirname "$0")/version")"
 vpn_installed="$(/usr/sbin/pkgutil --pkg-info dev.linevpn.service 2>/dev/null | /usr/bin/awk '/^version:/ {print $2}' || true)"
 vpn_app_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' /Applications/LineVPN.app/Contents/Info.plist 2>/dev/null || true)"
-for vpn_previous in "$vpn_installed" "$vpn_app_version"; do
+vpn_set_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' /Applications/Сеть.app/Contents/Info.plist 2>/dev/null || true)"
+for vpn_previous in "$vpn_installed" "$vpn_app_version" "$vpn_set_version"; do
 if [[ -n "$vpn_previous" ]]; then
   # All shipped receipts use three numeric components. Unknown receipts must
   # be inspected, never silently downgraded or removed.
   for value in "$vpn_version" "$vpn_previous"; do
-    [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Cannot compare installed LineVPN version.' >&2; exit 1; }
+    [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Cannot compare installed Сеть version.' >&2; exit 1; }
   done
   IFS=. read -r vpn_major vpn_minor vpn_patch <<< "$vpn_version"
   IFS=. read -r vpn_old_major vpn_old_minor vpn_old_patch <<< "$vpn_previous"
   if (( 10#$vpn_old_major > 10#$vpn_major ||
         (10#$vpn_old_major == 10#$vpn_major && 10#$vpn_old_minor > 10#$vpn_minor) ||
         (10#$vpn_old_major == 10#$vpn_major && 10#$vpn_old_minor == 10#$vpn_minor && 10#$vpn_old_patch > 10#$vpn_patch) )); then
-    echo 'A newer LineVPN version is installed. Keeping it and its data.' >&2
+    echo 'A newer Сеть version is installed. Keeping it and its data.' >&2
     exit 1
   fi
 fi
 done
 
-vpn_gui='^/Applications/LineVPN\.app/Contents/MacOS/LineVPN( |$)'
+vpn_gui='^/Applications/(LineVPN|Сеть)\.app/Contents/MacOS/LineVPN( |$)'
 /usr/bin/pkill -TERM -f "$vpn_gui" 2>/dev/null || true
 for ((vpn_wait=0; vpn_wait<30; vpn_wait++)); do
   /usr/bin/pgrep -f "$vpn_gui" >/dev/null || break
   sleep 1
 done
 if /usr/bin/pgrep -f "$vpn_gui" >/dev/null; then
-  echo 'Close LineVPN and run the installer again.' >&2
+  echo 'Close Сеть and run the installer again.' >&2
   exit 1
 fi
 
@@ -44,5 +52,5 @@ for ((vpn_wait=0; vpn_wait<30; vpn_wait++)); do
   fi
   sleep 1
 done
-echo 'Cannot stop the previous LineVPN service. Its files and profile were not replaced.' >&2
+echo 'Cannot stop the previous Сеть service. Its files and profile were not replaced.' >&2
 exit 1

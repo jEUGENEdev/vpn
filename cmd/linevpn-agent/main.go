@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"github.com/jEUGENEdev/vpn/internal/client"
+	"github.com/jEUGENEdev/vpn/internal/desktopcontrol"
+	"github.com/jEUGENEdev/vpn/internal/model"
 	"github.com/jEUGENEdev/vpn/internal/owner"
 	"github.com/jEUGENEdev/vpn/internal/platform"
 	"github.com/jEUGENEdev/vpn/internal/secure"
-	"github.com/jEUGENEdev/vpn/internal/ui"
 	"log"
 	"net"
 	"net/http"
@@ -24,6 +27,12 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "--approve-control" {
+		if err := approveControl(os.Args[2]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "--lookup-owner" {
 		if e := owner.ServeHelper(); e != nil {
 			log.Fatal(e)
@@ -82,6 +91,30 @@ func serve(ctx context.Context, dir string) error {
 	if e = tokenPermissions(dir, path); e != nil {
 		return e
 	}
+	// Reserve the public endpoint before publishing a fresh private session.
+	ln, e := net.Listen("tcp", "127.0.0.1:17891")
+	if e != nil {
+		return e
+	}
+	defer ln.Close()
+	control, e := desktopcontrol.Open(dir)
+	if e != nil {
+		return e
+	}
+	defer control.Listener.Close()
+	// Publish only the public certificate, never the administrative credential.
+	publicSession, e := json.Marshal(map[string]string{"certificate": control.Credentials.Certificate})
+	if e != nil {
+		return e
+	}
+	publicPath := filepath.Join(dir, "ui-session.json")
+	if e = secure.Save(publicPath, publicSession); e != nil {
+		return e
+	}
+	if e = tokenPermissions(dir, publicPath); e != nil {
+		return e
+	}
+	ln = tls.NewListener(ln, control.TLS)
 	ctx, cancel := context.WithCancel(ctx)
 	d, e := platform.Start(ctx, dir)
 	if e != nil {
@@ -90,11 +123,26 @@ func serve(ctx context.Context, dir string) error {
 	}
 	defer d.Close()
 	defer cancel()
-	ln, e := net.Listen("tcp", "127.0.0.1:17891")
-	if e != nil {
-		return e
-	}
-	h := &http.Server{Handler: d.Client.Handler(token, ui.Handler("client")), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second}
+	bridge := desktopcontrol.New(token, control.Credentials.Token, d.Client.Handler(control.Credentials.Token, http.NotFoundHandler()), func(action string, data json.RawMessage) (string, error) {
+		state := d.Client.State().(map[string]any)
+		server, _ := state["server"].(string)
+		return desktopcontrol.Description(action, data, server, func(id string) string {
+			apps, _ := state["applications"].([]model.Application)
+			for _, app := range apps {
+				if app.ID == id {
+					return app.Name + "\n" + app.Path
+				}
+			}
+			return id
+		})
+	})
+	h := &http.Server{Handler: bridge.Public(desktopHandler(d.Client, token, http.NotFoundHandler())), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second}
+	admin := &http.Server{Handler: bridge.Privileged(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second}
+	go func() {
+		if err := admin.Serve(control.Listener); err != nil && err != http.ErrServerClosed {
+			cancel()
+		}
+	}()
 	restart := make(chan struct{})
 	d.Client.SetNetworkController(&servicePower{restart: restart})
 	stopped := make(chan struct{})
@@ -110,8 +158,12 @@ func serve(ctx context.Context, dir string) error {
 		if err := h.Shutdown(shutdown); err != nil {
 			h.Close()
 		}
+		// Flush the privileged commit response before a power change exits.
+		if err := admin.Shutdown(shutdown); err != nil {
+			admin.Close()
+		}
 	}()
-	fmt.Println("LineVPN service started")
+	fmt.Println("Сеть: служба запущена")
 	e = h.Serve(ln)
 	if e == http.ErrServerClosed {
 		<-stopped

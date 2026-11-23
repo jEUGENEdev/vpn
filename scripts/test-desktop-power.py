@@ -19,11 +19,11 @@ opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def api(body=None):
-    request = urllib.request.Request("http://127.0.0.1:17891/local/" + ("vpn" if body is not None else "state"),
-        data=json.dumps(body).encode() if body is not None else None,
-        headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
-    with opener.open(request, timeout=5) as response:
-        return json.load(response)
+    if body is not None:
+        from desktop_control_fixture import request as privileged_request
+        return privileged_request(data, token, 'vpn', body)
+    from desktop_control_fixture import state as public_state
+    return public_state(data,token)
 
 
 def ready(enabled):

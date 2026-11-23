@@ -1,11 +1,12 @@
 <!DOCTYPE html>
 <html lang="ru">
-<head>
+<head><link rel="icon" href="icon.png" type="image/png">
 <meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'self'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#f4f5f8">
-<title>Линия — ваша сеть, ваши правила</title>
+<title>Сеть — ваши правила подключения</title>
 <link rel="stylesheet" href="style.css">
 <script src="traffic.js" defer="">
 </script>
@@ -18,8 +19,8 @@
 <a class="skip-link" href="#main-content">Перейти к содержимому</a>
 <div class="shell">
 <aside class="sidebar">
-<a class="brand" href="#main-content" aria-label="Линия VPN — к содержимому">
-<span class="brandmark" aria-hidden="true">л</span>линия<span class="brand-sub">VPN</span>
+<a class="brand" href="#main-content" aria-label="Сеть — к содержимому">
+<img class="brandmark" src="icon.png" alt="" aria-hidden="true">Сеть<span class="brand-sub">VPN</span>
 </a>
 <div class="nav-label">ЛИЧНАЯ СЕТЬ</div>
 <nav aria-label="Разделы клиента">
@@ -41,7 +42,7 @@
 <span class="tiny-dot" aria-hidden="true">
 </span>Решение остаётся за вами</div>
 <button id="theme" class="text-button">Сменить тему ◐</button>
-<div class="version">Линия · 0.2.0 preview</div>
+<div class="version">Сеть · 0.3.0 preview</div>
 </div>
 </aside>
 <main id="main-content" tabindex="-1">
@@ -67,7 +68,7 @@
 <section id="setup" class="setup card">
 <div>
 <span class="step">01 / ПОДКЛЮЧЕНИЕ</span>
-<h2>Своя линия.<br>Свои правила.</h2>
+<h2>Своя сеть.<br>Свои правила.</h2>
 <p>Добавьте профиль сервера, войдите в аккаунт — и решайте, какие адреса подключать через VPN.</p>
 </div>
 <div class="form-area">
@@ -269,7 +270,7 @@
 </section>
 </div>
 <footer>
-<span>ЛИНИЯ / ЛИЧНАЯ СЕТЬ</span>
+<span>СЕТЬ / ЛИЧНАЯ СЕТЬ</span>
 <span>Ваши разрешения — ваши правила.</span>
 </footer>
 </main>

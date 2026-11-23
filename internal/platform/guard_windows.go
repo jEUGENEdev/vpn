@@ -22,7 +22,7 @@ func guid(s string) windows.GUID {
 	return *(*windows.GUID)(unsafe.Pointer(&v[0]))
 }
 func Guard(name string) error {
-	s, e := wf.New(&wf.Options{Name: "LineVPN persistent protection", Dynamic: false})
+	s, e := wf.New(&wf.Options{Name: "Сеть — защита подключения", Dynamic: false})
 	if e != nil {
 		return e
 	}
@@ -38,7 +38,7 @@ func Guard(name string) error {
 		}
 	}
 	if !found {
-		if e = s.AddProvider(&wf.Provider{ID: provider, Name: "LineVPN", Persistent: true}); e != nil {
+		if e = s.AddProvider(&wf.Provider{ID: provider, Name: "Сеть", Persistent: true}); e != nil {
 			return e
 		}
 	}
@@ -53,7 +53,7 @@ func Guard(name string) error {
 		}
 	}
 	if !found {
-		if e = s.AddSublayer(&wf.Sublayer{ID: sublayer, Name: "LineVPN", Provider: provider, Persistent: true, Weight: 65535}); e != nil {
+		if e = s.AddSublayer(&wf.Sublayer{ID: sublayer, Name: "Сеть", Provider: provider, Persistent: true, Weight: 65535}); e != nil {
 			return e
 		}
 	}
@@ -70,7 +70,7 @@ func Guard(name string) error {
 		if ids[id] {
 			return nil
 		}
-		return s.AddRule(&wf.Rule{ID: id, Name: "LineVPN " + key, Layer: layer, Sublayer: sublayer, Provider: provider, Persistent: true, Weight: weight, Action: action, HardAction: action == wf.ActionPermit, Conditions: conditions})
+		return s.AddRule(&wf.Rule{ID: id, Name: "Сеть " + key, Layer: layer, Sublayer: sublayer, Provider: provider, Persistent: true, Weight: weight, Action: action, HardAction: action == wf.ActionPermit, Conditions: conditions})
 	}
 	exe, e := os.Executable()
 	if e != nil {
@@ -93,7 +93,7 @@ func Guard(name string) error {
 	}
 	// Delete only previous tunnel permits. The persistent deny remains installed.
 	for _, r := range existing {
-		if r.Provider == provider && r.Name == "LineVPN tunnel" {
+		if r.Provider == provider && (r.Name == "LineVPN tunnel" || r.Name == "Сеть tunnel") {
 			if e = s.DeleteRule(r.ID); e != nil {
 				return e
 			}

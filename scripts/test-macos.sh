@@ -29,7 +29,7 @@ vpn_ready=false
 for ((i=0; i<20; i++)); do
   if [[ -f /var/lib/linevpn/ui-token ]]; then
     vpn_token="$(cat /var/lib/linevpn/ui-token)"
-    if curl --noproxy '*' -fsS --max-time 2 -H "Authorization: Bearer $vpn_token" http://127.0.0.1:17891/local/state > build/macos-state.json; then vpn_ready=true; break; fi
+    if python3 scripts/desktop_control_fixture.py state > build/macos-state.json; then vpn_ready=true; break; fi
   fi
   sleep 1
 done
@@ -41,19 +41,19 @@ import os, pathlib, subprocess
 report = pathlib.Path('build/macos-gui.txt').resolve()
 report.unlink(missing_ok=True)
 env = dict(os.environ, LINEVPN_SMOKE_TEST_REPORT=str(report))
-subprocess.run(['/Applications/LineVPN.app/Contents/MacOS/LineVPN', '--background'], env=env, check=True, timeout=45)
+subprocess.run(['/Applications/Сеть.app/Contents/MacOS/LineVPN', '--background'], env=env, check=True, timeout=45)
 assert report.read_text().startswith('PASS:'), 'Packaged Electron did not load the client UI'
 PYGUI
 dig +short +time=2 +tries=1 @172.29.255.2 example.com A | grep -Eq '^198\.(18|19)\.'
 curl --noproxy '*' -s --output /dev/null --connect-timeout 4 --max-time 8 http://1.1.1.1/cdn-cgi/trace
 # The privileged lookup helper must still identify curl after the agent drops UID.
-curl --noproxy '*' -fsS --max-time 3 -H "Authorization: Bearer $vpn_token" http://127.0.0.1:17891/local/state > build/macos-state.json
+python3 scripts/desktop_control_fixture.py state > build/macos-state.json
 vpn_curl_app="$(python3 -c 'import json; s=json.load(open("build/macos-state.json")); assert not any(r["target"]=="1.1.1.1" for r in s["requests"]); print(next(a["id"] for a in s["applications"] if a["name"]=="curl"))')"
-curl --noproxy '*' -fsS --max-time 3 -H "Authorization: Bearer $vpn_token" -H 'Content-Type: application/json' --data "{\"id\":\"$vpn_curl_app\",\"decision\":\"trusted\"}" http://127.0.0.1:17891/local/applications > /dev/null
+python3 scripts/desktop_control_fixture.py applications "{\"id\":\"$vpn_curl_app\",\"decision\":\"trusted\"}" > /dev/null
 if curl --noproxy '*' -fsS --output /dev/null --connect-timeout 4 --max-time 8 http://1.1.1.1/cdn-cgi/trace; then echo "Protected connection escaped VPN" >&2; exit 1; fi
-curl --noproxy '*' -fsS --max-time 3 -H "Authorization: Bearer $vpn_token" -H 'Content-Type: application/json' --data "{\"id\":\"$vpn_curl_app\",\"decision\":\"addresses\"}" http://127.0.0.1:17891/local/applications > /dev/null
-curl --noproxy '*' -s --max-time 3 -H "Authorization: Bearer $vpn_token" -H 'Content-Type: application/json' --data '{"target":"1.1.1.1","action":"approve","revision":0}' http://127.0.0.1:17891/local/rules > /dev/null || true
-curl --noproxy '*' -fsS --max-time 2 -H "Authorization: Bearer $vpn_token" http://127.0.0.1:17891/local/state > build/macos-state.json
+python3 scripts/desktop_control_fixture.py applications "{\"id\":\"$vpn_curl_app\",\"decision\":\"addresses\"}" > /dev/null
+python3 scripts/desktop_control_fixture.py rules '{"target":"1.1.1.1","action":"approve","revision":0}' > /dev/null || true
+python3 scripts/desktop_control_fixture.py state > build/macos-state.json
 python3 -c 'import json; assert "1.1.1.1" in json.load(open("build/macos-state.json"))["pending_protection"]'
 if curl --noproxy '*' -fsS --output /dev/null --connect-timeout 4 --max-time 8 http://1.1.1.1/cdn-cgi/trace; then echo "Protected connection escaped VPN" >&2; exit 1; fi
 python3 scripts/test-desktop-power.py
@@ -62,10 +62,10 @@ sudo launchctl bootout system/dev.linevpn.agent
 sudo python3 scripts/test-upgrade-state.py snapshot /var/lib/linevpn build/macos-upgrade-state.json
 sudo installer -pkg build/macos-tested.pkg -target / >> build/macos-install.log
 sudo python3 scripts/test-upgrade-state.py check /var/lib/linevpn build/macos-upgrade-state.json
-[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' /Applications/LineVPN.app/Contents/Info.plist)" == "$(python3 scripts/package_version.py)" ]]
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' /Applications/Сеть.app/Contents/Info.plist)" == "$(python3 scripts/package_version.py)" ]]
 vpn_ready=false
 for ((i=0; i<20; i++)); do
-  if curl --noproxy '*' -fsS --max-time 2 -H "Authorization: Bearer $vpn_token" http://127.0.0.1:17891/local/state > /dev/null; then vpn_ready=true; break; fi
+  if python3 scripts/desktop_control_fixture.py state > /dev/null; then vpn_ready=true; break; fi
   sleep 1
 done
 [[ "$vpn_ready" == true ]] || { echo 'Service did not restart after reinstall' >&2; exit 1; }
