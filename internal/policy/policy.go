@@ -133,15 +133,42 @@ func Decide(rules []string, target string, ready bool) Route {
 	return VPN
 }
 
-// Public prevents server egress into private networks, metadata, multicast and
-// transition prefixes. Rechecked on the actual resolved IP before every dial.
+// Keep parsed prefixes outside the per-connection path. Special-purpose IPv6
+// allocations are not necessarily excluded by netip.Addr.IsGlobalUnicast.
+// Source: https://www.iana.org/assignments/iana-ipv6-special-registry/
+var nonPublicPrefixes = [...]netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("::/96"),
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("100::/64"),
+	netip.MustParsePrefix("100:0:0:1::/64"), // Dummy addresses.
+	netip.MustParsePrefix("2001::/23"),
+	netip.MustParsePrefix("2001:db8::/32"), // Documentation.
+	netip.MustParsePrefix("2002::/16"),
+	netip.MustParsePrefix("3fff::/20"), // Documentation.
+	netip.MustParsePrefix("5f00::/16"), // SRv6 segment identifiers.
+}
+
+// Public prevents server egress into private networks, metadata, multicast,
+// documentation and transition prefixes. Rechecked on the resolved IP at dial.
 func Public(ip netip.Addr) bool {
+	if ip.Zone() != "" {
+		return false
+	}
 	ip = ip.Unmap()
 	if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
 		return false
 	}
-	for _, s := range []string{"0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24", "192.0.2.0/24", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "240.0.0.0/4", "::/96", "64:ff9b::/96", "64:ff9b:1::/48", "100::/64", "2001::/23", "2002::/16"} {
-		if netip.MustParsePrefix(s).Contains(ip) {
+	for _, prefix := range nonPublicPrefixes {
+		if prefix.Contains(ip) {
 			return false
 		}
 	}

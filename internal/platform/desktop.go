@@ -12,10 +12,8 @@ import (
 	"github.com/sagernet/sing/common/control"
 	"github.com/sagernet/sing/common/logger"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
-	"time"
 )
 
 type Desktop struct {
@@ -54,9 +52,7 @@ func Start(ctx context.Context, dir string) (*Desktop, error) {
 		}
 		return i.Name, i.Index, nil
 	})}
-	dialer.Resolver = &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-		return (&net.Dialer{Timeout: 8 * time.Second, Control: dialer.Control}).DialContext(ctx, "udp", "1.1.1.1:53")
-	}}
+	dialer.Resolver = transport.DirectResolver(dialer.Control)
 	transport.InstallDialer(dialer)
 	c, e := client.New(dir, dialer)
 	if e != nil {
