@@ -105,8 +105,9 @@ function renderApplications() {
     },
     (card, app) => {
       setText(card.querySelector('.row-copy strong'), app.name);
-      setText(card.querySelector('.row-copy p'), powerRouteNote('Решение') || (state.traffic_mode === 'all' ? 'Весь трафик через VPN · выборочное решение сохранено' : app.decision === 'trusted' ? (state.app_tunnel ? 'Доверенное · весь трафик через VPN' : 'Доверенное · VPN недоступен, прямое подключение запрещено') : app.decision === 'addresses' ? 'VPN только для разрешённых адресов' : app.decision === 'denied' ? 'VPN запрещён · защищённые адреса заблокированы' : 'VPN ещё не разрешён · защищённые адреса заблокированы'));
-      setText(card.querySelector('.application-target'), 'Последний адрес: ' + app.target);
+      const excluded=state.native_app_scope&&state.traffic_mode!=='all'&&state.vpn_enabled!==false&&app.decision!=='trusted'&&app.decision!=='addresses';
+      setText(card.querySelector('.row-copy p'), excluded ? (state.guard ? 'Вне VPN · интернет заблокирован настройкой Android' : 'Вне VPN · обычная сеть и DNS') : powerRouteNote('Решение') || (state.traffic_mode === 'all' ? 'Весь трафик через VPN · выборочное решение сохранено' : app.decision === 'trusted' ? (state.app_tunnel ? 'Доверенное · весь трафик через VPN' : 'Доверенное · VPN недоступен, прямое подключение запрещено') : app.decision === 'addresses' ? 'VPN только для разрешённых адресов' : app.decision === 'denied' ? 'VPN запрещён · защищённые адреса заблокированы' : 'VPN ещё не разрешён · защищённые адреса заблокированы'));
+      setText(card.querySelector('.application-target'), app.target ? 'Последний адрес: ' + app.target : 'Сетевых наблюдений нет');
       setText(card.querySelector('.application-path'), app.path);
       card.hidden = !matchesSearch('applications-search', [app.target, app.decision, ...sourceFields([app])]);
       card.querySelector('.primary').disabled = app.decision === 'trusted';

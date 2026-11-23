@@ -3,6 +3,7 @@ package client
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 	"path/filepath"
 
 	"github.com/jEUGENEdev/vpn/internal/secure"
@@ -26,14 +27,20 @@ func (c *Client) trafficModeLocked() string {
 
 // Mode is local to this device. Changing it must neither erase app decisions
 // nor let existing/in-flight connections outlive the user's new policy.
-func (c *Client) SetTrafficMode(mode string) error {
+func (c *Client) SetTrafficMode(mode string) (result error) {
 	if mode != TrafficSelective && mode != TrafficAll {
 		return errors.New("неверный режим трафика")
 	}
 	c.change.Lock()
 	defer c.change.Unlock()
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	prepared := false
+	defer func() {
+		c.mu.Unlock()
+		if prepared {
+			result = errors.Join(result, c.applyApplicationScope())
+		}
+	}()
 	if c.closed {
 		return errors.New("client stopped")
 	}
@@ -45,6 +52,14 @@ func (c *Client) SetTrafficMode(mode string) error {
 	}
 	next := c.config
 	next.TrafficMode = mode
+	apps := maps.Clone(c.apps)
+	c.mu.Unlock()
+	err := c.prepareApplicationScope(mode, apps)
+	c.mu.Lock()
+	if err != nil {
+		return err
+	}
+	prepared = true
 	raw, err := json.Marshal(next)
 	if err != nil {
 		return err

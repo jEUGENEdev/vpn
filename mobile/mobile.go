@@ -25,7 +25,8 @@ type Protector interface {
 	Protect(fd int64) bool
 	DeviceName() string
 	ResolveApplication(network, source string, sourcePort int64, destination string, destinationPort int64) string
-	OpenTunnel() (int64, error)
+	OpenTunnel(all bool, applications string) (int64, error)
+	InstalledApplications() (string, error)
 	CheckDisable() error
 	CloseTunnel() error
 }
@@ -41,6 +42,7 @@ type session struct {
 	url    string
 	ctx    context.Context
 	p      Protector
+	scope  string
 }
 
 func Start(dir string, p Protector) (string, error) {
@@ -80,6 +82,9 @@ func Start(dir string, p Protector) (string, error) {
 		}
 		return app, nil
 	})
+	// An unavailable catalogue must not take away the recovery UI. Persisted
+	// grants still scope the TUN and Android revalidates each package identity.
+	catalogueError := updateApplications(c, p)
 	s := &session{cancel: cancel, c: c, ctx: ctx, p: p}
 	// Off keeps the UI alive. A local forwarding interface is retained only
 	// when Android lockdown requires it, including after a service restart.
@@ -87,6 +92,9 @@ func Start(dir string, p Protector) (string, error) {
 		// Android retains a duplicate TUN descriptor, keeping traffic captured
 		// even if the native packet stack fails. The UI remains available.
 		c.SetNetworkError(e)
+	}
+	if catalogueError != nil {
+		c.SetNetworkError(fmt.Errorf("каталог приложений Android: %w", catalogueError))
 	}
 	if p.CheckDisable() != nil {
 		c.SetGuard(true)
@@ -116,6 +124,15 @@ func Start(dir string, p Protector) (string, error) {
 func (s *session) Check(enabled bool) error { return nil }
 
 func (s *session) Apply(enabled bool) error {
+	all, apps := s.c.ApplicationScope()
+	return s.applyScope(enabled, all, apps)
+}
+
+func (s *session) ApplyApplicationScope(all bool, apps []model.ApplicationInfo) error {
+	return s.applyScope(s.c.VPNEnabled(), all, apps)
+}
+
+func (s *session) applyScope(enabled, all bool, apps []model.ApplicationInfo) error {
 	lockdown := s.p.CheckDisable() != nil
 	s.c.SetGuard(lockdown)
 	if !enabled && !lockdown {
@@ -125,17 +142,38 @@ func (s *session) Apply(enabled bool) error {
 		}
 		return s.p.CloseTunnel()
 	}
-	// Reuse the live TUN across mode changes. In off mode policy sends all
-	// traffic directly, including when Android's lockdown is enabled.
-	if s.t != nil {
+	// Explicit off under lockdown retains device-wide local forwarding.
+	if !enabled {
+		all = true
+	}
+	if all {
+		apps = nil
+	}
+	raw, err := json.Marshal(apps)
+	if err != nil {
+		return err
+	}
+	key := fmt.Sprintf("%t:%s", all, raw)
+	if s.t != nil && s.scope == key {
 		return nil
 	}
-	fd, err := s.p.OpenTunnel()
+	// Android replaces the interface atomically; never release the old retained
+	// descriptor before establish succeeds. Failed startup retains the new one.
+	fd, err := s.p.OpenTunnel(all, string(raw))
 	if err != nil {
+		// establish may have succeeded before duplicating its descriptor failed.
+		// Do not reuse a possibly obsolete stack on the next policy retry.
+		s.scope = ""
+		s.c.SetNetworkError(err)
 		return err
 	}
 	if fd < 1 {
 		return errors.New("Android не разрешил VPN; откройте приложение и подтвердите подключение")
+	}
+	s.c.NetworkScopeChanged()
+	if s.t != nil {
+		s.t.Close()
+		s.t = nil
 	}
 	// Ownership transfers to StartTunnel (including its failure paths).
 	t, err := s.c.StartTunnel(s.ctx, tun.Options{Name: "linevpn", FileDescriptor: int(fd), AutoRoute: false, EXP_ExternalConfiguration: true})
@@ -143,7 +181,30 @@ func (s *session) Apply(enabled bool) error {
 		return err
 	}
 	s.t = t
+	s.scope = key
 	return nil
+}
+
+func updateApplications(c *client.Client, p Protector) error {
+	raw, err := p.InstalledApplications()
+	if err != nil {
+		return err
+	}
+	var apps []model.ApplicationInfo
+	if len(raw) > 2*1024*1024 || json.Unmarshal([]byte(raw), &apps) != nil || apps == nil {
+		return errors.New("не удалось прочитать каталог приложений Android")
+	}
+	return c.SetInstalledApplications(apps)
+}
+
+// Called after package changes; serializes with power and permission changes.
+func RefreshApplications() error {
+	mu.Lock()
+	defer mu.Unlock()
+	if current == nil {
+		return nil
+	}
+	return updateApplications(current.c, current.p)
 }
 func URL() string {
 	mu.Lock()

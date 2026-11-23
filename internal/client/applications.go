@@ -191,7 +191,7 @@ func (c *Client) needsApplicationTunnelLocked() bool {
 		return true
 	}
 	for _, a := range c.apps {
-		if a.Decision == "trusted" {
+		if a.Decision == "trusted" && (c.appInventory == nil || c.appInventory[a.ID]) {
 			return true
 		}
 	}
@@ -240,9 +240,17 @@ func (c *Client) applicationAction(ctx context.Context, data any) (any, error) {
 	app.Decision = decision
 	app.SyncPending = true
 	next[id] = app
+	if c.appScope {
+		mode := c.trafficModeLocked()
+		c.mu.Unlock()
+		if err := c.prepareApplicationScope(mode, next); err != nil {
+			return nil, err
+		}
+		c.mu.Lock()
+	}
 	if err := c.saveApplications(next); err != nil {
 		c.mu.Unlock()
-		return nil, err
+		return nil, errors.Join(err, c.applyApplicationScope())
 	}
 	c.apps = next
 	c.routeEpoch++
@@ -253,6 +261,9 @@ func (c *Client) applicationAction(ctx context.Context, data any) (any, error) {
 		}
 	}
 	c.mu.Unlock()
+	if err := c.applyApplicationScope(); err != nil {
+		return nil, err
+	}
 	policyErr := c.syncSavedPolicy(ctx)
 	if err := c.ensureApplicationTunnel(ctx); err != nil {
 		return map[string]any{"ok": true, "pending": true, "message": "Решение сохранено. Для VPN приложения ждём подтверждения сервера."}, nil
@@ -266,6 +277,9 @@ func (c *Client) applicationSnapshotLocked() ([]model.Application, []model.Appli
 	apps := make([]model.Application, 0, len(c.apps))
 	pending := []model.Application{}
 	for _, a := range c.apps {
+		if c.appInventory != nil && !c.appInventory[a.ID] {
+			continue
+		}
 		apps = append(apps, a)
 	}
 	sort.Slice(apps, func(i, j int) bool {
