@@ -48,7 +48,9 @@ codesign --verify --strict 'build/macos-root/Library/Application Support/LineVPN
 vpn_app_dir=apps/desktop/dist/mac
 [[ "$vpn_electron_arch" != arm64 ]] || vpn_app_dir=apps/desktop/dist/mac-arm64
 mkdir -p build/macos-root/Applications build/macos-image
-ditto "$vpn_app_dir/Сеть.app" build/macos-root/Applications/Сеть.app
+# executableName preserves the executable and builder output name for upgrades;
+# install the bundle under the user-facing product name.
+ditto "$vpn_app_dir/LineVPN.app" build/macos-root/Applications/Сеть.app
 pkgbuild --analyze --root build/macos-root build/macos-components.plist
 python3 - <<'PY'
 import pathlib, plistlib
