@@ -1,4 +1,4 @@
-# Read-only validation of the compiled MSI against its payload's PE resources.
+﻿# Read-only validation of the compiled MSI against its payload's PE resources.
 param([Parameter(Mandatory=$true)][string]$Msi,
       [string]$Source = 'build/LineVPN.wxs',
       [string]$Versions = 'build/windows-file-versions.json')
@@ -34,3 +34,19 @@ $view.Execute()
 if ($view.Fetch().StringData(1) -ne $expected.product_name) { throw 'Wrong MSI product name' }
 $view.Close()
 Write-Output "PASS: compiled MSI name and all $checked file-version entries match the payload"
+
+# Validate the compiled service contract, including compilers that have different defaults.
+$view = $database.OpenView('SELECT `Name`, `ErrorControl`, `Arguments` FROM `ServiceInstall`')
+$view.Execute()
+$service = $view.Fetch()
+if (-not $service -or $service.StringData(1) -ne 'LineVPN' -or ($service.IntegerData(2) -band 32768) -eq 0 -or $service.StringData(3) -ne '-service') { throw 'MSI must install a mandatory LineVPN service' }
+if ($view.Fetch()) { throw 'Unexpected extra service in MSI' }
+$view.Close()
+$view = $database.OpenView('SELECT `Action`, `Condition`, `Sequence` FROM `InstallExecuteSequence`')
+$view.Execute()
+$actions = @{}
+while ($record = $view.Fetch()) { $actions[$record.StringData(1)] = @{ Condition=$record.StringData(2); Sequence=$record.IntegerData(3) } }
+$view.Close()
+if (-not $actions.ContainsKey('CheckServiceReady') -or $actions.CheckServiceReady.Sequence -le $actions.StartServices.Sequence -or $actions.CheckServiceReady.Sequence -ge $actions.InstallFinalize.Sequence) { throw 'Missing transactional service readiness check' }
+if ($actions.CheckServiceReady.Condition -ne 'NOT REMOVE AND NOT UPGRADINGPRODUCTCODE') { throw 'Readiness must not run during removal' }
+Write-Output 'PASS: compiled MSI requires service registration and readiness before commit'

@@ -1,6 +1,6 @@
 {
   "name": "linevpn-desktop",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "private": true,
   "description": "Сеть — VPN с разрешениями для приложений и адресов",
   "author": "jEUGENEdev",
@@ -57,7 +57,8 @@
         "msi"
       ],
       "requestedExecutionLevel": "asInvoker",
-      "icon": "branding/set.ico"
+      "icon": "branding/set.ico",
+      "executableName": "Сеть"
     },
     "msi": {
       "perMachine": true,

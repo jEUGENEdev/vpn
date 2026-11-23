@@ -20,7 +20,16 @@ if(!app.requestSingleInstanceLock())app.quit();else{
 app.on('before-quit',()=>{quitting=true});
 app.on('second-instance',()=>{win?.show();win?.focus()});
 app.whenReady().then(async()=>{
- if(app.isPackaged&&!smokeReport){const marker=path.join(app.getPath('userData'),'background-enabled-set');if(!fs.existsSync(marker)){app.setLoginItemSettings({openAtLogin:true,openAsHidden:true,args:["--background"]});fs.mkdirSync(path.dirname(marker),{recursive:true});fs.writeFileSync(marker,'1')}}
+ if(app.isPackaged&&!smokeReport){
+  const legacyMarker=path.join(app.getPath('userData'),'background-enabled-set');
+  const marker=process.platform==='win32'?legacyMarker+'-033':legacyMarker;
+  if(!fs.existsSync(marker)){
+   // Migrate our renamed launcher while retaining an explicitly disabled login item.
+   const openAtLogin=!fs.existsSync(legacyMarker)||app.getLoginItemSettings({path:path.join(path.dirname(process.execPath),'LineVPN.exe'),args:['--background']}).openAtLogin;
+   if(openAtLogin)app.setLoginItemSettings({openAtLogin:true,openAsHidden:true,args:['--background']});
+   fs.mkdirSync(path.dirname(marker),{recursive:true});fs.writeFileSync(marker,'1');
+  }
+ }
  const workArea=screen.getPrimaryDisplay().workAreaSize;
  win=new BrowserWindow({show:!process.argv.includes("--background")&&!app.getLoginItemSettings().wasOpenedAtLogin,width:Math.min(1240,workArea.width),height:Math.min(850,workArea.height),minWidth:Math.min(640,workArea.width),minHeight:Math.min(480,workArea.height),title:'Сеть',icon:iconPath,backgroundColor:'#f4f5f8',webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});win.removeMenu();win.on('close',e=>{if(!quitting){e.preventDefault();win.hide()}});
  const trayIcon=nativeImage.createFromPath(path.join(__dirname,'branding','tray.png'));
@@ -29,6 +38,28 @@ app.whenReady().then(async()=>{
  function trustedFrame(event){return event.sender===win.webContents&&event.senderFrame===win.webContents.mainFrame&&event.senderFrame.url.split('#')[0]===uiURL}
  ipcMain.on('network-event',(event,value)=>{if(trustedFrame(event))notify(value)});
  ipcMain.handle('local-request',(event,action,data)=>{if(!trustedFrame(event)||!controlAPI)throw Error('Недоверенный источник команды');return controlAPI(action,data)});
- let loaded=false;async function check(){try{const token=fs.readFileSync(path.join(stateDir,'ui-token'),'utf8').trim();if(!controlAPI)controlAPI=createControl({token,session:()=>JSON.parse(fs.readFileSync(path.join(stateDir,'ui-session.json'),'utf8'))});const state=await controlAPI('state');failures=0;if(!loaded){loaded=true;await win.loadURL(uiURL);if(smokeReport){const valid=await win.webContents.executeJavaScript("document.readyState === 'complete' && !!document.getElementById('auth-form')");if(!valid)throw Error('Packaged client UI did not load');fs.writeFileSync(smokeReport,'PASS: packaged Electron UI loaded with authenticated service state\n');app.exit(0);return}}if(lastFailure){notify({kind:'recovered',title:'Служба снова работает',message:'Состояние VPN и маршрутов показано в приложении.'});lastFailure=0}for(const event of state.events||[])notify(event)}catch(e){if(smokeReport){console.error('Packaged UI smoke test failed:',e.message);app.exit(1);return}failures++;if(failures>=2&&Date.now()-lastFailure>900000){lastFailure=Date.now();notify({kind:'outage',title:'Служба VPN не отвечает',message:'Состояние VPN неизвестно. Системная защита сохраняется; дождитесь службы или явно выключите VPN.'})}if(!loaded&&failures===1){await dialog.showMessageBox(win,{type:'warning',title:'Установка фоновой службы',message:'Нужно установить службу приложения «Сеть»',detail:process.platform==='darwin'?'Повторно откройте Установить-Сеть.pkg из скачанного DMG. Он обновит приложение и службу, сохранив настройки. Потребуется пароль администратора.':'Служба устанавливается вместе с MSI. Запустите установщик приложения «Сеть» повторно и выберите восстановление, затем откройте приложение.',buttons:['Понятно']})}}}
+ // Load the installed UI even while the service is starting; never leave a blank window.
+ controlAPI=createControl({token:()=>fs.readFileSync(path.join(stateDir,'ui-token'),'utf8').trim(),session:()=>JSON.parse(fs.readFileSync(path.join(stateDir,'ui-session.json'),'utf8'))});
+ await win.loadURL(uiURL);
+ let startupNoticeShown=false,checking=false;
+ async function check(){
+  if(checking)return;
+  checking=true;
+  try{
+   const state=await controlAPI('state');failures=0;
+   if(smokeReport){const valid=await win.webContents.executeJavaScript("document.readyState === 'complete' && !!document.getElementById('auth-form')");if(!valid)throw Error('Packaged client UI did not load');fs.writeFileSync(smokeReport,'PASS: packaged Electron UI loaded with authenticated service state\n');app.exit(0);return}
+   if(lastFailure){notify({kind:'recovered',title:'Служба снова работает',message:'Состояние VPN и маршрутов показано в приложении.'});lastFailure=0}
+   for(const event of state.events||[])notify(event);
+  }catch(e){
+   failures++;
+   if(smokeReport){console.error('Packaged UI smoke test failed:',e.message);app.exit(1);return}
+   // Allow startup/restart time. An API error is not proof that no service exists.
+   if(failures>=4&&!startupNoticeShown){
+    startupNoticeShown=true;
+    await dialog.showMessageBox(win,{type:'warning',title:'Нет связи со службой «Сеть»',message:'Фоновая служба не ответила',detail:process.platform==='darwin'?'Откройте «Установщик Сеть» из скачанного DMG и нажмите «Установить» или «Обновить». Повторная установка восстанавливает приложение и службу, сохраняя настройки.':'Повторно запустите скачанный MSI приложения «Сеть». Эта же версия восстанавливается автоматически, без отдельного пункта «Восстановление». Дождитесь завершения и откройте «Сеть» из меню «Пуск». Если установщик запросит перезагрузку, выполните её.',buttons:['Понятно']});
+   }
+   if(failures>=4&&Date.now()-lastFailure>900000){lastFailure=Date.now();notify({kind:'outage',title:'Служба VPN не отвечает',message:'Состояние VPN неизвестно. Системная защита сохраняется; дождитесь службы или явно выключите VPN.'})}
+  }finally{checking=false}
+ }
  await check();setInterval(check,5000);
 });app.on('window-all-closed',()=>{});}

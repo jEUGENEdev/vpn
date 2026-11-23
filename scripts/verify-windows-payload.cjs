@@ -27,7 +27,7 @@ function inspect(directory) {
       const languages = [...new Set(infos.flatMap(info => info.getAvailableLanguages().map(item => item.lang)))];
       fileVersions[relative] = {version: [...versions][0], language: languages.join(',')};
     }
-    if (relative !== 'LineVPN.exe') continue;
+    if (relative !== 'Сеть.exe') continue;
     assert.ok(infos.length, 'Launcher has no Windows version information');
     assert.equal(fileVersions[relative].version, product.version + '.0');
     for (const info of infos) {
@@ -46,8 +46,10 @@ function inspect(directory) {
     assert.deepEqual(groups[0].getIconItemsFromEntries(resources.entries).map(bytes), supplied.icons.map(item => bytes(item.data)));
   }
 }
+assert.ok(!fs.existsSync(path.join(payload, 'LineVPN.exe')), 'Legacy launcher must not ship beside Сеть.exe');
+assert.ok(!fs.existsSync(path.join(payload, 'electron.exe')), 'Unbranded Electron launcher in payload');
 inspect(payload);
-assert.ok(fileVersions['LineVPN.exe'], 'Missing LineVPN.exe');
+assert.ok(fileVersions['Сеть.exe'], 'Missing Сеть.exe');
 const report = {product_version: product.version, product_name: 'Сеть', file_versions: fileVersions};
 if (process.argv[3]) fs.writeFileSync(process.argv[3], JSON.stringify(report, null, 2) + '\n');
 console.log('PASS: Windows PE product name, description, version, icons and x64 payload');

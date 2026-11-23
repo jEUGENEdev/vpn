@@ -50,7 +50,7 @@ class VersionTests(unittest.TestCase):
             payload = root / 'payload'
             (payload / 'resources/agent').mkdir(parents=True)
             (payload / 'resources/agent/linevpn-agent.exe').write_bytes(b'agent')
-            (payload / 'LineVPN.exe').write_bytes(b'gui')
+            (payload / 'Сеть.exe').write_bytes(b'gui')
             output = root / 'package.wxs'
             def generate():
                 subprocess.run([sys.executable, str(ROOT / 'packaging/windows/package.py'), str(payload), str(output)], check=True)
@@ -89,6 +89,17 @@ class VersionTests(unittest.TestCase):
             self.assertEqual(marker.attrib['Name'], 'StartMenuShortcut')
             self.assertIsNone(first.find('.//w:StandardDirectory[@Id="CommonAppDataFolder"]', ns), 'user state must remain outside MSI ownership')
             self.assertEqual(len(first.findall('.//w:ServiceInstall', ns)), 1)
+            self.assertEqual(first.find('.//w:ServiceInstall', ns).get('Vital'), 'yes',
+                             'service registration must fail the installation instead of leaving a GUI-only product')
+            ready = first.find('.//w:CustomAction[@Id="CheckServiceReady"]', ns)
+            self.assertEqual(ready.get('ExeCommand'), '-check-service')
+            self.assertEqual(ready.get('Return'), 'check')
+            self.assertEqual(ready.get('Impersonate'), 'no')
+            scheduled = first.find('.//w:Custom[@Action="CheckServiceReady"]', ns)
+            self.assertEqual(scheduled.get('After'), 'StartServices')
+            self.assertIn('NOT REMOVE', scheduled.get('Condition'))
+            self.assertNotIn('NOT REINSTALLMODE', overwrite.attrib['Condition'],
+                             'the default omus mode must not suppress forced replacement of old Electron files')
 
 
 class AndroidTests(unittest.TestCase):
@@ -210,6 +221,8 @@ elif name == 'pkill':
     if 'Contents/MacOS' not in sys.argv[-1]:
         (root/'worker-stopped').touch()
 elif name == 'linevpn-agent':
+    if '-check-service' in sys.argv:
+        sys.exit(int(os.environ.get('READINESS_CODE', '0')))
     sys.exit(int(os.environ.get('RECOVERY_CODE', '0')))
 elif name == 'uname':
     print(os.environ.get('MAC_ARCH', 'arm64'))
@@ -492,6 +505,12 @@ class MacOSScriptTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Журнал установки', result.stderr)
         self.assertFalse((self.root / 'dev.linevpn.installer.lock').exists())
+
+    def test_postinstall_rejects_a_service_that_never_becomes_ready(self):
+        result = self.run_script('postinstall', READINESS_CODE='1')
+        self.assertNotEqual(result.returncode, 0, 'launchctl bootstrap alone is not successful installation')
+        self.assertTrue(any('-check-service' in call for call in self.trace()))
+        self.assertFalse(any('-recover-network' in call for call in self.trace()))
 
     def test_postinstall_will_not_start_a_duplicate_service(self):
         self.assertNotEqual(self.run_script('postinstall', STUCK_SERVICE='1').returncode, 0)

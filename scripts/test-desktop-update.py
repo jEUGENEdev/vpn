@@ -60,11 +60,11 @@ def install(path, repair=False):
     if system == 'Windows':
         installed = pathlib.Path(os.environ['ProgramFiles']) / 'LineVPN'
         payload = ROOT / 'apps/desktop/dist/win-unpacked'
-        for name in ('LineVPN.exe', 'resources/app.asar', 'resources/agent/linevpn-agent.exe'):
+        for name in ('Сеть.exe', 'resources/app.asar', 'resources/agent/linevpn-agent.exe'):
             assert hashlib.sha256((installed / name).read_bytes()).digest() == hashlib.sha256((payload / name).read_bytes()).digest(), f'Stale or missing installed file: {name}'
         subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', r'''
 $ErrorActionPreference = 'Stop'
-$exe = Join-Path $env:ProgramFiles 'LineVPN/LineVPN.exe'
+$exe = Join-Path $env:ProgramFiles 'LineVPN/Сеть.exe'
 $version = [Diagnostics.FileVersionInfo]::GetVersionInfo($exe)
 if ($version.ProductName -ne 'Сеть' -or $version.FileDescription -ne 'Сеть') { throw 'Stale Electron branding' }
 $link = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'Сеть.lnk'
@@ -113,7 +113,7 @@ editWindowsResources({file: process.argv[1],
   versionStrings: {ProductName: 'Electron', FileDescription: 'Electron'},
   fileVersion: '45.3.3', productVersion: '45.3.3'
 }).catch(error => {console.error(error); process.exit(1);});
-''', str(installed / 'LineVPN.exe')], check=True)
+''', str(installed / 'Сеть.exe')], check=True)
             install(fixture)
             assert (installed / 'upgrade-fixture.txt').read_text() == 'new package payload'
             # Return to the released version only after explicit fixture removal.
