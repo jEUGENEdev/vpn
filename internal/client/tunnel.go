@@ -123,11 +123,14 @@ func (c *Client) NewConnectionEx(ctx context.Context, conn net.Conn, source, des
 		defer up.Close()
 		done := make(chan struct{})
 		go func() {
-			io.Copy(up, conn)
-			if v, ok := up.(interface{ CloseWrite() error }); ok {
-				v.CloseWrite()
-			} else {
+			if _, err := io.Copy(up, conn); err != nil {
+				// A reset or write failure aborts the flow; only a clean EOF
+				// leaves the response direction open.
 				up.Close()
+			} else if v, ok := up.(interface{ CloseWrite() error }); ok {
+				if err := v.CloseWrite(); err != nil {
+					up.Close()
+				}
 			}
 			close(done)
 		}()

@@ -936,7 +936,12 @@ func (t *tracked) CloseWrite() error {
 	if c, ok := t.Conn.(interface{ CloseWrite() error }); ok {
 		return c.CloseWrite()
 	}
-	return t.Close()
+	// Xray's core.Dial connection has no CloseWrite. A clean application FIN
+	// must not close its reader and discard an upload receipt. The caller has
+	// stopped writing; the remaining direction ends on peer EOF, Xray's idle
+	// timeout, cancellation or policy teardown. This cannot forward a TCP FIN
+	// through a transport that does not expose half-close support.
+	return nil
 }
 
 func (t *tracked) Read(p []byte) (int, error) {

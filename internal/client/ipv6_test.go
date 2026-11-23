@@ -72,8 +72,10 @@ func TestIPv6TCPUsesSelectedVPNTunnel(t *testing.T) {
 			}
 			left, right := net.Pipe()
 			defer right.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 			finished := make(chan error, 1)
-			c.NewConnectionEx(context.Background(), left, M.SocksaddrFrom(netip.MustParseAddr("fd04:6c69:6e65:ffff::1"), 12345), M.SocksaddrFrom(ip, 443), func(err error) { finished <- err })
+			c.NewConnectionEx(ctx, left, M.SocksaddrFrom(netip.MustParseAddr("fd04:6c69:6e65:ffff::1"), 12345), M.SocksaddrFrom(ip, 443), func(err error) { finished <- err })
 			right.SetDeadline(time.Now().Add(3 * time.Second))
 			if _, err = right.Write([]byte("tunnel")); err != nil {
 				t.Fatal(err)
@@ -83,6 +85,8 @@ func TestIPv6TCPUsesSelectedVPNTunnel(t *testing.T) {
 				t.Fatal("IPv6 TCP did not reach the VPN outbound", string(response), err)
 			}
 			right.Close()
+			// End both directions explicitly; clean upload EOF preserves replies.
+			cancel()
 			select {
 			case <-finished:
 			case <-time.After(3 * time.Second):
