@@ -60,3 +60,33 @@ Receiver отсутствует в основном APK. Исправлен пу
 
 Документация Android: [per-app VPN и lockdown](https://developer.android.com/develop/connectivity/vpn),
 [перечисление интерфейсов](https://developer.android.com/reference/java/net/NetworkInterface).
+
+## Дополнительная проверка перед слиянием
+
+Обновлённая база OSV выявила существующую в `main` зависимость
+`github.com/gorilla/websocket v1.5.3` с
+[GO-2026-6278](https://pkg.go.dev/vuln/GO-2026-6278): предсказуемая маска
+клиентских WebSocket-кадров. Зависимость Xray закреплена на исправленном
+upstream-коммите `v1.5.4-0.20240701034025-d67f41855da4`, контрольные суммы
+пересчитаны через Go modules. Другие версии не изменены, исключения сканера
+не добавлены. Проверка воспроизводила находку до обновления и не находит её
+после него.
+
+На итоговой версии зависимости повторно пройдены полный `check.sh go`
+(race, `with_gvisor`, vet, проверка модулей), `check-security.sh`, Android
+`gomobile bind` arm64/amd64 и обе Gradle-сборки. Дополнительно пройдены
+`check.sh desktop`, DOM-проверки и переносимые fixtures установщиков.
+
+Полный `portable` не пройден: один Ansible fixture остановился с
+`Local RPC server did not start`, отдельный SSH fixture — с
+`Connection reset by peer`. Apple PlistBuddy пропущен на Linux.
+Браузерный UI не запущен: комплектный Chromium отсутствует, системный Chromium
+останавливается при `socket()` с `Operation not permitted`.
+Дополнительный upstream-прогон WebSocket имеет ошибки в `TestProxyDial` и
+`TestProxyAuthorizationDial` (`unexpected EOF`); те же ошибки воспроизведены
+на исходной `v1.5.3` в той же среде. Этот прогон не считается PASS.
+Утверждения и настройки проверок не ослаблялись.
+
+GitHub Actions run `45277486002` завершился до исполнения команд security job
+(0 steps), остальные jobs пропущены. Удалённый CI не считается пройденным;
+локальная сборка не заменяет нативный smoke-тест.
