@@ -338,6 +338,9 @@ async function testCombinedAuthentication() {
     assert.equal($('vpn-issues').hidden,false);
     assert.match($('vpn-issues-list').textContent,/443.*TCP.*Browser/);
     assert.equal($('vpn-issues-list').querySelectorAll('img').length,0,'diagnostic target became HTML');
+    state.vpn_issues=[{target:'2a06:98c1:3101::ac40:9000',network:'tcp',port:443,at:'2026-11-17T10:00:00Z',source:{name:'Приложение'}}];
+    await w.eval('update()');
+    assert.match($('vpn-issues-list').textContent,/\[2a06:98c1:3101::ac40:9000\]:443.*TCP.*Только через VPN/);
     Object.assign(state,{status:'ready',partial_outage:false,vpn_issues:[],guard:true});
     await w.eval('update()');
     assert.equal($('vpn-issues').hidden,true);

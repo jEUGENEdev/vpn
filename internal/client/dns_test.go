@@ -40,3 +40,22 @@ func TestDNSPersistsAcrossRestart(t *testing.T) {
 		t.Fatal("unknown fake address must be blocked")
 	}
 }
+
+func TestIPv4MappedSyntheticAddressRetainsItsDomain(t *testing.T) {
+	f, err := OpenDNS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	id, err := f.ID("example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mapped := netip.AddrFrom16(fake4(id).As16())
+	if name, fake := f.Lookup(mapped); !fake || name != "example.com" {
+		t.Fatalf("mapped synthetic address bypassed domain policy: %q, %v", name, fake)
+	}
+	if name, fake := f.Lookup(netip.MustParseAddr("::ffff:198.19.255.250")); !fake || name != "" {
+		t.Fatal("unknown mapped synthetic address was allowed")
+	}
+}

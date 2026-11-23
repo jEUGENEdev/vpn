@@ -68,6 +68,20 @@ func (c *Client) answerDNS(ctx context.Context, payload []byte, destination neti
 	if !current {
 		return nil, errors.New("policy changed during DNS query")
 	}
+	// Keep a domain behind A/AAAA destinations in full mode too. Sending a raw
+	// AAAA address pins the exit to IPv6 even when that host is also available
+	// over IPv4. Fake-IP lets the VPN exit resolve the domain and choose a usable
+	// family, without any client-side/direct fallback. The upstream query still
+	// travelled through VPN; preserve NXDOMAIN and NODATA instead of inventing
+	// records for an address family which the authoritative answer lacks.
+	typ := question.Question[0].Qtype
+	if answer.Rcode == dns.RcodeSuccess && (typ == dns.TypeA || typ == dns.TypeAAAA) {
+		for _, rr := range answer.Answer {
+			if rr.Header().Rrtype == typ && rr.Header().Class == dns.ClassINET {
+				return c.DNS.Answer(payload)
+			}
+		}
+	}
 	// Do not cache mode-specific answers across a switch back to Fake-IP.
 	for _, section := range [][]dns.RR{answer.Answer, answer.Ns, answer.Extra} {
 		for _, rr := range section {

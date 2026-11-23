@@ -28,7 +28,7 @@ if [[ "$suite" == all || "$suite" == portable ]]; then
   while IFS= read -r -d '' source; do bash -n "$source"; done < <(git ls-files -z '*.sh')
   while IFS= read -r -d '' source; do node --check "$source"; done < <(git ls-files -z '*.js' '*.cjs')
   python3 scripts/test-network-packaging.py
-  python3 scripts/package_version.py --check-newer
+  python3 scripts/package_version.py --check-consistent
   python3 scripts/test-installer-upgrade.py
   python3 scripts/test-deploy-actions.py
   python3 scripts/test-deploy-manual.py

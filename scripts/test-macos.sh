@@ -24,7 +24,7 @@ recover() {
   if [[ -f build/macos-network.log ]]; then cat build/macos-network.log; fi
 }
 trap recover EXIT
-sudo installer -pkg build/macos-tested.pkg -target / > build/macos-install.log
+sudo /bin/bash build/macos-tested-setup.app/Contents/Resources/manage.sh install > build/macos-install.log
 vpn_ready=false
 for ((i=0; i<20; i++)); do
   if [[ -f /var/lib/linevpn/ui-token ]]; then
@@ -78,7 +78,7 @@ sudo launchctl bootout system/dev.linevpn.agent
 vpn_dns_keys="$(printf 'list State:/Network/Service/dev.linevpn.*/DNS\n' | /usr/sbin/scutil)"
 if [[ "$vpn_dns_keys" == *'subKey'* ]]; then echo 'Temporary DNS survived service stop' >&2; exit 1; fi
 if curl --noproxy '*' -fsS --output /dev/null --connect-timeout 4 --max-time 8 http://1.1.1.1/cdn-cgi/trace; then echo "Protected connection escaped VPN" >&2; exit 1; fi
-sudo '/Library/Application Support/LineVPN/uninstall.sh'
+sudo /bin/bash build/macos-tested-setup.app/Contents/Resources/manage.sh uninstall
 [[ ! -f /Library/LaunchDaemons/dev.linevpn.agent.plist ]]
 [[ ! -e '/Library/Application Support/LineVPN/linevpn-agent' ]]
 curl --noproxy '*' -fsS --output /dev/null --connect-timeout 4 --max-time 8 http://example.com

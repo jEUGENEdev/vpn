@@ -145,6 +145,53 @@ func TestFullModeDNSRejectsMismatchedResponse(t *testing.T) {
 	}
 }
 
+func TestFullModeIPv6KeepsDomainForVPNExitResolution(t *testing.T) {
+	c := fullDNSClient(t, func(w dns.ResponseWriter, q *dns.Msg) {
+		r := new(dns.Msg)
+		r.SetReply(q)
+		rr, _ := dns.NewRR("example.com. 60 IN AAAA 2a06:98c1:3101::ac40:9000")
+		r.Answer = []dns.RR{rr}
+		w.WriteMsg(r)
+	})
+	q := new(dns.Msg)
+	q.SetQuestion("example.com.", dns.TypeAAAA)
+	payload, _ := q.Pack()
+	raw, err := c.answerDNS(context.Background(), payload, netip.MustParseAddr("172.29.255.2"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response dns.Msg
+	if err = response.Unpack(raw); err != nil || len(response.Answer) != 1 {
+		t.Fatal("missing IPv6 answer", err)
+	}
+	ip, _ := netip.AddrFromSlice(response.Answer[0].(*dns.AAAA).AAAA)
+	target, err := c.target(ip)
+	if err != nil || target != "example.com" {
+		t.Fatalf("IPv6 pinned the VPN exit to an address family instead of the domain: %q, %v", target, err)
+	}
+}
+
+func TestFullModeDoesNotInventAddressesForNegativeDNSAnswers(t *testing.T) {
+	for _, code := range []int{dns.RcodeSuccess, dns.RcodeNameError} {
+		c := fullDNSClient(t, func(w dns.ResponseWriter, q *dns.Msg) {
+			r := new(dns.Msg)
+			r.SetRcode(q, code)
+			w.WriteMsg(r)
+		})
+		q := new(dns.Msg)
+		q.SetQuestion("example.com.", dns.TypeAAAA)
+		payload, _ := q.Pack()
+		raw, err := c.answerDNS(context.Background(), payload, netip.MustParseAddr("1.1.1.1"), true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var response dns.Msg
+		if err = response.Unpack(raw); err != nil || response.Rcode != code || len(response.Answer) != 0 {
+			t.Fatal("negative DNS answer turned into an address", response.String(), err)
+		}
+	}
+}
+
 func TestTunnelDNSHandlersForwardAndFailClosed(t *testing.T) {
 	c := fullDNSClient(t, func(w dns.ResponseWriter, q *dns.Msg) {
 		r := new(dns.Msg)

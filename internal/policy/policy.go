@@ -59,11 +59,12 @@ func Normalize(s string) (string, error) {
 }
 
 func Matches(rule, target string) bool {
+	if ruleIP, err := netip.ParseAddr(rule); err == nil {
+		targetIP, err := netip.ParseAddr(target)
+		return err == nil && ruleIP.Zone() == "" && targetIP.Zone() == "" && ruleIP.Unmap() == targetIP.Unmap()
+	}
 	if rule == target {
 		return true
-	}
-	if _, err := netip.ParseAddr(rule); err == nil {
-		return false
 	}
 	if _, err := netip.ParseAddr(target); err == nil {
 		return false

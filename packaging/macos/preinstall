@@ -33,24 +33,5 @@ if [[ -n "$vpn_previous" ]]; then
 fi
 done
 
-vpn_gui='^/Applications/(LineVPN|Сеть)\.app/Contents/MacOS/LineVPN( |$)'
-/usr/bin/pkill -TERM -f "$vpn_gui" 2>/dev/null || true
-for ((vpn_wait=0; vpn_wait<30; vpn_wait++)); do
-  /usr/bin/pgrep -f "$vpn_gui" >/dev/null || break
-  sleep 1
-done
-if /usr/bin/pgrep -f "$vpn_gui" >/dev/null; then
-  echo 'Close Сеть and run the installer again.' >&2
-  exit 1
-fi
-
-/bin/launchctl bootout system/dev.linevpn.agent 2>/dev/null || true
-vpn_worker='^(/bin/bash )?/Library/Application Support/LineVPN/(linevpn-agent|service-wrapper\.sh)( |$)'
-for ((vpn_wait=0; vpn_wait<30; vpn_wait++)); do
-  if ! /bin/launchctl print system/dev.linevpn.agent >/dev/null 2>&1 && ! /usr/bin/pgrep -f "$vpn_worker" >/dev/null; then
-    exit 0
-  fi
-  sleep 1
-done
-echo 'Cannot stop the previous Сеть service. Its files and profile were not replaced.' >&2
-exit 1
+# Use the NEW helper in the package, even when the installed scripts are broken.
+/bin/bash "$(dirname "$0")/stop-service.sh"

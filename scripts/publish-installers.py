@@ -1,4 +1,4 @@
-"""Publish only a complete four-installer set; never create placeholder binaries."""
+"""Publish APK, MSI and one universal macOS installer; no placeholder binaries."""
 import hashlib,json,os,pathlib,shutil,sys,datetime
 from package_version import product_version, android_code, check_newer
 from verify_android_update import expected_certificate
@@ -6,7 +6,7 @@ check_newer()
 version = product_version()
 certificate = expected_certificate()
 source,dest=map(pathlib.Path,sys.argv[1:]);files=sorted(p for p in source.iterdir() if p.suffix in {'.apk','.dmg','.msi'})
-if len([p for p in files if p.suffix=='.apk'])!=1 or len([p for p in files if p.suffix=='.msi'])!=1 or len([p for p in files if p.suffix=='.dmg'])!=2:raise SystemExit('A complete APK + MSI + two DMG set is required')
+if len(files)!=3 or len([p for p in files if p.suffix=='.apk'])!=1 or len([p for p in files if p.suffix=='.msi'])!=1 or len([p for p in files if p.suffix=='.dmg' and p.name.endswith('-macos-universal.dmg')])!=1:raise SystemExit('A complete APK + MSI + one universal macOS DMG set is required')
 # Verify the actual APK again before replacing published files.
 from verify_android_update import check_apk
 check_apk(next(p for p in files if p.suffix == '.apk'))

@@ -3,18 +3,21 @@
 set -euo pipefail
 [[ "$EUID" -eq 0 ]] || { echo 'Run with sudo.' >&2; exit 1; }
 vpn_base='/Library/Application Support/LineVPN'
-/bin/launchctl disable system/dev.linevpn.agent 2>/dev/null || true
-/bin/launchctl bootout system/dev.linevpn.agent 2>/dev/null || true
-if /bin/launchctl print system/dev.linevpn.agent >/dev/null 2>&1; then
-  echo 'Cannot stop Сеть; keeping recovery files. Retry after stopping the service.' >&2
-  exit 1
-fi
+vpn_tools="$(cd "$(dirname "$0")" && pwd)"
+# The unified installer supplies its own recovery binary. Standalone removal
+# uses the installed one. Neither path executes an older installed uninstaller.
+vpn_recovery="${1:-$vpn_base/linevpn-agent}"
+[[ -x "$vpn_recovery" ]] || { echo 'Откройте свежий установщик «Сеть» и выберите «Удалить».' >&2; exit 1; }
+/bin/bash "$vpn_tools/stop-service.sh"
 # Cleanup MUST succeed before deleting the executable or recovery data.
-"$vpn_base/linevpn-agent" -data /var/lib/linevpn -recover-network
+"$vpn_recovery" -data /var/lib/linevpn -recover-network
+/bin/launchctl disable system/dev.linevpn.agent 2>/dev/null || true
 if [[ -f /etc/pf.conf ]]; then
-  /usr/bin/awk '$0 != "anchor \"linevpn\" out quick"' /etc/pf.conf > /etc/pf.conf.linevpn-uninstall
-  /bin/cat /etc/pf.conf.linevpn-uninstall > /etc/pf.conf
-  /bin/rm -f /etc/pf.conf.linevpn-uninstall
+  vpn_pf="$(/usr/bin/mktemp /etc/pf.conf.linevpn.XXXXXX)"
+  trap '/bin/rm -f "$vpn_pf"' EXIT
+  /usr/bin/awk '!/^[[:space:]]*anchor "linevpn"([[:space:]]+out[[:space:]]+quick)?[[:space:]]*$/' /etc/pf.conf > "$vpn_pf"
+  /sbin/pfctl -nf "$vpn_pf"
+  /bin/cat "$vpn_pf" > /etc/pf.conf
 fi
 /bin/rm -f /Library/LaunchDaemons/dev.linevpn.agent.plist
 /bin/rm -rf "$vpn_base"
