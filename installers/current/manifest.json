@@ -1,78 +1,80 @@
 {
-  "version": "0.2.0-preview",
-  "built_date": "2026-11-17",
-  "built_at": "2026-11-17T10:50:57.524960+00:00",
-  "build_method": "manual-linux-cross-build",
-  "source_commit": "d067d97f1fcd86aa00b74aa4c3f74ee1176a58bb",
-  "source_tree": "5de1f756407e53bfd12fcc3ed95ef6afd32b4da5",
-  "fix_pr": "https://github.com/jEUGENEdev/vpn/pull/19",
-  "integrated_prs": [
-    16,
-    17,
-    18,
-    19
-  ],
+  "version": "0.3.0-preview",
+  "android_version_code": 3000,
+  "android_certificate_sha256": "a5ed967ba9dd5cc7626793c6b8eae8ab7d8a904e855355b71d6ba9b17e84b8a5",
+  "source_commit": "5f37180b5d19e531fe3ae3198859f58c94b46f5e",
+  "built_at": "2026-11-23T14:39:43.152681+00:00",
   "status": "preview-native-acceptance-required",
-  "native_platform_tests": false,
   "signing": {
-    "android": "debug certificate; same certificate as previous manual releases",
-    "macos": "ad-hoc app and agent; unsigned PKG; not notarized",
+    "android": "persistent certificate verified against the pinned identity; see docs/android-signing.md for legacy migration",
+    "macos": "ad-hoc signed app and agent; not Apple notarized; PKG unsigned",
     "windows": "not Authenticode signed"
   },
-  "android_certificate_sha256": "b13dfe366940dc70d27e244c8bf17ed18ff3dfdad93713bdbc1b91cbfa85f0b1",
   "files": [
     {
-      "name": "LineVPN-0.2.0-d067d97-android-preview.apk",
-      "platform": "Android 10+ · ARM64 / x86_64",
-      "size": 86280498,
-      "sha256": "d0abdf88fbfc17caa96186b1facf6c549da001de11f7e447d0c19554af0c969c",
-      "source_commit": "d067d97f1fcd86aa00b74aa4c3f74ee1176a58bb",
-      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.2.0-preview.20261117.4/LineVPN-0.2.0-d067d97-android-preview.apk"
+      "name": "linevpn-keygen-5f37180-linux-amd64",
+      "size": 32256160,
+      "sha256": "ffabcd604b02f89023c1dd89e74b252999122511710aeec2d202339ce71001ed",
+      "source_commit": "5f37180b5d19e531fe3ae3198859f58c94b46f5e",
+      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.3.0-preview.20261123/linevpn-keygen-5f37180-linux-amd64",
+      "platform": "Генератор профиля Linux · amd64"
     },
     {
-      "name": "LineVPN-0.2.0-d067d97-windows-x64.msi",
-      "platform": "Windows · x64",
-      "size": 183349760,
-      "sha256": "ddc60e5555b403163611ddc305a86bdaece656027d9b0e693a974b90c693f43d",
-      "source_commit": "d067d97f1fcd86aa00b74aa4c3f74ee1176a58bb",
-      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.2.0-preview.20261117.4/LineVPN-0.2.0-d067d97-windows-x64.msi"
+      "name": "linevpn-server-5f37180-linux-amd64",
+      "size": 33054880,
+      "sha256": "6f007f123456cb81edf0662237e90d645c764f9a68ab7e608235502e312ec8ef",
+      "source_commit": "5f37180b5d19e531fe3ae3198859f58c94b46f5e",
+      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.3.0-preview.20261123/linevpn-server-5f37180-linux-amd64",
+      "platform": "Сервер Linux · amd64"
     },
     {
-      "name": "LineVPN-0.2.0-d067d97-macos-arm64.dmg",
-      "platform": "macOS · Apple Silicon",
-      "size": 149845290,
-      "sha256": "376b573c81595946976d6d491acb7035584ba9d18a6e69390698474628990203",
-      "source_commit": "d067d97f1fcd86aa00b74aa4c3f74ee1176a58bb",
-      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.2.0-preview.20261117.4/LineVPN-0.2.0-d067d97-macos-arm64.dmg"
+      "name": "Set-0.3.0-5f37180-android-preview.apk",
+      "size": 85989847,
+      "sha256": "8f5e60f1c4da1971873a6e3eda08d5db26fbf8ba6b77a54c384ecbd568486755",
+      "source_commit": "5f37180b5d19e531fe3ae3198859f58c94b46f5e",
+      "original_build_name": "Сеть-0.3.0-5f37180-android-preview.apk",
+      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.3.0-preview.20261123/Set-0.3.0-5f37180-android-preview.apk",
+      "platform": "Android 10+ · ARM64 / x86_64"
     },
     {
-      "name": "LineVPN-0.2.0-d067d97-macos-x64.dmg",
-      "platform": "macOS · Intel",
-      "size": 157223427,
-      "sha256": "5b8cb50bf55dcf3c682a4782184d3a9266c5fe5bbf9053d45ba87161ec84a660",
-      "source_commit": "d067d97f1fcd86aa00b74aa4c3f74ee1176a58bb",
-      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.2.0-preview.20261117.4/LineVPN-0.2.0-d067d97-macos-x64.dmg"
+      "name": "Set-0.3.0-5f37180-macos-arm64.dmg",
+      "size": 134877361,
+      "sha256": "8cb5a3c05db12d4d3aae039ae2d63e2f9b79133544dd3df65ff475e4f731d7a0",
+      "source_commit": "5f37180b5d19e531fe3ae3198859f58c94b46f5e",
+      "original_build_name": "Сеть-0.3.0-5f37180-macos-arm64.dmg",
+      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.3.0-preview.20261123/Set-0.3.0-5f37180-macos-arm64.dmg",
+      "platform": "macOS · Apple Silicon"
     },
     {
-      "name": "linevpn-server-d067d97-linux-amd64",
-      "platform": "Сервер Linux · amd64",
-      "size": 33018016,
-      "sha256": "b277dda75417d05655b5583a3a825708bed0d2adbd406bb1a8b7e98e38d77edc",
-      "source_commit": "d067d97f1fcd86aa00b74aa4c3f74ee1176a58bb",
-      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.2.0-preview.20261117.4/linevpn-server-d067d97-linux-amd64"
+      "name": "Set-0.3.0-5f37180-macos-x64.dmg",
+      "size": 142177785,
+      "sha256": "436f2e911e871f589de927aa28584c7a7c56643f5ef42b941c3203f22bb43e80",
+      "source_commit": "5f37180b5d19e531fe3ae3198859f58c94b46f5e",
+      "original_build_name": "Сеть-0.3.0-5f37180-macos-x64.dmg",
+      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.3.0-preview.20261123/Set-0.3.0-5f37180-macos-x64.dmg",
+      "platform": "macOS · Intel"
     },
     {
-      "name": "linevpn-keygen-d067d97-linux-amd64",
-      "platform": "Генератор профиля Linux · amd64",
-      "size": 32252064,
-      "sha256": "e340c06d4e4f061ed4b2ad2ed71f48f139e714ee6b804dbfc987811bdc71693b",
-      "source_commit": "d067d97f1fcd86aa00b74aa4c3f74ee1176a58bb",
-      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.2.0-preview.20261117.4/linevpn-keygen-d067d97-linux-amd64"
+      "name": "Set-0.3.0-5f37180-windows-x64.msi",
+      "size": 184193024,
+      "sha256": "bcfe2a0435c4074abbf995c7675ec8095f5bd6caa9de44d2bd881825a689d8d9",
+      "source_commit": "5f37180b5d19e531fe3ae3198859f58c94b46f5e",
+      "original_build_name": "Сеть-0.3.0-5f37180-windows-x64.msi",
+      "download_url": "https://github.com/jEUGENEdev/vpn/releases/download/v0.3.0-preview.20261123/Set-0.3.0-5f37180-windows-x64.msi",
+      "platform": "Windows · x64"
     }
   ],
+  "built_date": "2026-11-23",
+  "build_method": "manual-linux-cross-build",
+  "source_tree": "3d66c20405511f12143645377b88264cbe8bb396",
+  "integrated_prs": [
+    39,
+    40
+  ],
+  "native_platform_tests": false,
+  "vps_deployment_performed": false,
+  "release_tag": "v0.3.0-preview.20261123",
+  "release_url": "https://github.com/jEUGENEdev/vpn/releases/tag/v0.3.0-preview.20261123",
   "storage": "github-release-assets",
-  "release_tag": "v0.2.0-preview.20261117.4",
-  "release_url": "https://github.com/jEUGENEdev/vpn/releases/tag/v0.2.0-preview.20261117.4",
-  "requires_server_and_client_update": true,
-  "vps_deployment_performed": false
+  "requires_server_and_client_update": true
 }
