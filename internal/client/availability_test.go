@@ -16,6 +16,8 @@ import (
 
 func TestVPNDialFailureKeepsProtectedRoute(t *testing.T) {
 	c := testTrafficClient(t)
+	app := testApp("a")
+	c.apps[app.ID] = model.Application{ApplicationInfo: app, Decision: "addresses"}
 	c.SetTunnel(true)
 	c.config.Profile.Rules = []string{"127.0.0.1"}
 	c.ready = true // Simulate a ready control plane with a missing transport.
@@ -25,7 +27,7 @@ func TestVPNDialFailureKeepsProtectedRoute(t *testing.T) {
 	}
 	defer ln.Close()
 	for i := 0; i < 3; i++ {
-		conn, err := c.Dial(context.Background(), "tcp", "127.0.0.1", uint16(ln.Addr().(*net.TCPAddr).Port))
+		conn, err := c.dialApplication(context.Background(), "tcp", "127.0.0.1", uint16(ln.Addr().(*net.TCPAddr).Port), app)
 		if err == nil {
 			conn.Close()
 			t.Fatal("failed VPN escaped directly")
@@ -40,7 +42,7 @@ func TestVPNDialFailureKeepsProtectedRoute(t *testing.T) {
 	for key := range c.vpnFailures {
 		c.vpnFailures[key] = time.Now().Add(-time.Second)
 	}
-	if c.routeLocked("127.0.0.1", "") != policy.VPN {
+	if c.routeLocked("127.0.0.1", app.ID) != policy.VPN {
 		t.Fatal("VPN never retried")
 	}
 	if c.config.Disabled {
@@ -107,11 +109,13 @@ func TestIdleMediaTimeoutDoesNotDisableVPN(t *testing.T) {
 
 func TestCancelledVPNDialDoesNotStartFallback(t *testing.T) {
 	c := testTrafficClient(t)
+	app := testApp("a")
+	c.apps[app.ID] = model.Application{ApplicationInfo: app, Decision: "addresses"}
 	c.ready = true
 	c.config.Profile.Rules = []string{"127.0.0.1"}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if conn, err := c.Dial(ctx, "tcp", "127.0.0.1", 80); err == nil {
+	if conn, err := c.dialApplication(ctx, "tcp", "127.0.0.1", 80, app); err == nil {
 		conn.Close()
 		t.Fatal("cancelled dial succeeded")
 	}
@@ -144,17 +148,19 @@ func TestBrokenVPNRefreshKeepsExistingDirectConnection(t *testing.T) {
 
 func TestVPNWriteFailureRecordsOutageWithoutARead(t *testing.T) {
 	c := testTrafficClient(t)
+	app := testApp("a")
+	c.apps[app.ID] = model.Application{ApplicationInfo: app, Decision: "addresses"}
 	c.ready = true
 	c.config.Profile.Rules = []string{"example.com"}
 	left, right := net.Pipe()
 	right.Close()
-	c.active[left] = activeFlow{Target: "example.com", Route: policy.VPN}
+	c.active[left] = activeFlow{Target: "example.com", AppID: app.ID, Route: policy.VPN}
 	flow := &tracked{Conn: left, c: c}
 	defer flow.Close()
 	if _, err := flow.Write([]byte("not replayed")); err == nil {
 		t.Fatal("expected write failure")
 	}
-	if !c.vpnFailed || c.routeFlowLocked(flowKey{Target: "example.com"}) != policy.VPN {
+	if !c.vpnFailed || c.routeFlowLocked(flowKey{Target: "example.com", AppID: app.ID}) != policy.VPN {
 		t.Fatal("write failure was hidden or bypassed VPN")
 	}
 }
@@ -193,6 +199,8 @@ func TestOneWayUDPMediaDoesNotStartDirectFallback(t *testing.T) {
 
 func TestProfileExpansionPreservesUnchangedRoutes(t *testing.T) {
 	c := testTrafficClient(t)
+	app := testApp("a")
+	c.apps[app.ID] = model.Application{ApplicationInfo: app, Decision: "addresses"}
 	p := model.Profile{Status: "active", UUID: secure.UUID(), Server: "127.0.0.1", Port: 443, PublicKey: secure.Token(), SNI: "example.com", ShortID: "12ab", Path: "/test", Rules: []string{"example.com"}, Revision: 1}
 	if err := c.apply(p); err != nil {
 		t.Fatal(err)
@@ -203,7 +211,7 @@ func TestProfileExpansionPreservesUnchangedRoutes(t *testing.T) {
 	defer directPeer.Close()
 	newlyApproved, approvedPeer := net.Pipe()
 	defer approvedPeer.Close()
-	c.active[vpn] = activeFlow{Target: "example.com", Route: policy.VPN}
+	c.active[vpn] = activeFlow{Target: "example.com", AppID: app.ID, Route: policy.VPN}
 	c.active[direct] = activeFlow{Target: "direct.example.org", Route: policy.Direct}
 	c.active[newlyApproved] = activeFlow{Target: "media.example.org", Route: policy.Direct}
 	p.Revision++

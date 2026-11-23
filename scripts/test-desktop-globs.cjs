@@ -35,3 +35,29 @@ for (const name of ['notarize.cjs', 'node_modules/picomatch/index.js', 'assets/p
   assert.equal(filter(path.join(root, name), file), false, name);
 }
 console.log('PASS: bounded glob compilation and Electron payload filtering');
+
+// The renderer must actually ship with the app: it no longer loads code from
+// the service's loopback port. Exercise the builder's real cross-directory copy.
+(async () => {
+  const fs = require('node:fs');
+  const {getFileMatchers, copyFiles} = desktopRequire('app-builder-lib/out/fileMatcher');
+  const destination = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'set-payload-'));
+  try {
+    const appDir = path.join(root, 'apps/desktop');
+    const config = desktopRequire('./package.json').build;
+    const matchers = getFileMatchers(config, 'files', destination, {
+      defaultSrc: appDir, macroExpander: x => x, customBuildOptions: {},
+      globalOutDir: path.join(appDir, 'dist'),
+    });
+    await copyFiles(matchers, null, false);
+    for (const name of ['index.html', 'app.js', 'style.css', 'traffic.js', 'activity.js', 'icon.png']) {
+      assert.deepEqual(fs.readFileSync(path.join(destination, 'ui', name)),
+        fs.readFileSync(path.join(root, 'internal/ui/client', name)), name);
+    }
+    for (const name of ['main.cjs', 'preload.cjs', 'control.cjs', 'branding/set.png', 'branding/tray.png']) {
+      assert.ok(fs.statSync(path.join(destination, name)).isFile(), name);
+    }
+    assert.ok(!fs.existsSync(path.join(destination, 'node_modules')));
+    console.log('PASS: Electron payload contains the installed renderer, control bridge and icons');
+  } finally { fs.rmSync(destination, {recursive: true, force: true}); }
+})().catch(error => {console.error(error); process.exitCode = 1;});

@@ -22,7 +22,7 @@ class ApplicationResolver(private val context: Context) {
             if (uid < 10000) return ""
             val pm = context.packageManager
             val packages = pm.getPackagesForUid(uid) ?: return ""
-            // Shared UIDs do not identify a unique app. Keep address-based rules.
+            // Shared UIDs do not identify a unique app. Selective VPN access stays denied.
             if (packages.size != 1) return ""
             val name = packages[0]
             val info = pm.getPackageInfo(name, PackageManager.GET_SIGNING_CERTIFICATES)

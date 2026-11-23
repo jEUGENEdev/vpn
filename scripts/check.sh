@@ -38,6 +38,8 @@ fi
 if [[ "$suite" == all || "$suite" == desktop ]]; then
   printf '\nChecking Electron build dependency compatibility\n'
   node scripts/test-desktop-globs.cjs
+  node scripts/test-desktop-control.cjs
+  python3 scripts/test-branding.py
 fi
 
 if [[ "$suite" == all || "$suite" == ui ]]; then

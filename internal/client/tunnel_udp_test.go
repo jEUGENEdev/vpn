@@ -47,6 +47,7 @@ func TestUDPSocketRoutesAndObservesEveryDestination(t *testing.T) {
 	}
 	lookups := make(chan netip.AddrPort, 8)
 	app := testApp("a")
+	c.apps[app.ID] = model.Application{ApplicationInfo: app, Decision: "addresses"}
 	c.SetOwnerLookup(func(ctx context.Context, network string, source, dest netip.AddrPort) (model.ApplicationInfo, error) {
 		lookups <- dest
 		return app, nil

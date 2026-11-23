@@ -1,11 +1,12 @@
 <!DOCTYPE html>
 <html lang="ru">
-<head>
+<head><link rel="icon" href="icon.png" type="image/png">
 <meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'self'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#f4f5f8">
-<title>Линия — ваша сеть, ваши правила</title>
+<title>Сеть — ваши правила подключения</title>
 <link rel="stylesheet" href="style.css">
 <script src="traffic.js" defer="">
 </script>
@@ -18,8 +19,8 @@
 <a class="skip-link" href="#main-content">Перейти к содержимому</a>
 <div class="shell">
 <aside class="sidebar">
-<a class="brand" href="#main-content" aria-label="Линия VPN — к содержимому">
-<span class="brandmark" aria-hidden="true">л</span>линия<span class="brand-sub">VPN</span>
+<a class="brand" href="#main-content" aria-label="Сеть — к содержимому">
+<img class="brandmark" src="icon.png" alt="" aria-hidden="true">Сеть<span class="brand-sub">VPN</span>
 </a>
 <div class="nav-label">ЛИЧНАЯ СЕТЬ</div>
 <nav aria-label="Разделы клиента">
@@ -41,7 +42,7 @@
 <span class="tiny-dot" aria-hidden="true">
 </span>Решение остаётся за вами</div>
 <button id="theme" class="text-button">Сменить тему ◐</button>
-<div class="version">Линия · 0.2.0 preview</div>
+<div class="version">Сеть · 0.3.0 preview</div>
 </div>
 </aside>
 <main id="main-content" tabindex="-1">
@@ -56,10 +57,18 @@
 </div>
 </header>
 <p id="vpn-mode-note" class="vpn-mode-note" role="status" hidden="">VPN выключен. Весь трафик идёт напрямую. Сохранённые правила начнут действовать после включения.</p>
+<section class="traffic-mode-panel card" aria-label="Маршрутизация">
+<label for="traffic-mode">Режим трафика</label>
+<select id="traffic-mode" aria-describedby="traffic-mode-description" disabled>
+<option value="selective">Только разрешённые приложения и адреса</option>
+<option value="all">Весь трафик через VPN</option>
+</select>
+<p id="traffic-mode-description" class="small">В выборочном режиме каждому приложению нужно разрешение на VPN.</p>
+</section>
 <section id="setup" class="setup card">
 <div>
 <span class="step">01 / ПОДКЛЮЧЕНИЕ</span>
-<h2>Своя линия.<br>Свои правила.</h2>
+<h2>Своя сеть.<br>Свои правила.</h2>
 <p>Добавьте профиль сервера, войдите в аккаунт — и решайте, какие адреса подключать через VPN.</p>
 </div>
 <div class="form-area">
@@ -155,7 +164,7 @@
 <section class="card">
 <div class="section-head">
 <h3>Как работает ваша сеть</h3>
-<span class="label">ДВА МАРШРУТА</span>
+<span class="label" id="route-summary">ВЫБОРОЧНО</span>
 </div>
 <div class="route-row">
 <span class="route-icon purple" aria-hidden="true">↗</span>
@@ -169,9 +178,9 @@
 <span class="route-icon gray" aria-hidden="true">→</span>
 <div>
 <strong>Остальные адреса</strong>
-<p>Через обычную сеть. Предложим VPN только при повторных сбоях.</p>
+<p id="other-route-description">Напрямую, кроме доверенных приложений.</p>
 </div>
-<span class="tag">Напрямую</span>
+<span class="tag" id="other-route-tag">По правилам</span>
 </div>
 </section>
 <section class="card activity">
@@ -221,14 +230,14 @@
 </p>
 <div id="rules-list" class="card list">
 </div>
-<p class="small">При удалении разрешения адрес снова сможет подключаться напрямую.</p>
+<p class="small">В выборочном режиме удаление адреса разрешает прямой маршрут, кроме доверенных приложений. В полном режиме все адреса остаются за VPN.</p>
 </section>
 <section id="view-applications" class="view" hidden="">
 <div class="section-intro">
 <h2>Кто выходит в сеть.</h2>
-<p>По умолчанию VPN включается только для разрешённых адресов. Решения для приложений сохраняются в аккаунте и восстанавливаются после переустановки при совпадении приложения и платформы.</p>
+<p>В выборочном режиме каждому приложению нужно разрешение на VPN. Решения для приложений сохраняются в аккаунте и восстанавливаются после переустановки при совпадении приложения и платформы.</p>
 </div>
-<p id="attribution-note" class="small" hidden="">Служба сейчас не может определять приложения. Правила адресов продолжают работать.</p>
+<p id="attribution-note" class="small" hidden="">Источник соединений не определяется. В выборочном режиме доступ к VPN заблокирован для неизвестных приложений. Режим «Весь трафик» разрешает VPN всему устройству.</p>
 <label class="sr-only" for="applications-search">Приложение, путь, домен или IP</label>
 <input id="applications-search" class="list-search" type="search" placeholder="Приложение, путь, домен или IP" autocomplete="off" spellcheck="false" aria-controls="applications-list" aria-describedby="applications-search-status" name="applications-search" autocapitalize="none">
 <p id="applications-search-status" class="small search-status" role="status">
@@ -261,7 +270,7 @@
 </section>
 </div>
 <footer>
-<span>ЛИНИЯ / ЛИЧНАЯ СЕТЬ</span>
+<span>СЕТЬ / ЛИЧНАЯ СЕТЬ</span>
 <span>Ваши разрешения — ваши правила.</span>
 </footer>
 </main>
@@ -290,9 +299,10 @@
 </p>
 <p id="application-identity" class="application-path">
 </p>
-<p>Если доверяете приложению, направьте весь его трафик через VPN. Или продолжайте выбирать отдельные адреса — это основной режим. Решение сохраняется в аккаунте для этого приложения и платформы.</p>
+<p>Если доверяете приложению, направьте весь его трафик через VPN. Или разрешите ему только выбранные адреса. Без разрешения приложение не сможет использовать VPN, даже для адресов из общего списка. Решение сохраняется в аккаунте для этого приложения и платформы.</p>
 <div class="dialog-actions">
-<button class="secondary" value="addresses" autofocus="">Только выбранные адреса</button>
+<button class="secondary" value="addresses">Разрешить выбранные адреса</button>
+<button class="secondary" value="denied" autofocus="">Запретить VPN</button>
 <button class="primary" value="trusted">Доверяю — использовать VPN</button>
 <button class="text-button" value="later">Позже</button>
 </div>

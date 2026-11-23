@@ -17,7 +17,7 @@ type ApplicationRule struct {
 func (r ApplicationRule) Valid() bool {
 	id, err := hex.DecodeString(r.ID)
 	return err == nil && len(id) == 32 && r.ID == strings.ToLower(r.ID) &&
-		(r.Decision == "trusted" || r.Decision == "addresses") &&
+		(r.Decision == "trusted" || r.Decision == "addresses" || r.Decision == "denied") &&
 		(r.Platform == "android" || r.Platform == "windows" || r.Platform == "darwin" || r.Platform == "linux")
 }
 

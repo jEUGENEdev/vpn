@@ -61,7 +61,7 @@ class LineVpnService : VpnService() {
     }
     private fun notification(text: String): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        return Notification.Builder(this, "protection").setSmallIcon(R.drawable.ic_line).setContentTitle("Линия VPN").setContentText(text).setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).build()
+        return Notification.Builder(this, "protection").setSmallIcon(R.drawable.ic_line).setContentTitle("Сеть").setContentText(text).setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).build()
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (destroyed) return START_NOT_STICKY
@@ -78,7 +78,7 @@ class LineVpnService : VpnService() {
                     override fun openTunnel(): Long {
                         return synchronized(tunnelLock) {
                         if (destroyed) throw IllegalStateException("VPN service stopped")
-                        val descriptor = Builder().setSession("Линия VPN").setMtu(1400)
+                        val descriptor = Builder().setSession("Сеть").setMtu(1400)
                             .addAddress("172.29.255.1", 30).addAddress("fd04:6c69:6e65:ffff::1", 126)
                             .addRoute("0.0.0.0", 0).addRoute("::", 0).addDnsServer("172.29.255.2")
                             .setBlocking(true).establish() ?: throw IllegalStateException("VPN permission revoked")

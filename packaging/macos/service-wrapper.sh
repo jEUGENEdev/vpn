@@ -22,7 +22,7 @@ trap stop_worker TERM INT HUP
 vpn_pid=$!
 vpn_missing=0
 while kill -0 "$vpn_pid" 2>/dev/null; do
-  if [[ -d /Applications/LineVPN.app ]]; then
+  if [[ -d /Applications/Сеть.app || -d /Applications/LineVPN.app ]]; then
     [[ -f "$vpn_base/app-was-installed" ]] || touch "$vpn_base/app-was-installed"
     vpn_missing=0
   elif [[ -f "$vpn_base/app-was-installed" ]]; then

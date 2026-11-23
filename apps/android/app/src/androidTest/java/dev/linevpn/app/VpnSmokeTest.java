@@ -119,7 +119,7 @@ public class VpnSmokeTest {
             getInstrumentation().runOnMainSync(() -> {
                 WebView web = findWeb(activity.getWindow().getDecorView());
                 if (web == null || !web.isShown() || web.getWidth() == 0) { result.countDown(); return; }
-                web.evaluateJavascript("document.readyState === 'complete' && document.body.innerText.toLowerCase().includes('линия')", value -> {
+                web.evaluateJavascript("document.readyState === 'complete' && document.body.innerText.toLowerCase().includes('сеть')", value -> {
                     ready.set("true".equals(value) && activity.hasWindowFocus());
                     result.countDown();
                 });

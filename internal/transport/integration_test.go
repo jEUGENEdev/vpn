@@ -22,7 +22,13 @@ import (
 
 // Exercises actual Xray VLESS + XHTTP + REALITY sockets, not a mocked proxy.
 func TestREALITYXHTTPRoundTripAndDeny(t *testing.T) {
-	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ordinary HTTPS site")) }))
+	originHeaders := make(chan http.Header, 1)
+	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/transparent-origin" {
+			originHeaders <- r.Header.Clone()
+		}
+		w.Write([]byte("ordinary HTTPS site"))
+	}))
 	target.TLS = &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13}
 	target.EnableHTTP2 = true
 	target.StartTLS()
@@ -86,6 +92,35 @@ func TestREALITYXHTTPRoundTripAndDeny(t *testing.T) {
 	}
 	if string(reply) != "round-trip" {
 		t.Fatal(string(reply))
+	}
+	// The original application's TLS session terminates at the origin. The
+	// outer REALITY fingerprint and XHTTP headers must not reach that origin.
+	originTransport := &http.Transport{DialContext: client.Dial, TLSClientConfig: target.Client().Transport.(*http.Transport).TLSClientConfig.Clone(), ForceAttemptHTTP2: true}
+	defer originTransport.CloseIdleConnections()
+	originClient := &http.Client{Transport: originTransport, Timeout: 5 * time.Second}
+	req, _ := http.NewRequestWithContext(ctx, "GET", target.URL+"/transparent-origin", nil)
+	req.Header.Set("User-Agent", "original-application/1.0")
+	req.Header.Set("X-Application-Value", "unchanged")
+	resp, err := originClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil || string(body) != "ordinary HTTPS site" {
+		t.Fatal("origin response changed", err)
+	}
+	if resp.TLS == nil || len(resp.TLS.VerifiedChains) == 0 || !bytes.Equal(resp.TLS.PeerCertificates[0].Raw, target.Certificate().Raw) {
+		t.Fatal("TLS did not authenticate the original site")
+	}
+	headers := <-originHeaders
+	if headers.Get("User-Agent") != "original-application/1.0" || headers.Get("X-Application-Value") != "unchanged" {
+		t.Fatal("application headers changed")
+	}
+	for _, name := range []string{"Forwarded", "X-Forwarded-For", "Via", "Proxy-Authorization", "X-LineVPN-Profile"} {
+		if headers.Get(name) != "" {
+			t.Fatalf("origin received proxy marker %s", name)
+		}
 	}
 	udpEcho, e := net.ListenPacket("udp", "127.0.0.1:0")
 	if e != nil {

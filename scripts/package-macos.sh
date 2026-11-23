@@ -48,7 +48,7 @@ codesign --verify --strict 'build/macos-root/Library/Application Support/LineVPN
 vpn_app_dir=apps/desktop/dist/mac
 [[ "$vpn_electron_arch" != arm64 ]] || vpn_app_dir=apps/desktop/dist/mac-arm64
 mkdir -p build/macos-root/Applications build/macos-image
-ditto "$vpn_app_dir/LineVPN.app" build/macos-root/Applications/LineVPN.app
+ditto "$vpn_app_dir/Сеть.app" build/macos-root/Applications/Сеть.app
 pkgbuild --analyze --root build/macos-root build/macos-components.plist
 python3 - <<'PY'
 import pathlib, plistlib
@@ -61,7 +61,7 @@ for component in components:
     component['BundleOverwriteAction'] = 'upgrade'
 path.write_bytes(plistlib.dumps(components))
 PY
-vpn_pkg=build/macos-image/Install-LineVPN.pkg
+vpn_pkg=build/macos-image/Установить-Сеть.pkg
 pkgbuild --root build/macos-root --scripts build/macos-scripts --component-plist build/macos-components.plist --identifier dev.linevpn.service --version "$vpn_version" --install-location / "${vpn_pkg_args[@]}" "$vpn_pkg"
 if [[ "$LINEVPN_MACOS_SIGNING" == release ]]; then
   pkgutil --check-signature "$vpn_pkg"
@@ -69,15 +69,15 @@ if [[ "$LINEVPN_MACOS_SIGNING" == release ]]; then
   xcrun stapler staple "$vpn_pkg"
   xcrun stapler validate "$vpn_pkg"
 fi
-cat > build/macos-image/Install-LineVPN.command <<'COMMAND'
+cat > build/macos-image/Установить-Сеть.command <<'COMMAND'
 #!/bin/bash
-open "$(dirname "$0")/Install-LineVPN.pkg"
+open "$(dirname "$0")/Установить-Сеть.pkg"
 COMMAND
-chmod 755 build/macos-image/Install-LineVPN.command
-cp packaging/macos/Uninstall-LineVPN.command build/macos-image/
-printf '%s\n' 'Откройте Install-LineVPN.pkg: он устанавливает или обновляет приложение и службу вместе.' 'Удалять предыдущую версию не нужно. Профиль и правила сохраняются.' 'После завершения откройте Линию VPN из Программ.' > build/macos-image/READ-ME.txt
-vpn_dmg="apps/desktop/dist/LineVPN-$vpn_version-macos-$vpn_electron_arch.dmg"
-hdiutil create -volname "LineVPN $vpn_version" -srcfolder build/macos-image -format UDZO -ov "$vpn_dmg"
+chmod 755 build/macos-image/Установить-Сеть.command
+cp packaging/macos/Uninstall-LineVPN.command build/macos-image/Удалить-Сеть.command
+printf '%s\n' 'Откройте Установить-Сеть.pkg: он устанавливает или обновляет приложение и службу вместе.' 'Удалять предыдущую версию не нужно. Профиль и правила сохраняются.' 'После завершения откройте Сеть из Программ.' > build/macos-image/READ-ME.txt
+vpn_dmg="apps/desktop/dist/Сеть-$vpn_version-macos-$vpn_electron_arch.dmg"
+hdiutil create -volname "Сеть $vpn_version" -srcfolder build/macos-image -format UDZO -ov "$vpn_dmg"
 if [[ "$LINEVPN_MACOS_SIGNING" == release ]]; then
   codesign "${vpn_sign_args[@]}" "$vpn_dmg"
   xcrun notarytool submit "$vpn_dmg" --keychain-profile "$LINEVPN_MACOS_NOTARY_PROFILE" --wait

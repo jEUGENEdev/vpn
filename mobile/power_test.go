@@ -133,7 +133,7 @@ func TestAndroidLockdownOffUsesDirectWithoutReleasingTunnel(t *testing.T) {
 	if err = c.SetVPNEnabled(true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = c.Dial(context.Background(), "tcp", "127.0.0.1", 443); !errors.Is(err, client.ErrVPNUnavailable) || dials != 1 {
+	if _, err = c.Dial(context.Background(), "tcp", "127.0.0.1", 443); !errors.Is(err, client.ErrApplicationPermission) || dials != 1 {
 		t.Fatal("offline re-enable leaked", err, dials)
 	}
 	p.lockdown = false

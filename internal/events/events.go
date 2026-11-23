@@ -129,7 +129,7 @@ func (c *Center) NewApplication(now time.Time, source model.ApplicationInfo, tar
 	if now.Sub(c.globalSuggestion) < 5*time.Minute {
 		return
 	}
-	if c.add(now, "application", "app:"+source.ID, "Новое приложение", "Нет ответа напрямую. Откройте Линию, чтобы выбрать VPN для приложения или только отдельных адресов.", target, source, 24*time.Hour) {
+	if c.add(now, "application", "app:"+source.ID, "Новое приложение", "Нет ответа напрямую. Откройте Сеть, чтобы выбрать VPN для приложения или только отдельных адресов.", target, source, 24*time.Hour) {
 		c.globalSuggestion = now
 	}
 }

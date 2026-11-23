@@ -84,7 +84,7 @@ function renderTraffic() {
 async function decideApplication(app, decision) {
   if (decision === 'trusted' && !await confirmChange('Доверить VPN приложению «' + app.name + '»?', 'Весь трафик этого приложения пойдёт через VPN. Решение сохранится в аккаунте для этого приложения и платформы, в том числе после переустановки. При сбое VPN прямое подключение для него запрещено. Правила адресов для остальных приложений не изменятся.\n' + app.path)) return;
   const result = await act('applications', {id:app.id, decision});
-  toast(result.message || (state.vpn_enabled === false ? 'Решение сохранено. Оно начнёт действовать после включения VPN.' : decision === 'trusted' ? 'Приложение использует VPN' : 'Для приложения действуют правила адресов'));
+  toast(result.message || (state.traffic_mode === 'all' ? 'Решение сохранено для выборочного режима. Сейчас VPN разрешён всем приложениям.' : state.vpn_enabled === false ? 'Решение сохранено. Оно начнёт действовать после включения VPN.' : decision === 'trusted' ? 'Приложение использует VPN' : decision === 'denied' ? 'Доступ приложения к VPN запрещён' : 'Разрешён VPN для выбранных адресов'));
 }
 function renderApplications() {
   const apps = state.applications || [];
@@ -92,35 +92,43 @@ function renderApplications() {
   $('attribution-note').hidden = !!state.attribution_available;
   reconcileRows($('applications-list'), apps, a => a.id, applicationRows,
     app => {
-      const card = row(app.name, '', [button('Доверить весь трафик', 'primary', () => decideApplication(app, 'trusted')), button('Только по адресам', 'secondary', () => decideApplication(app, 'addresses'))]);
+      const choices = [
+        ['trusted', 'Доверить весь трафик', 'primary'],
+        ['addresses', 'Разрешить по адресам', 'secondary'],
+        ['denied', 'Запретить VPN', 'secondary deny-vpn']
+      ];
+      const card = row(app.name, '', choices.map(([decision, label, style]) => button(label, style,
+        () => decideApplication(app, decision),
+        () => (state.applications || []).some(a => a.id === app.id && a.decision === decision))));
       card.querySelector('.row-copy').append(element('p', app.path, 'application-path'), element('p', '', 'application-target'));
       return card;
     },
     (card, app) => {
       setText(card.querySelector('.row-copy strong'), app.name);
-      setText(card.querySelector('.row-copy p'), powerRouteNote('Решение') || (app.decision === 'trusted' ? (state.app_tunnel ? 'Доверенное · весь трафик через VPN' : 'Доверенное · VPN недоступен, используется прямое подключение') : app.decision === 'addresses' ? 'VPN только для разрешённых адресов' : 'Вы ещё не выбирали маршрут для приложения'));
+      setText(card.querySelector('.row-copy p'), powerRouteNote('Решение') || (state.traffic_mode === 'all' ? 'Весь трафик через VPN · выборочное решение сохранено' : app.decision === 'trusted' ? (state.app_tunnel ? 'Доверенное · весь трафик через VPN' : 'Доверенное · VPN недоступен, прямое подключение запрещено') : app.decision === 'addresses' ? 'VPN только для разрешённых адресов' : app.decision === 'denied' ? 'VPN запрещён · защищённые адреса заблокированы' : 'VPN ещё не разрешён · защищённые адреса заблокированы'));
       setText(card.querySelector('.application-target'), 'Последний адрес: ' + app.target);
       setText(card.querySelector('.application-path'), app.path);
       card.hidden = !matchesSearch('applications-search', [app.target, app.decision, ...sourceFields([app])]);
       card.querySelector('.primary').disabled = app.decision === 'trusted';
       card.querySelector('.secondary').disabled = app.decision === 'addresses';
+      card.querySelector('.deny-vpn').disabled = app.decision === 'denied';
     });
   empty($('applications-list'), 'Приложения появятся после первого сетевого подключения, если система позволит определить источник.');
   searchStatus('applications-search-status', [...applicationRows.values()].filter(node => !node.hidden).length, apps.length);
   maybePromptApplication();
 }
 function maybePromptApplication() {
-	if ($('application-prompt').open && promptedApplication && !(state.pending_applications || []).some(a => a.id === promptedApplication.id)) {
+	if ($('application-prompt').open && promptedApplication && (state.traffic_mode === 'all' || !(state.pending_applications || []).some(a => a.id === promptedApplication.id))) {
 		$('application-prompt').close('later');
 		return;
 	}
-  if (state.vpn_enabled === false || !state.account_id || state.status === 'auth_required' || document.hidden || Date.now() < nextApplicationPrompt || document.querySelector('dialog[open]')) return;
+  if (state.traffic_mode === 'all' || state.vpn_enabled === false || !state.account_id || state.status === 'auth_required' || document.hidden || Date.now() < nextApplicationPrompt || document.querySelector('dialog[open]')) return;
   const app = (state.pending_applications || []).find(a => !promptedApplications.has(a.id));
   if (!app) return;
   promptedApplication = app;
   promptedApplications.add(app.id);
   $('application-title').textContent = 'Использовать «' + app.name + '» через VPN?';
-  $('application-description').textContent = 'Вы ещё не выбирали VPN для этого приложения. Его запрос к ' + app.target + ' несколько раз не прошёл напрямую.';
+  $('application-description').textContent = 'Приложение обращается к ' + app.target + '. Разрешите ему VPN для выбранных адресов или для всего трафика. Без разрешения защищённые адреса останутся заблокированы.';
   $('application-identity').textContent = app.path;
   $('application-prompt').returnValue = '';
   $('application-prompt').showModal();
@@ -164,10 +172,10 @@ function initTraffic() {
     const app = promptedApplication, decision = $('application-prompt').returnValue;
     promptedApplication = null;
     nextApplicationPrompt = Date.now() + 60000;
-    if (!app || !['trusted', 'addresses'].includes(decision)) return;
+    if (!app || !['trusted', 'addresses', 'denied'].includes(decision)) return;
     try {
       const result = await act('applications', {id:app.id, decision});
-      toast(result.message || (decision === 'trusted' ? 'Приложение использует VPN' : 'Оставили выбор по адресам'));
+      toast(result.message || (decision === 'trusted' ? 'Приложение использует VPN' : decision === 'denied' ? 'Доступ к VPN запрещён' : 'Разрешён VPN для выбранных адресов'));
     } catch { /* act displays the error; the decision can be retried on Applications. */ }
   });
   document.addEventListener('visibilitychange', maybePromptApplication);

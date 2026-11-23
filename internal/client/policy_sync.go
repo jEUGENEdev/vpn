@@ -135,7 +135,7 @@ func (c *Client) syncApplicationRules(ctx context.Context) error {
 		return errors.New("войдите в аккаунт, чтобы сохранить решения приложений на сервере")
 	}
 	if !supported {
-		return errors.New("для сохранения решений приложений обновите сервер LineVPN")
+		return errors.New("для сохранения решений приложений обновите сервер приложения «Сеть»")
 	}
 	sort.Slice(changes, func(i, j int) bool { return changes[i].ID < changes[j].ID })
 	if len(changes) > 64 {

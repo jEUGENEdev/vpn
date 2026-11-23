@@ -79,10 +79,23 @@ func (c *Client) JudgeFlow(network uint8, source, dest netip.AddrPort, first []b
 	return tun.FlowVerdict{Action: tun.ActionAccept}
 }
 func (c *Client) NewDNSPacket(payload []byte, source, destination M.Socksaddr, writer N.PacketWriter) {
-	answer, e := c.DNS.Answer(payload)
-	if e == nil {
-		writer.WritePacket(buf.As(answer), destination)
+	if !c.reserveDNS() {
+		if answer := dnsFailure(payload); answer != nil {
+			writer.WritePacket(buf.As(answer), destination)
+		}
+		return
 	}
+	query := append([]byte(nil), payload...)
+	go func() {
+		defer func() { <-c.dnsSlots }()
+		answer, err := c.answerDNS(context.Background(), query, destination.Addr, false)
+		if err != nil {
+			answer = dnsFailure(query)
+		}
+		if answer != nil {
+			writer.WritePacket(buf.As(answer), destination)
+		}
+	}()
 }
 func (c *Client) NewConnectionEx(ctx context.Context, conn net.Conn, source, dest M.Socksaddr, onClose N.CloseHandlerFunc) {
 	go func() {
@@ -94,7 +107,7 @@ func (c *Client) NewConnectionEx(ctx context.Context, conn net.Conn, source, des
 			}
 		}()
 		if dest.Port == 53 {
-			result = c.dnsTCP(conn)
+			result = c.dnsTCP(ctx, conn, dest.Addr)
 			return
 		}
 		target, e := c.target(dest.Addr)
@@ -124,7 +137,7 @@ func (c *Client) NewConnectionEx(ctx context.Context, conn net.Conn, source, des
 		<-done
 	}()
 }
-func (c *Client) dnsTCP(conn net.Conn) error {
+func (c *Client) dnsTCP(ctx context.Context, conn net.Conn, destination netip.Addr) error {
 	for {
 		conn.SetDeadline(time.Now().Add(30 * time.Second))
 		var length [2]byte
@@ -139,12 +152,19 @@ func (c *Client) dnsTCP(conn net.Conn) error {
 		if _, e := io.ReadFull(conn, q); e != nil {
 			return e
 		}
-		answer, e := c.DNS.Answer(q)
-		if e != nil {
-			return e
+		answer := dnsFailure(q)
+		if c.reserveDNS() {
+			response, err := c.answerDNS(ctx, q, destination, true)
+			<-c.dnsSlots
+			if err == nil {
+				answer = response
+			}
+		}
+		if answer == nil {
+			return errors.New("invalid DNS query")
 		}
 		binary.BigEndian.PutUint16(length[:], uint16(len(answer)))
-		if _, e = conn.Write(append(length[:], answer...)); e != nil {
+		if _, e := conn.Write(append(length[:], answer...)); e != nil {
 			return e
 		}
 	}

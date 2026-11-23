@@ -115,6 +115,7 @@ func TestFailedVPNConnectionEventIncludesSource(t *testing.T) {
 	c.ready = true
 	c.config.Pinned = []string{"127.0.0.1"}
 	app := testApp("b")
+	c.apps[app.ID] = model.Application{ApplicationInfo: app, Decision: "addresses"}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -170,7 +171,7 @@ func TestHistoricSuccessesAndExpiredFailuresDoNotSuggest(t *testing.T) {
 	}
 }
 
-func TestAddressDecisionsTakePrecedenceOverApplicationPrompts(t *testing.T) {
+func TestApprovedAddressStillRequiresApplicationConsent(t *testing.T) {
 	c := testTrafficClient(t)
 	app := testApp("a")
 	now := time.Now()
@@ -187,8 +188,8 @@ func TestAddressDecisionsTakePrecedenceOverApplicationPrompts(t *testing.T) {
 	}
 	delete(c.dismissed, "example.com")
 	c.config.Profile.Rules = []string{"example.com"}
-	if pending() != 0 {
-		t.Fatal("an address already routed by an explicit rule still prompted")
+	if pending() != 1 {
+		t.Fatal("global address permission concealed missing application consent")
 	}
 }
 func TestStableGroupingSourcesAndPublicSuffixBoundaries(t *testing.T) {

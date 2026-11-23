@@ -215,13 +215,15 @@ func TestProtectedLocalLifecycleDoesNotSignalOutage(t *testing.T) {
 func TestProtectedFailureIsScopedAndCountedOnce(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		c := testTrafficClient(t)
+		app := testApp("a")
+		c.apps[app.ID] = model.Application{ApplicationInfo: app, Decision: "addresses"}
 		c.ready = true
 		c.config.Profile.Rules = []string{"example.com"}
 		left, right := net.Pipe()
 		defer right.Close()
 		conn := lifecycleConn{Conn: left, readErr: io.EOF, writeErr: syscall.ECONNRESET}
-		key := flowKey{Target: "example.com", Network: "tcp", Port: 443}
-		c.active[conn] = activeFlow{Target: key.Target, Network: key.Network, Port: key.Port, Route: policy.VPN}
+		key := flowKey{Target: "example.com", AppID: app.ID, Network: "tcp", Port: 443}
+		c.active[conn] = activeFlow{Target: key.Target, AppID: app.ID, Network: key.Network, Port: key.Port, Route: policy.VPN}
 		flow := &tracked{Conn: conn, c: c}
 		defer flow.Close()
 		flow.writes.Store(1)
@@ -255,12 +257,14 @@ func TestProtectedDialNeverAttemptsDirectAfterFailure(t *testing.T) {
 	for _, network := range []string{"tcp", "udp"} {
 		t.Run(network, func(t *testing.T) {
 			c := testTrafficClient(t)
+			app := testApp("a")
+			c.apps[app.ID] = model.Application{ApplicationInfo: app, Decision: "addresses"}
 			c.ready = true
 			c.config.Profile.Rules = []string{"127.0.0.1"}
 			attempts := 0
 			c.Direct.Control = func(string, string, syscall.RawConn) error { attempts++; return errors.New("unexpected direct dial") }
 			for i := 0; i < 3; i++ {
-				if conn, err := c.Dial(context.Background(), network, "127.0.0.1", 443); err == nil {
+				if conn, err := c.dialApplication(context.Background(), network, "127.0.0.1", 443, app); err == nil {
 					conn.Close()
 					t.Fatal("missing VPN transport accepted connection")
 				}
