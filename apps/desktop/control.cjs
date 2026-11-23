@@ -30,7 +30,7 @@ function createControl({token, session, platform=process.platform, resources=pro
   let busy=false;
   const transport=fetchImpl||((url,options)=>pinnedFetch(url,options,session().certificate));
   async function request(pathName, body, bearer=token) {
-    const response=await transport(base+'/local/'+pathName, {method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+bearer,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(pathName==='state'?3000:30000)});
+    const response=await transport(base+'/local/'+pathName, {method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+(typeof bearer==='function'?bearer():bearer),'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(pathName==='state'?3000:30000)});
     const data=await response.json();
     if (!response.ok) throw Error(data.error||'Служба отклонила запрос');
     return data;

@@ -1,4 +1,4 @@
-# Runs only on disposable GitHub-hosted runners. Always restores their network.
+﻿# Runs only on disposable GitHub-hosted runners. Always restores their network.
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Use an isolated CI runner for this network test' }
 Set-Location (Join-Path $PSScriptRoot '..')
@@ -28,6 +28,12 @@ try {
         } catch { Start-Sleep -Seconds 1 }
     }
     if (-not $state.tunnel -or -not $state.guard) { throw 'TUN or persistent guard unavailable' }
+    # Exercise the shipped Electron/ASAR against the actual service, too.
+    $env:LINEVPN_SMOKE_TEST_REPORT = Join-Path (Get-Location) 'build/windows-gui.txt'
+    $gui = Start-Process (Join-Path $env:ProgramFiles 'LineVPN/Сеть.exe') -ArgumentList '--background' -PassThru
+    if (-not $gui.WaitForExit(45000)) { $gui.Kill(); throw 'Packaged Сеть UI did not become ready' }
+    if ($gui.ExitCode -ne 0 -or -not (Test-Path $env:LINEVPN_SMOKE_TEST_REPORT)) { throw 'Packaged Сеть UI cannot communicate with its service' }
+    Remove-Item Env:LINEVPN_SMOKE_TEST_REPORT
     Write-Output 'Service ready; checking DNS and direct traffic'
     $answer = Resolve-DnsName example.com -Server 172.29.255.2 -Type A -DnsOnly -QuickTimeout
     if (-not ($answer.IPAddress -match '^198\.(18|19)\.')) { throw 'TUN DNS did not return a fake IP' }
@@ -63,7 +69,15 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Repair changed saved client data' }
     $products = @(Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' | Get-ItemProperty | Where-Object { $_.DisplayName -in @('Сеть', 'LineVPN') })
     if ($products.Count -ne 1 -or $products[0].DisplayVersion -ne $vpnVersion) { throw 'Duplicate or stale installed product after repair' }
-    Start-Service LineVPN
+    if ((Get-Service LineVPN).Status -ne 'Running') { throw 'Repair did not start the service itself' }
+    # A broken installation may be missing its SCM registration entirely.
+    Stop-Service LineVPN
+    & sc.exe delete LineVPN | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not create missing-service fixture' }
+    $repair = Start-Process msiexec.exe -ArgumentList @('/i', ('"' + $msi + '"'), '/qn', '/norestart') -Wait -PassThru
+    if ($repair.ExitCode -notin @(0,3010) -or (Get-Service LineVPN).Status -ne 'Running') { throw 'Repeat MSI did not restore the missing service' }
+    python scripts/test-upgrade-state.py check $dataPath build/windows-upgrade-state.json
+    if ($LASTEXITCODE -ne 0) { throw 'Service restoration changed saved client data' }
     python scripts/test-desktop-update.py $msi
     if ($LASTEXITCODE -ne 0) { throw 'Native MSI update regression failed' }
     Write-Output 'Checking abrupt process termination and retained protection'

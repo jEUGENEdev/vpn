@@ -13,7 +13,7 @@ with tempfile.TemporaryDirectory() as temporary:
     payload = work / 'payload'
     (payload / 'resources/agent').mkdir(parents=True)
     (payload / 'resources/agent/linevpn-agent.exe').write_bytes(b'test payload')
-    (payload / 'LineVPN.exe').write_bytes(b'test UI')
+    (payload / 'Сеть.exe').write_bytes(b'test UI')
     output = work / 'package.wxs'
     subprocess.run([sys.executable, str(root / 'packaging/windows/package.py'), str(payload), str(output)], check=True)
     ns = {'w': 'http://wixtoolset.org/schemas/v4/wxs'}

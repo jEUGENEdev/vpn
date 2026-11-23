@@ -41,8 +41,17 @@ func main() {
 	}
 	dir := flag.String("data", platform.DefaultDir(), "protected state directory")
 	service := flag.Bool("service", false, "run as Windows service")
+	check := flag.Bool("check-service", false, "wait for authenticated local service readiness without changing state")
 	recover := flag.Bool("recover-network", false, "explicitly restore DNS and remove LineVPN firewall rules")
 	flag.Parse()
+	if *check {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		if err := waitForService(ctx, *dir, "https://127.0.0.1:17891"); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if *recover {
 		if e := platform.Recover(*dir); e != nil {
 			log.Fatal(e)

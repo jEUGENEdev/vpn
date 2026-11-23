@@ -162,6 +162,7 @@ jobs:
           name: windows-native-check
           path: |
             build/windows-native.txt
+            build/windows-gui.txt
             build/windows-install.log
             build/windows-update.log
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

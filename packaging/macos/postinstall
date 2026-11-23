@@ -50,3 +50,6 @@ trap '/bin/rm -f "$vpn_pf"' EXIT
 /bin/cat "$vpn_pf" > /etc/pf.conf
 /bin/launchctl enable system/dev.linevpn.agent
 /bin/launchctl bootstrap system /Library/LaunchDaemons/dev.linevpn.agent.plist
+# A registered launchd job may still fail during startup. Check the authenticated
+# API before reporting success; leave saved policy and protection untouched.
+'/Library/Application Support/LineVPN/linevpn-agent' -data /var/lib/linevpn -check-service
