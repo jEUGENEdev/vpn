@@ -32,7 +32,7 @@ func (h handler) Execute(args []string, requests <-chan svc.ChangeRequest, chang
 				select {
 				case <-done:
 				case <-time.After(8 * time.Second):
-					// Process exit releases the TUN; no persistent deny is installed.
+					// Process exit releases the TUN; the persistent guard remains.
 				}
 				return false, 0
 			case svc.Interrogate:

@@ -6,6 +6,19 @@ cd "$(dirname "$0")/.."
 recover() {
   local vpn_test_status=$?
   if [[ "$vpn_test_status" -ne 0 ]]; then
+    # Keep the network failure reason before stopping the service. Do not dump
+    # the profile, credentials, traffic history or full local state.
+    python3 - <<'PYHEALTH' || true
+import pathlib, sys, json
+sys.path.insert(0, 'scripts')
+from desktop_control_fixture import state
+data = pathlib.Path('/var/lib/linevpn')
+try:
+    value = state(data, (data / 'ui-token').read_text().strip())
+    print('Native service health:', json.dumps({key: value.get(key) for key in ('vpn_enabled', 'tunnel', 'guard', 'power_error')}))
+except (OSError, ValueError) as error:
+    print('Native service health unavailable:', type(error).__name__)
+PYHEALTH
     {
       sudo /sbin/pfctl -a linevpn -sr -v
       /sbin/route -n get 127.0.0.1

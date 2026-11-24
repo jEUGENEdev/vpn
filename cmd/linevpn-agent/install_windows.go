@@ -130,6 +130,17 @@ func closeInstalledUI() error {
 				buffer := make([]uint16, 32768)
 				size := uint32(len(buffer))
 				e = windows.QueryFullProcessImageName(process, 0, &buffer[0], &size)
+				if e != nil {
+					// A helper can already be tearing down after its parent
+					// exits, while its process handle is not signaled yet.
+					// Confirm actual exit before accepting the failed query.
+					if result, waitErr := windows.WaitForSingleObject(process, 10000); waitErr == nil && result == windows.WAIT_OBJECT_0 {
+						e = nil
+					} else {
+						e = fmt.Errorf("query %s process %d: %w", name, entry.ProcessID, e)
+					}
+					size = 0 // Never interpret an incomplete image-name buffer.
+				}
 				installed := filepath.Join(base, "LineVPN", name)
 				if strings.EqualFold(name, "linevpn-agent.exe") {
 					installed = filepath.Join(base, "LineVPN", "resources", "agent", name)
@@ -139,13 +150,6 @@ func closeInstalledUI() error {
 					// Wait for the worker; only the explicitly removed UI may
 					// be terminated. Do not release WFP under a live worker.
 					e = waitInstalledProcess(process, !strings.EqualFold(name, "linevpn-agent.exe"))
-				}
-				if e != nil {
-					// Another process from the snapshot may have exited when
-					// its parent UI was terminated earlier in this pass.
-					if result, err := windows.WaitForSingleObject(process, 0); err == nil && result == windows.WAIT_OBJECT_0 {
-						e = nil
-					}
 				}
 				windows.CloseHandle(process)
 				if e != nil {
@@ -169,10 +173,12 @@ func waitInstalledProcess(process windows.Handle, terminate bool) error {
 	}
 	if terminate {
 		if err := windows.TerminateProcess(process, 0); err != nil {
-			if result, waitErr := windows.WaitForSingleObject(process, 0); waitErr == nil && result == windows.WAIT_OBJECT_0 {
+			// ERROR_ACCESS_DENIED also means the process has started exiting.
+			// Termination is asynchronous: a zero-time probe races with it.
+			if result, waitErr := windows.WaitForSingleObject(process, 10000); waitErr == nil && result == windows.WAIT_OBJECT_0 {
 				return nil
 			}
-			return err
+			return fmt.Errorf("terminate installed UI: %w", err)
 		}
 	}
 	result, err := windows.WaitForSingleObject(process, 10000)
