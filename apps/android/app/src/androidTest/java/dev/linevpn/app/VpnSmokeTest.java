@@ -110,6 +110,32 @@ public class VpnSmokeTest {
                 }
             }
             Log.e("LineVpnSmoke", "Failed direct probe state: " + diagnostic);
+            try (DatagramSocket socket = new DatagramSocket()) {
+                vpnNetwork.bindSocket(socket);
+                socket.setSoTimeout(1000);
+                byte[] query = new byte[]{0x12,0x34,1,0,0,1,0,0,0,0,0,0,7,'e','x','a','m','p','l','e',3,'c','o','m',0,0,1,0,1};
+                socket.send(new DatagramPacket(query, query.length, InetAddress.getByName("172.29.255.2"), 53));
+                DatagramPacket response = new DatagramPacket(new byte[512], 512);
+                socket.receive(response);
+                Log.e("LineVpnSmoke", "Independent DNS diagnostic received " + response.getLength() + " bytes");
+            } catch (Exception error) { Log.e("LineVpnSmoke", "Independent DNS diagnostic failed: " + error.getClass().getSimpleName()); }
+            File[] descriptors = new File("/proc/self/fd").listFiles();
+            for (File descriptor : descriptors == null ? new File[0] : descriptors) {
+                try {
+                    if (android.system.Os.readlink(descriptor.getPath()).contains("tun")) {
+                        String info = new String(java.nio.file.Files.readAllBytes(
+                                java.nio.file.Paths.get("/proc/self/fdinfo", descriptor.getName())), StandardCharsets.UTF_8);
+                        Log.e("LineVpnSmoke", "TUN descriptor " + descriptor.getName() + ": " + info.replace('\n', ' '));
+                    }
+                } catch (Exception ignored) { /* A descriptor can close during enumeration. */ }
+            }
+            try (InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                    getInstrumentation().getUiAutomation().executeShellCommand("ip -s link"))) {
+                ByteArrayOutputStream output = new ByteArrayOutputStream();
+                byte[] buffer = new byte[4096]; int count;
+                while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                Log.e("LineVpnSmoke", "Interface counters: " + output.toString("UTF-8"));
+            } catch (Exception error) { Log.e("LineVpnSmoke", "Interface counter diagnostic failed: " + error.getClass().getSimpleName()); }
             throw failure;
         }
     }
