@@ -268,14 +268,34 @@ elif name == 'launchctl':
         (root/'stopping').write_text(os.environ.get('STOP_POLLS', '0'))
         sys.exit(int(os.environ.get('BOOTOUT_CODE', '0')))
 elif name == 'id':
-    sys.exit(0)  # Existing service account must be reused.
+    sys.exit(1 if (root/'user-deleted').exists() else 0)
 elif name == 'dscl':
-    if sys.argv[2] == '-read':
+    record_type = 'user' if sys.argv[3].startswith('/Users') else 'group'
+    deleted = root / (record_type + '-deleted')
+    if sys.argv[2] == '-list':
+        if os.environ.get('DIRECTORY_LIST_ERROR') == '1': sys.exit(40)
+        if not deleted.exists(): print('_linevpn' if os.environ.get('MISSING_ACCOUNT_ID') == '1' else '_linevpn 399')
+        if os.environ.get('SHARED_SERVICE_ID') == '1': print('other 399')
+    elif sys.argv[2] == '-read':
+        if deleted.exists(): sys.exit(185)
         key = sys.argv[-1]
         values = {'UniqueID': '399', 'PrimaryGroupID': '399', 'NFSHomeDirectory': '/var/empty', 'UserShell': '/usr/bin/false'}
+        if os.environ.get('MISSING_ACCOUNT_ID') == '1' and key == 'UniqueID': sys.exit(185)
         if os.environ.get('FOREIGN_ACCOUNT') == '1': values['UniqueID'] = '501'
+        if os.environ.get('FOREIGN_GROUP') == '1' and record_type == 'group': values['PrimaryGroupID'] = '80'
         print(key + ': ' + values[key])
-    elif sys.argv[2] != '-delete':
+    elif sys.argv[2] == '-delete':
+        error = os.environ.get('DELETE_' + record_type.upper() + '_ERROR', '')
+        if error:
+            print('<main> delete status: ' + error, file=sys.stderr)
+            if error == 'eDSPermissionError':
+                print('<dscl_cmd> DS Error: -14120 (eDSPermissionError)', file=sys.stderr)
+                sys.exit(40)
+            sys.exit(1)
+        if os.environ.get('DELETE_NO_EFFECT') != '1': deleted.touch()
+    elif sys.argv[2] == '-create':
+        if deleted.exists(): deleted.unlink()
+    else:
         sys.exit(99)
 
 '''
@@ -307,7 +327,7 @@ class MacOSScriptTests(unittest.TestCase):
         }
         for name, content in self.files.items():
             (self.data / name).write_bytes(content)
-        for name in ('preinstall', 'postinstall', 'uninstall.sh', 'stop-service.sh', 'manage.sh'):
+        for name in ('preinstall', 'postinstall', 'uninstall.sh', 'stop-service.sh', 'manage.sh', 'service-account.sh'):
             path = ROOT / 'packaging/macos' / name
             if not path.exists():
                 continue
@@ -426,6 +446,101 @@ class MacOSScriptTests(unittest.TestCase):
         self.assertFalse(self.data.exists())
         self.assertTrue(any('-recover-network' in call for call in self.trace()))
 
+    def test_user_delete_permission_error_does_not_strand_app_or_credentials(self):
+        app = self.bundle('Сеть.app')
+        result = self.run_script('uninstall.sh', DELETE_USER_ERROR='eDSPermissionError', INSTALLED_VERSION='0.4.0')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(app.exists())
+        self.assertFalse(self.support.exists())
+        self.assertFalse(self.data.exists())
+        self.assertIn('Предупреждение:', result.stdout)
+        self.assertIn('_linevpn', result.stdout)
+        self.assertFalse((self.root / 'user-deleted').exists())
+        self.assertFalse(any(call[0] == 'dscl' and '-delete' in call and '/Groups/_linevpn' in call for call in self.trace()))
+        self.assertTrue(any(call[:3] == ['pkgutil', '--forget', 'dev.linevpn.service'] for call in self.trace()))
+
+    def test_group_delete_permission_error_is_reported_after_file_cleanup(self):
+        result = self.run_script('uninstall.sh', DELETE_GROUP_ERROR='eDSPermissionError')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.data.exists())
+        self.assertTrue((self.root / 'user-deleted').exists())
+        self.assertIn('Предупреждение:', result.stdout)
+
+    def test_unexpected_directory_error_still_preserves_installed_files(self):
+        result = self.run_script('uninstall.sh', DELETE_USER_ERROR='eDSReadOnly')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(self.support.exists())
+        self.assertTrue(self.data.exists())
+
+    def test_success_status_without_record_deletion_is_not_success(self):
+        result = self.run_script('uninstall.sh', DELETE_NO_EFFECT='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(self.support.exists())
+        self.assertTrue(self.data.exists())
+
+    def test_directory_read_error_stops_before_network_or_process_changes(self):
+        result = self.run_script('uninstall.sh', DIRECTORY_LIST_ERROR='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any(call[0] in ('pkill', 'launchctl', 'linevpn-agent') for call in self.trace()))
+
+    def test_shared_service_id_is_not_deleted_or_reused(self):
+        for script in ('uninstall.sh', 'postinstall'):
+            result = self.run_script(script, SHARED_SERVICE_ID='1')
+            self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any('-delete' in call or '-create' in call for call in self.trace()))
+        self.assertFalse(any(call[0] in ('pkill', 'launchctl', 'linevpn-agent') for call in self.trace()))
+
+    def test_incomplete_directory_record_is_not_treated_as_absent(self):
+        for script in ('uninstall.sh', 'postinstall'):
+            self.assertNotEqual(self.run_script(script, MISSING_ACCOUNT_ID='1').returncode, 0)
+        self.assertFalse(any('-delete' in call or '-create' in call for call in self.trace()))
+
+    def test_repeated_removal_also_removes_an_orphaned_group(self):
+        (self.root / 'user-deleted').touch()
+        result = self.run_script('uninstall.sh')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.root / 'group-deleted').exists())
+
+    def test_postinstall_rejects_foreign_account_before_creating_state_or_starting(self):
+        result = self.run_script('postinstall', FOREIGN_ACCOUNT='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any(call[0] in ('pfctl', 'launchctl', 'linevpn-agent') for call in self.trace()))
+
+    def test_postinstall_rejects_foreign_group(self):
+        result = self.run_script('postinstall', FOREIGN_GROUP='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any(call[0] in ('pfctl', 'launchctl', 'linevpn-agent') for call in self.trace()))
+
+    def test_retained_account_allows_fresh_install_without_old_credentials(self):
+        result = self.run_script('uninstall.sh', DELETE_USER_ERROR='eDSPermissionError')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.run_script('preinstall').returncode, 0)
+        # Simulate Apple's payload copy between preinstall and postinstall.
+        self.support.mkdir()
+        (self.support / 'linevpn-agent').symlink_to(self.commands / 'linevpn-agent')
+        result = self.run_script('postinstall')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.data.is_dir())
+        self.assertFalse((self.data / 'profile.json').exists())
+        self.assertFalse((self.data / 'ui-token').exists())
+        self.assertFalse(any('-create' in call for call in self.trace()))
+
+    def test_postinstall_reuses_valid_orphaned_group(self):
+        (self.root / 'user-deleted').touch()
+        result = self.run_script('postinstall')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.root / 'user-deleted').exists())
+        self.assertTrue(any(call[-3:] == ['/Users/_linevpn', 'UniqueID', '399'] for call in self.trace()))
+        self.assertFalse(any('-create' in call and '/Groups/_linevpn' in call for call in self.trace()))
+
+    def test_postinstall_creates_both_missing_service_records(self):
+        (self.root / 'user-deleted').touch()
+        (self.root / 'group-deleted').touch()
+        result = self.run_script('postinstall')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.root / 'user-deleted').exists())
+        self.assertFalse((self.root / 'group-deleted').exists())
+
     def test_uninstall_refuses_recovery_while_worker_is_alive(self):
         result = self.run_script('uninstall.sh', STUCK_WORKER='1')
         self.assertNotEqual(result.returncode, 0, result.stderr)
@@ -502,6 +617,14 @@ class MacOSScriptTests(unittest.TestCase):
         result = self.run_manager('uninstall', STOP_POLLS='2')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.support.exists())
+        self.assertFalse(self.data.exists())
+
+    def test_manager_returns_account_warning_to_the_gui(self):
+        result = self.run_manager('uninstall', DELETE_USER_ERROR='eDSPermissionError')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Предупреждение:', result.stdout)
+        self.assertIn('_linevpn', result.stdout)
+        self.assertNotIn('<dscl_cmd>', result.stdout)
         self.assertFalse(self.data.exists())
 
     def test_manager_reports_install_failure_and_releases_lock(self):

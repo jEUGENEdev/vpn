@@ -34,6 +34,6 @@ with tempfile.TemporaryDirectory() as temporary:
 
 plist = plistlib.loads((root / 'packaging/macos/dev.linevpn.agent.plist').read_bytes())
 assert plist['ProgramArguments'] == ['/Library/Application Support/LineVPN/service-wrapper.sh']
-for script in ('service-wrapper.sh', 'uninstall.sh', 'preinstall', 'postinstall', 'Uninstall-LineVPN.command'):
+for script in ('service-wrapper.sh', 'uninstall.sh', 'service-account.sh', 'preinstall', 'postinstall', 'Uninstall-LineVPN.command'):
     subprocess.run(['bash', '-n', str(root / 'packaging/macos' / script)], check=True)
 print('PASS: generated MSI removal ordering, checked elevated cleanup, clean-install gate and macOS supervisor packaging')

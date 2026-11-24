@@ -9,17 +9,22 @@ on run argv
             set operation to "uninstall"
         end if
         with timeout of 1800 seconds
-            do shell script "/bin/bash " & quoted form of (resources & "/manage.sh") & " " & quoted form of operation with administrator privileges
+            set operationDetails to do shell script "/bin/bash " & quoted form of (resources & "/manage.sh") & " " & quoted form of operation with administrator privileges
         end timeout
         if operation is "install" then
             display dialog "Приложение «Сеть» установлено. Фоновая служба запущена и проверена. Добавьте профиль сервера и войдите." with title "Готово" buttons {"Закрыть", "Открыть «Сеть»"} default button "Открыть «Сеть»" with icon iconFile
             if button returned of result is "Открыть «Сеть»" then do shell script "/usr/bin/open /Applications/Сеть.app"
         else
-            display dialog "Приложение «Сеть», служба и локальные данные удалены. Запустите установщик снова и выберите «Установить»." with title "Готово" buttons {"Закрыть"} default button "Закрыть" with icon iconFile
+            set completionText to "Приложение «Сеть», служба и локальные данные удалены. Запустите установщик снова и выберите «Установить»."
+            if operationDetails is not "" then
+                display dialog completionText & return & return & operationDetails with title "Удалено с предупреждением" buttons {"Закрыть"} default button "Закрыть" with icon caution
+            else
+                display dialog completionText with title "Готово" buttons {"Закрыть"} default button "Закрыть" with icon iconFile
+            end if
         end if
     on error messageText number errorNumber
         if errorNumber is not -128 then
-            display dialog "Операция не завершена." & return & return & messageText & return & return & "После прерванной установки сначала выполните «Удалить». При ошибке остановки службы перезагрузите Mac и повторите удаление." with title "Установщик «Сеть»" buttons {"Закрыть"} default button "Закрыть" with icon stop
+            display dialog "Операция не завершена." & return & return & messageText with title "Установщик «Сеть»" buttons {"Закрыть"} default button "Закрыть" with icon stop
         end if
     end try
 end run

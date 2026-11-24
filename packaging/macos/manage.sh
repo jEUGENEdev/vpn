@@ -30,4 +30,6 @@ else
     echo "Журнал удаления: $vpn_log" >&2
     exit 1
   fi
+  # Keep raw command diagnostics in the log; show retained identities in the UI.
+  /usr/bin/awk '/^Предупреждение:/' "$vpn_log"
 fi

@@ -35,9 +35,9 @@ mkdir -p build/macos-root/Library/LaunchDaemons 'build/macos-root/Library/Applic
 python3 scripts/collect-licenses.py apps/desktop/assets/THIRD_PARTY_NOTICES.txt
 GOOS=darwin GOARCH="$vpn_arch" CGO_ENABLED=0 go build -tags with_gvisor -trimpath -ldflags='-s -w' -o 'build/macos-root/Library/Application Support/LineVPN/linevpn-agent' ./cmd/linevpn-agent
 cp packaging/macos/dev.linevpn.agent.plist build/macos-root/Library/LaunchDaemons/
-cp packaging/macos/preinstall packaging/macos/postinstall packaging/macos/stop-service.sh build/macos-scripts/
+cp packaging/macos/preinstall packaging/macos/postinstall packaging/macos/stop-service.sh packaging/macos/service-account.sh build/macos-scripts/
 printf '%s\n' "$vpn_version" > build/macos-scripts/version
-cp packaging/macos/service-wrapper.sh packaging/macos/uninstall.sh packaging/macos/stop-service.sh 'build/macos-root/Library/Application Support/LineVPN/'
+cp packaging/macos/service-wrapper.sh packaging/macos/uninstall.sh packaging/macos/stop-service.sh packaging/macos/service-account.sh 'build/macos-root/Library/Application Support/LineVPN/'
 cp packaging/macos/Uninstall-LineVPN.command apps/desktop/assets/
 chmod 755 apps/desktop/assets/Uninstall-LineVPN.command
 chmod 755 build/macos-scripts/preinstall build/macos-scripts/postinstall build/macos-scripts/stop-service.sh 'build/macos-root/Library/Application Support/LineVPN/'*

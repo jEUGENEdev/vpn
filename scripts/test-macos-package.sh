@@ -16,7 +16,7 @@ vpn_resources="$vpn_setup/Contents/Resources"
 codesign --verify --deep --strict "$vpn_setup"
 lipo "$vpn_setup/Contents/MacOS/SetSetup" -verify_arch arm64 x86_64
 osacompile -o build/macos-installer-check.scpt "$vpn_resources/installer.applescript"
-for vpn_file in installer.applescript manage.sh uninstall.sh stop-service.sh; do
+for vpn_file in installer.applescript manage.sh uninstall.sh stop-service.sh service-account.sh; do
   cmp "packaging/macos/$vpn_file" "$vpn_resources/$vpn_file"
 done
 vpn_version="$(python3 scripts/package_version.py)"
@@ -41,10 +41,10 @@ root = pathlib.Path(sys.argv[1])
 package = ET.parse(root / 'PackageInfo').getroot()
 assert package.get('identifier') == 'dev.linevpn.service' and package.get('version') == sys.argv[2]
 PY
-  for vpn_file in preinstall postinstall stop-service.sh; do
+  for vpn_file in preinstall postinstall stop-service.sh service-account.sh; do
     cmp "packaging/macos/$vpn_file" "$vpn_expanded/Scripts/$vpn_file"
   done
-  for vpn_file in stop-service.sh uninstall.sh service-wrapper.sh; do
+  for vpn_file in stop-service.sh uninstall.sh service-wrapper.sh service-account.sh; do
     cmp "packaging/macos/$vpn_file" "$vpn_expanded/Payload/Library/Application Support/LineVPN/$vpn_file"
   done
   [[ "$(cat "$vpn_expanded/Scripts/version")" == "$vpn_version" ]]
