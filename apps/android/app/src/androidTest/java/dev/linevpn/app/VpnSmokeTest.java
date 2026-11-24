@@ -130,7 +130,7 @@ public class VpnSmokeTest {
                 } catch (Exception ignored) { /* A descriptor can close during enumeration. */ }
             }
             try (InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(
-                    getInstrumentation().getUiAutomation().executeShellCommand("ip -s link"))) {
+                    getInstrumentation().getUiAutomation().executeShellCommand("sh -c \"ip -s link; ip rule; ip route show table all; dumpsys connectivity\""))) {
                 ByteArrayOutputStream output = new ByteArrayOutputStream();
                 byte[] buffer = new byte[4096]; int count;
                 while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
