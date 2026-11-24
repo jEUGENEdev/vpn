@@ -237,6 +237,7 @@
 <h2>Кто выходит в сеть.</h2>
 <p>В выборочном режиме каждому приложению нужно разрешение на VPN. Решения для приложений сохраняются в аккаунте и восстанавливаются после переустановки при совпадении приложения и платформы.</p>
 </div>
+<button id="add-application" class="secondary" type="button" hidden>Добавить приложение</button>
 <p id="attribution-note" class="small" hidden="">Источник соединений не определяется. В выборочном режиме доступ к VPN заблокирован для неизвестных приложений. Режим «Весь трафик» разрешает VPN всему устройству.</p>
 <label class="sr-only" for="applications-search">Приложение, путь, домен или IP</label>
 <input id="applications-search" class="list-search" type="search" placeholder="Приложение, путь, домен или IP" autocomplete="off" spellcheck="false" aria-controls="applications-list" aria-describedby="applications-search-status" name="applications-search" autocapitalize="none">
@@ -293,6 +294,18 @@
 <div class="dialog-actions">
 <button class="secondary" value="cancel" autofocus="">Отмена</button>
 <button class="primary" value="ok">Подтвердить</button>
+</div>
+</form>
+</dialog>
+<dialog id="package-picker" aria-labelledby="package-picker-title">
+<form id="package-form">
+<h2 id="package-picker-title">Добавить приложение</h2>
+<label>Название или имя пакета<input id="package-query" type="search" autocapitalize="none" autocomplete="off" spellcheck="false" maxlength="255" placeholder="Например, org.telegram.messenger"></label>
+<label>Установленные приложения<select id="package-options"></select></label>
+<p id="package-error" class="small" role="alert"></p>
+<div class="dialog-actions">
+<button id="package-cancel" class="secondary" type="button">Отмена</button>
+<button id="package-add" class="primary" type="submit">Добавить</button>
 </div>
 </form>
 </dialog>

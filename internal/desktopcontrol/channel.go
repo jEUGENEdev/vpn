@@ -31,6 +31,7 @@ type Credentials struct {
 	Pin         string `json:"pin"`
 }
 type Channel struct {
+	SettingsKey *SettingsKey
 	TLS         *tls.Config
 	Listener    net.Listener
 	Credentials Credentials
@@ -42,6 +43,10 @@ type Channel struct {
 func Open(dir string) (*Channel, error) {
 	private := filepath.Join(dir, "control")
 	if err := privateDirectory(private); err != nil {
+		return nil, err
+	}
+	settingsKey, err := loadSettingsKey(private)
+	if err != nil {
 		return nil, err
 	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -78,7 +83,7 @@ func Open(dir string) (*Channel, error) {
 		return nil, err
 	}
 	config := &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
-	return &Channel{Listener: tls.NewListener(listener, config), Credentials: credentials, TLS: config}, nil
+	return &Channel{SettingsKey: settingsKey, Listener: tls.NewListener(listener, config), Credentials: credentials, TLS: config}, nil
 }
 
 func ReadCredentials(path string) (Credentials, error) {

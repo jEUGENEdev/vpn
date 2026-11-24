@@ -22,7 +22,8 @@ const lifetime = 3 * time.Minute
 const maxPending = 16
 
 var actions = map[string]string{
-	"bootstrap": "Изменить сервер VPN", "login": "Войти в аккаунт", "register": "Создать аккаунт", "pair/claim": "Привязать устройство",
+	"settings-session": "Разрешить управление настройками VPN",
+	"bootstrap":        "Изменить сервер VPN", "login": "Войти в аккаунт", "register": "Создать аккаунт", "pair/claim": "Привязать устройство",
 	"rules": "Изменить разрешение адреса", "dismiss": "Изменить прямой маршрут", "pair": "Создать код привязки", "revoke": "Отозвать устройство",
 	"applications": "Изменить разрешение приложения", "vpn": "Переключить VPN", "traffic-mode": "Изменить режим трафика", "access-key/rotate": "Заменить ключ аккаунта",
 }
@@ -46,13 +47,14 @@ type Bridge struct {
 	mu                      sync.Mutex
 	pending                 map[string]*ticket
 	readToken, controlToken string
+	settingsKey             *SettingsKey
 	execute                 http.Handler
 	describe                func(string, json.RawMessage) (string, error)
 	now                     func() time.Time
 }
 
-func New(readToken, controlToken string, execute http.Handler, describe func(string, json.RawMessage) (string, error)) *Bridge {
-	return &Bridge{pending: make(map[string]*ticket), readToken: readToken, controlToken: controlToken, execute: execute, describe: describe, now: time.Now}
+func New(readToken, controlToken string, settingsKey *SettingsKey, execute http.Handler, describe func(string, json.RawMessage) (string, error)) *Bridge {
+	return &Bridge{pending: make(map[string]*ticket), readToken: readToken, controlToken: controlToken, settingsKey: settingsKey, execute: execute, describe: describe, now: time.Now}
 }
 func reply(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -74,10 +76,14 @@ func (b *Bridge) pruneLocked() {
 	}
 }
 
-// Public handles staging and retrieval, but cannot execute an action. Everything
-// else delegates to a handler that only exposes static UI and authenticated GET state.
+// Public serves status and proposals. Only a separate, approved settings grant
+// can execute a routing change through this listener.
 func (b *Bridge) Public(readOnly http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, settingsPrefix) {
+			b.settings(w, r)
+			return
+		}
 		if r.URL.Path == "/local/control/request" {
 			if !authorized(r, b.readToken) {
 				fail(w, 401, "unauthorized")
@@ -134,6 +140,9 @@ func (b *Bridge) Public(readOnly http.Handler) http.Handler {
 				reply(w, 202, map[string]bool{"pending": true})
 				return
 			}
+			if t.Action == "settings-session" {
+				delete(b.pending, id)
+			}
 			reply(w, 200, map[string]any{"status": t.Status, "body": t.Result})
 			return
 		}
@@ -182,6 +191,20 @@ func (b *Bridge) Privileged() http.Handler {
 		if r.URL.Path == "/cancel" {
 			t.Status = 403
 			t.Result = json.RawMessage(`{"error":"Изменение отменено пользователем"}`)
+			b.mu.Unlock()
+			reply(w, 200, map[string]bool{"ok": true})
+			return
+		}
+		if t.Action == "settings-session" {
+			// Only the requester holding the receipt gets the grant. The
+			// elevated helper receives the same acknowledgement as for a change.
+			if b.settingsKey == nil {
+				t.Status = http.StatusServiceUnavailable
+				t.Result = json.RawMessage(`{"error":"Сеанс управления недоступен"}`)
+			} else {
+				t.Status = http.StatusOK
+				t.Result, _ = json.Marshal(b.settingsKey.issue(b.now()))
+			}
 			b.mu.Unlock()
 			reply(w, 200, map[string]bool{"ok": true})
 			return

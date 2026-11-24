@@ -114,7 +114,8 @@ function renderApplications() {
       card.querySelector('.secondary').disabled = app.decision === 'addresses';
       card.querySelector('.deny-vpn').disabled = app.decision === 'denied';
     });
-  empty($('applications-list'), 'Приложения появятся после первого сетевого подключения, если система позволит определить источник.');
+  $('add-application').hidden = !(window.linevpn?.pickApplication || window.LineBridge?.applicationChoices);
+  empty($('applications-list'), $('add-application').hidden ? 'Приложения появятся после первого сетевого подключения, если система позволит определить источник.' : 'Добавьте приложение вручную или дождитесь первого сетевого подключения.');
   searchStatus('applications-search-status', [...applicationRows.values()].filter(node => !node.hidden).length, apps.length);
   maybePromptApplication();
 }
@@ -164,7 +165,73 @@ function renderStableDevices() {
   empty($('devices-list'), 'Устройства пока не добавлены.');
   searchStatus('devices-search-status', [...deviceRows.values()].filter(node => !node.hidden).length, (state.devices || []).length);
 }
+function initApplicationPicker() {
+  const trigger=$('add-application'), picker=$('package-picker'), query=$('package-query'), options=$('package-options');
+  let choices=[];
+  function filterPackages() {
+    const term=query.value.trim().toLocaleLowerCase('ru');
+    options.replaceChildren(new Option('Выберите приложение', ''));
+    for(const app of choices) {
+      if((app.name+' '+app.path).toLocaleLowerCase('ru').includes(term))options.add(new Option(app.name+' · '+app.path,app.path));
+    }
+    $('package-error').textContent='';
+  }
+  async function reveal(app) {
+    await update();
+    const card=applicationRows.get(app.id);
+    if(card?.hidden) {
+      $('applications-search').value='';
+      renderApplications();
+    }
+    if(card) {
+      card.scrollIntoView({block:'nearest'});
+      card.querySelector('button:not(:disabled)')?.focus({preventScroll:true});
+    }
+    toast('В списке приложений — '+app.name);
+  }
+  trigger.onclick=async()=>{
+    trigger.disabled=true;
+    try {
+      if(window.linevpn?.pickApplication) {
+        const app=await window.linevpn.pickApplication();
+        if(app)await reveal(app);
+      } else {
+        const fresh=JSON.parse(window.LineBridge.applicationChoices());
+        choices=(fresh.length ? fresh : state.applications||[]).slice().sort((a,b)=>a.name.localeCompare(b.name,'ru'));
+        query.value='';
+        filterPackages();
+        picker.showModal();
+        query.focus();
+      }
+    } catch(error) {toast(error.message)}
+    finally {trigger.disabled=false}
+  };
+  query.oninput=filterPackages;
+  options.onchange=()=>{if(options.value)query.value=options.value;};
+  $('package-cancel').onclick=()=>picker.close();
+  $('package-form').onsubmit=async event=>{
+    event.preventDefault();
+    const name=query.value.trim();
+    const onlyMatch=name && options.options.length===2 && !name.includes('.');
+    const pkg=options.value || (onlyMatch ? options.options[1].value : name);
+    if(!pkg || !/^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/.test(pkg)) {
+      $('package-error').textContent='Выберите приложение или введите полное имя пакета.';
+      return;
+    }
+    const submit=$('package-add');
+    if(submit.disabled)return;
+    submit.disabled=true;
+    try {
+      const app=await api('applications/add',{package:pkg});
+      picker.close();
+      await reveal(app);
+    } catch(error) {$('package-error').textContent=error.message}
+    finally {submit.disabled=false}
+  };
+}
+
 function initTraffic() {
+  initApplicationPicker();
   $('traffic-search').oninput = renderTraffic;
   $('rules-search').oninput = renderStableRules;
   $('applications-search').oninput = renderApplications;

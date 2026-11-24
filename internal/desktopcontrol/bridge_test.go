@@ -19,7 +19,11 @@ func makeBridge(t *testing.T) (*Bridge, *atomic.Int32) {
 	t.Helper()
 	calls := new(atomic.Int32)
 	var b *Bridge
-	b = New("status-token", "private-token", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	key, err := loadSettingsKey(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b = New("status-token", "private-token", key, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		if r.Header.Get("Authorization") != "Bearer "+b.controlToken {
 			t.Error("missing internal authorization")

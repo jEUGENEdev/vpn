@@ -27,6 +27,16 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "--identify-application" {
+		info, err := owner.IdentifySelection(context.Background(), os.Args[2])
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(info); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "--approve-control" {
 		if err := approveControl(os.Args[2]); err != nil {
 			log.Fatal(err)
@@ -141,7 +151,7 @@ func serve(ctx context.Context, dir string) error {
 	}
 	defer d.Close()
 	defer cancel()
-	bridge := desktopcontrol.New(token, control.Credentials.Token, d.Client.Handler(control.Credentials.Token, http.NotFoundHandler()), func(action string, data json.RawMessage) (string, error) {
+	bridge := desktopcontrol.New(token, control.Credentials.Token, control.SettingsKey, d.Client.Handler(control.Credentials.Token, http.NotFoundHandler()), func(action string, data json.RawMessage) (string, error) {
 		state := d.Client.State().(map[string]any)
 		server, _ := state["server"].(string)
 		return desktopcontrol.Description(action, data, server, func(id string) string {

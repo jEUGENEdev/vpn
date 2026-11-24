@@ -6,7 +6,8 @@ const run = promisify(execFile);
 const base = 'https://127.0.0.1:17891';
 const https=require('node:https');
 const {X509Certificate}=require('node:crypto');
-const actions = new Set(['bootstrap','login','register','pair/claim','rules','dismiss','pair','revoke','applications','vpn','traffic-mode','access-key/rotate']);
+const settingsActions = new Set(['rules','dismiss','applications','vpn','traffic-mode']);
+const accountActions = new Set(['bootstrap','login','register','pair/claim','pair','revoke','access-key/rotate']);
 const ticketPattern = /^[A-Za-z0-9_-]{43}$/;
 
 // Only an opaque request ID is placed in process arguments. Credentials, server
@@ -26,44 +27,79 @@ function elevationCommand(platform, resources, id, systemRoot) {
   throw Error('Управление поддерживается в Windows и macOS');
 }
 
-function createControl({token, session, platform=process.platform, resources=process.resourcesPath, systemRoot=process.env.SystemRoot, fetchImpl, execute=run, delay=ms=>new Promise(resolve=>setTimeout(resolve,ms))}) {
-  let busy=false;
+async function pickExecutable(showDialog, platform=process.platform, resources=process.resourcesPath, execute=run) {
+  const options={title:'Добавить приложение',buttonLabel:'Выбрать',properties:['openFile']};
+  if(platform==='win32')options.filters=[{name:'Приложения Windows',extensions:['exe']}];
+  else if(platform==='darwin')options.defaultPath='/Applications';
+  else throw Error('Выбор приложения доступен в Windows и macOS');
+  const {canceled,filePaths}=await showDialog(options);
+  if(canceled||!filePaths.length)return null;
+  const agent=platform==='win32'?path.win32.join(resources,'agent','linevpn-agent.exe'):'/Library/Application Support/LineVPN/linevpn-agent';
+  try {
+    const {stdout}=await execute(agent,['--identify-application',filePaths[0]],{timeout:30000,maxBuffer:32768,windowsHide:true});
+    const info=JSON.parse(stdout);
+    if(!/^[a-f0-9]{64}$/.test(info.id)||!info.name||!info.path||info.platform!==(platform==='win32'?'windows':'darwin'))throw Error();
+    return info;
+  }catch(error){throw Error(error.stderr?.trim()||'Не удалось определить исполняемый файл выбранного приложения.')}
+}
+
+function createControl({token, session, platform=process.platform, resources=process.resourcesPath, systemRoot=process.env.SystemRoot, fetchImpl, execute=run, selectApplication, delay=ms=>new Promise(resolve=>setTimeout(resolve,ms))}) {
+  let busy=false, grant=null;
   const transport=fetchImpl||((url,options)=>pinnedFetch(url,options,session().certificate));
   async function request(pathName, body, bearer=token) {
     const response=await transport(base+'/local/'+pathName, {method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+(typeof bearer==='function'?bearer():bearer),'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(pathName==='state'?3000:30000)});
     const data=await response.json();
-    if (!response.ok) throw Error(data.error||'Служба отклонила запрос');
+    if(!response.ok)throw Object.assign(Error(data.error||'Служба отклонила запрос'),{status:response.status});
     return data;
   }
+  async function approved(action,data) {
+    const ticket=await request('control/request',{action,data});
+    if(!ticketPattern.test(ticket.id)||!ticketPattern.test(ticket.receipt))throw Error('Неверный ответ службы');
+    const [program,args]=elevationCommand(platform,resources,ticket.id,systemRoot);
+    try { await execute(program,args,{timeout:180000,maxBuffer:8192,windowsHide:true}); }
+    catch { throw Error('Системное подтверждение отменено или завершилось ошибкой.'); }
+    const result=await request('control/result/'+ticket.id,undefined,ticket.receipt);
+    if(result.pending)throw Error('Служба ещё не подтвердила изменение');
+    if(result.status<200||result.status>=300)throw Error(result.body?.error||'Служба отклонила изменение');
+    return result.body;
+  }
+  async function waitForPower(enabled) {
+    for(let attempt=0;attempt<60;attempt++) {
+      let state;
+      try {state=await request('state')}catch { /* refresh certificate and status after the service restarts */ }
+      if(state?.power_error)throw Error(state.power_error);
+      if(state&&!state.power_transition&&state.vpn_enabled===enabled)return state;
+      await delay(500);
+    }
+    throw Error('Служба не подтвердила состояние VPN. Проверьте состояние перед повторным изменением.');
+  }
   return async (action,data) => {
-    if (action==='state' && data===undefined) return request('state');
-    if (!actions.has(action) || !data || typeof data!=='object' || Array.isArray(data) || Buffer.byteLength(JSON.stringify(data))>30000) throw Error('Неверная команда');
-    if (busy) throw Error('Завершите текущее системное подтверждение');
+    if(action==='state'&&data===undefined)return request('state');
+    const picking=action==='pick-application'&&data===undefined&&typeof selectApplication==='function';
+    if(!picking&&(!(settingsActions.has(action)||accountActions.has(action))||!data||typeof data!=='object'||Array.isArray(data)||Buffer.byteLength(JSON.stringify(data))>30000))throw Error('Неверная команда');
+    if(busy)throw Error('Дождитесь завершения текущего действия');
     busy=true;
     try {
-      const ticket=await request('control/request',{action,data});
-      if (!ticketPattern.test(ticket.id) || !ticketPattern.test(ticket.receipt)) throw Error('Неверный ответ службы');
-      const [program,args]=elevationCommand(platform,resources,ticket.id,systemRoot);
-      try { await execute(program,args,{timeout:180000,maxBuffer:8192,windowsHide:true}); }
-      catch { throw Error('Системное подтверждение отменено или завершилось ошибкой. Проверьте текущее состояние.'); }
-      let result;
-      try { result=await request('control/result/'+ticket.id,undefined,ticket.receipt); }
-      catch (error) { if(action!=='vpn')throw error; }
-      if(result?.pending)throw Error('Результат ещё не получен; проверьте состояние');
-      if(result && (result.status<200||result.status>=300))throw Error(result.body?.error||'Служба отклонила изменение');
-      // Power changes restart the service, so its in-memory receipt may be gone.
-      // The helper only exits successfully after the authenticated commit reply.
-      if (action==='vpn') {
-        for(let attempt=0;attempt<60;attempt++) {
-          let state;
-          try {state=await request('state')}catch { /* readiness retry; never repeat a mutation */ }
-          if(state?.power_error)throw Error(state.power_error);
-          if(state&&!state.power_transition&&state.vpn_enabled===data.enabled)return state;
-          await delay(500);
-        }
-        throw Error('Служба не подтвердила состояние VPN. Проверьте состояние перед повторным изменением.');
+      if(picking) {
+        data=await selectApplication();
+        if(!data)return null;
+        action='applications/add';
       }
-      return result.body;
+      if(accountActions.has(action))return await approved(action,data);
+      if(!grant||grant.expires_at<=Date.now()/1000) {
+        const issued=await approved('settings-session',{});
+        if(typeof issued?.token!=='string'||!/^[A-Za-z0-9_-]{96}$/.test(issued.token)||!Number.isSafeInteger(issued.expires_at)||issued.expires_at<=Date.now()/1000)throw Error('Неверный сеанс управления настройками');
+        grant=issued;
+      }
+      try {
+        const result=await request('control/settings/'+action,data,grant.token);
+        if(action!=='vpn')return result;
+      }catch(error) {
+        if(error.status===401)grant=null;
+        if(action!=='vpn'||error.status!==undefined)throw error;
+        // A restart can interrupt delivery after the change was committed.
+      }
+      return await waitForPower(data.enabled);
     } finally {busy=false;}
   };
 }
@@ -88,4 +124,4 @@ function pinnedFetch(url,options,certificate){
   req.end();
  });
 }
-module.exports={createControl,elevationCommand,pinnedFetch};
+module.exports={createControl,elevationCommand,pinnedFetch,pickExecutable};

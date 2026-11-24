@@ -15,7 +15,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"time"
 )
 
 type process struct {
@@ -24,9 +23,8 @@ type process struct {
 }
 type processLookup func(context.Context, string, netip.AddrPort, netip.AddrPort) (process, error)
 type cachedIdentity struct {
-	info     model.ApplicationInfo
-	size     int64
-	modified time.Time
+	info model.ApplicationInfo
+	file os.FileInfo
 }
 type Desktop struct {
 	lookup processLookup
@@ -56,22 +54,46 @@ func (d *Desktop) Lookup(ctx context.Context, network string, source, dest netip
 	if err != nil || p.PID <= 0 || !filepath.IsAbs(p.Path) {
 		return model.ApplicationInfo{}, errors.New("connection owner unavailable")
 	}
-	path, err := filepath.EvalSymlinks(p.Path)
+	path, stat, err := executableFile(p.Path)
 	if err != nil {
 		return model.ApplicationInfo{}, err
 	}
-	stat, err := os.Stat(path)
-	if err != nil || !stat.Mode().IsRegular() {
-		return model.ApplicationInfo{}, errors.New("executable unavailable")
-	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if cached, ok := d.cache[path]; ok && cached.size == stat.Size() && cached.modified.Equal(stat.ModTime()) {
+	if cached, ok := d.cache[path]; ok && cached.file.Size() == stat.Size() && cached.file.ModTime().Equal(stat.ModTime()) && os.SameFile(cached.file, stat) {
 		return cached.info, nil
 	}
+	info, err := executableIdentity(path, p.Name, stat)
+	if err != nil {
+		return model.ApplicationInfo{}, err
+	}
+	if len(d.cache) >= 512 {
+		clear(d.cache)
+	}
+	d.cache[path] = cachedIdentity{info: info, file: stat}
+	return info, nil
+}
+
+func executableFile(selected string) (string, os.FileInfo, error) {
+	if !filepath.IsAbs(selected) {
+		return "", nil, errors.New("требуется полный путь к приложению")
+	}
+	path, err := filepath.EvalSymlinks(selected)
+	if err != nil {
+		return "", nil, err
+	}
+	stat, err := os.Stat(path)
+	if err != nil || !stat.Mode().IsRegular() {
+		return "", nil, errors.New("исполняемый файл недоступен")
+	}
+	return path, stat, nil
+}
+
+func executableIdentity(path, name string, stat os.FileInfo) (model.ApplicationInfo, error) {
 	// Trust belongs to the executable at this path and this version, never merely
 	// to a process name. An updated/replaced binary needs a new decision.
-	if stat.Size() > 512<<20 {
+	const maxSize = 512 << 20
+	if stat.Size() > maxSize {
 		return model.ApplicationInfo{}, errors.New("executable too large to identify")
 	}
 	f, err := os.Open(path)
@@ -80,11 +102,12 @@ func (d *Desktop) Lookup(ctx context.Context, network string, source, dest netip
 	}
 	defer f.Close()
 	hash := sha256.New()
-	if _, err = io.Copy(hash, f); err != nil {
+	size, err := io.Copy(hash, io.LimitReader(f, maxSize+1))
+	if err != nil {
 		return model.ApplicationInfo{}, err
 	}
 	after, err := f.Stat()
-	if err != nil || after.Size() != stat.Size() || !after.ModTime().Equal(stat.ModTime()) {
+	if err != nil || size != stat.Size() || !os.SameFile(after, stat) || after.Size() != size || !after.ModTime().Equal(stat.ModTime()) {
 		return model.ApplicationInfo{}, errors.New("executable changed during identification")
 	}
 	identityPath := path
@@ -92,14 +115,8 @@ func (d *Desktop) Lookup(ctx context.Context, network string, source, dest netip
 		identityPath = strings.ToLower(path)
 	}
 	id := sha256.Sum256([]byte(runtime.GOOS + "\n" + identityPath + "\n" + hex.EncodeToString(hash.Sum(nil))))
-	name := p.Name
 	if name == "" {
 		name = filepath.Base(path)
 	}
-	info := model.ApplicationInfo{ID: hex.EncodeToString(id[:]), Name: name, Path: path, Platform: runtime.GOOS}
-	if len(d.cache) >= 512 {
-		clear(d.cache)
-	}
-	d.cache[path] = cachedIdentity{info, stat.Size(), stat.ModTime()}
-	return info, nil
+	return model.ApplicationInfo{ID: hex.EncodeToString(id[:]), Name: name, Path: path, Platform: runtime.GOOS}, nil
 }

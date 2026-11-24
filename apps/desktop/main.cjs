@@ -1,7 +1,7 @@
 'use strict';
 const {app,BrowserWindow,ipcMain,Notification,dialog,shell,Tray,Menu,nativeImage,screen}=require('electron');
 const fs=require('node:fs');const path=require('node:path');
-const {createControl}=require('./control.cjs');
+const {createControl,pickExecutable}=require('./control.cjs');
 const {pathToFileURL}=require('node:url');
 const uiPath=path.join(__dirname,app.isPackaged?'ui/index.html':'../../internal/ui/client/index.html');
 const uiURL=pathToFileURL(uiPath).href;
@@ -39,7 +39,7 @@ app.whenReady().then(async()=>{
  ipcMain.on('network-event',(event,value)=>{if(trustedFrame(event))notify(value)});
  ipcMain.handle('local-request',(event,action,data)=>{if(!trustedFrame(event)||!controlAPI)throw Error('Недоверенный источник команды');return controlAPI(action,data)});
  // Load the installed UI even while the service is starting; never leave a blank window.
- controlAPI=createControl({token:()=>fs.readFileSync(path.join(stateDir,'ui-token'),'utf8').trim(),session:()=>JSON.parse(fs.readFileSync(path.join(stateDir,'ui-session.json'),'utf8'))});
+ controlAPI=createControl({selectApplication:()=>pickExecutable(options=>dialog.showOpenDialog(win,options)),token:()=>fs.readFileSync(path.join(stateDir,'ui-token'),'utf8').trim(),session:()=>JSON.parse(fs.readFileSync(path.join(stateDir,'ui-session.json'),'utf8'))});
  await win.loadURL(uiURL);
  let startupNoticeShown=false,checking=false;
  async function check(){

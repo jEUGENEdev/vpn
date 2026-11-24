@@ -47,11 +47,30 @@ class ApplicationResolver(private val context: Context) {
             .put("name", label).put("path", name).put("platform", "android")
     }
 
+    fun selected(name: String): JSONObject? {
+        val pm = context.packageManager
+        if (pm.checkPermission(android.Manifest.permission.INTERNET, name) != PackageManager.PERMISSION_GRANTED) return null
+        return try { application(name) }
+            catch (_: PackageManager.NameNotFoundException) { null }
+    }
+
+    private fun networkApplications() = context.packageManager.getInstalledApplications(0).filter {
+        it.uid >= 10000 && context.packageManager.checkPermission(android.Manifest.permission.INTERNET, it.packageName) == PackageManager.PERMISSION_GRANTED
+    }
+
+    fun choices(): JSONArray {
+        val pm = context.packageManager
+        val result = JSONArray()
+        for (app in networkApplications()) {
+            if (pm.getPackagesForUid(app.uid)?.singleOrNull() != app.packageName) continue
+            result.put(JSONObject().put("path", app.packageName).put("name", pm.getApplicationLabel(app).toString().take(200)))
+        }
+        return result
+    }
+
     fun installed(): JSONArray {
         val result = JSONArray()
-        val pm = context.packageManager
-        for (app in pm.getInstalledApplications(0).sortedBy { it.packageName }) {
-            if (pm.checkPermission(android.Manifest.permission.INTERNET, app.packageName) != PackageManager.PERMISSION_GRANTED) continue
+        for (app in networkApplications().sortedBy { it.packageName }) {
             try {
                 application(app.packageName)?.let { result.put(it) }
             } catch (_: PackageManager.NameNotFoundException) { /* Uninstalled during enumeration. */ }

@@ -10,6 +10,8 @@ import subprocess
 import time
 import urllib.request
 
+from desktop_control_fixture import public_opener, request as approve, state as public_state
+
 assert os.environ.get("GITHUB_ACTIONS") == "true", "Use an isolated CI machine"
 mac = platform.system() == "Darwin"
 assert mac or platform.system() == "Windows"
@@ -18,12 +20,19 @@ token = (data / "ui-token").read_text().strip()
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
+# Authorize once. The same scoped grant must survive every worker restart.
+settings_grant = approve(data, token, 'settings-session', {})['token']
+
+
 def api(body=None):
-    if body is not None:
-        from desktop_control_fixture import request as privileged_request
-        return privileged_request(data, token, 'vpn', body)
-    from desktop_control_fixture import state as public_state
-    return public_state(data,token)
+    if body is None:
+        return public_state(data, token)
+    req = urllib.request.Request(
+        'https://127.0.0.1:17891/local/control/settings/vpn',
+        data=json.dumps(body).encode(),
+        headers={'Authorization': 'Bearer ' + settings_grant, 'Content-Type': 'application/json'})
+    with public_opener(data).open(req, timeout=30) as response:
+        return json.load(response)
 
 
 def ready(enabled):
