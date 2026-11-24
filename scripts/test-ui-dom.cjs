@@ -52,11 +52,42 @@ function input(w, id, value) {
 }
 function visible(w, selector) { return [...w.document.querySelectorAll(selector)].filter(node => !node.hidden); }
 
+async function testQueuedConfirmation(w, confirm) {
+  const dialog = w.document.getElementById('confirm'), originalClose = dialog.close, queued = [];
+  // Native dialog close events arrive later; a user may already reopen it.
+  dialog.close = function(value) { this.returnValue=value; this.open=false; queued.push(()=>this.dispatchEvent(new w.Event('close'))); };
+  const submit = value => {
+    const button = dialog.querySelector('button[value="'+value+'"]');
+    const event = new w.SubmitEvent('submit',{bubbles:true,cancelable:true,submitter:button});
+    if(button.form.dispatchEvent(event))dialog.close(value);
+  };
+  try {
+    let first, second;
+    confirm('First','Cancel this request').then(value=>{first=value;});
+    submit('cancel');
+    confirm('Second','Confirm this request').then(value=>{second=value;});
+    queued.shift()(); await tick();
+    assert.equal(first,false,'cancelled request changed its decision');
+    assert.equal(second,undefined,'old close event answered the reopened dialog');
+    assert.equal(dialog.open,true,'old close event closed the new dialog');
+    submit('ok'); await tick();
+    assert.equal(second,true,'confirmation waited for an unrelated close event');
+    queued.shift()(); await tick();
+    let escaped;
+    confirm('Third','Cancel with Escape').then(value=>{escaped=value;});
+    const cancel=new w.Event('cancel',{cancelable:true});
+    if(dialog.dispatchEvent(cancel))dialog.close('');
+    await tick(); assert.equal(escaped,false,'Escape did not cancel immediately');
+    queued.shift()();
+  } finally { dialog.close=originalClose; }
+}
+
 (async () => {
   const client = load('client',['traffic.js','activity.js','app.js']);
   const w = client.window, d = w.document, $ = id => d.getElementById(id);
   try {
     await tick();
+    await testQueuedConfirmation(w,w.confirmChange);
     assert.equal($('dashboard').hidden,false,'client failed to render');
     assert.ok($('traffic-mode'), 'missing device-wide traffic mode control');
     assert.equal($('traffic-mode').value, 'selective');
@@ -201,6 +232,7 @@ function visible(w, selector) { return [...w.document.querySelectorAll(selector)
   const a = admin.window, ad = a.document;
   try {
     await tick();
+    await testQueuedConfirmation(a,a.confirm);
     ad.querySelector('[data-filter="all"]').click();
     input(a,'accounts-search',' ALICE ');
     assert.equal(ad.querySelectorAll('#accounts > .list-row').length,1);

@@ -51,7 +51,23 @@ function view(name) {
 for(const b of document.querySelectorAll('[data-view]'))b.onclick=()=>view(b.dataset.view);
 $('open-requests').onclick=()=>view('requests');
 
-function confirmChange(title,description){$('confirm-title').textContent=title;$('confirm-description').textContent=description;const d=$('confirm');d.returnValue='';d.showModal();return new Promise(resolve=>d.addEventListener('close',()=>resolve(d.returnValue==='ok'),{once:true}))}
+function confirmChange(title,description){
+  $('confirm-title').textContent=title;$('confirm-description').textContent=description;
+  const d=$('confirm');d.returnValue='';
+  return new Promise(resolve=>{
+    const finish=accepted=>{
+      d.removeEventListener('submit',submit);d.removeEventListener('cancel',cancel);d.removeEventListener('close',close);
+      if(d.open)d.close(accepted?'ok':'cancel');
+      resolve(accepted);
+    };
+    // Capture the decision before a queued close event can reach a reopened dialog.
+    const submit=e=>{e.preventDefault();finish(e.submitter?.value==='ok')};
+    const cancel=e=>{e.preventDefault();finish(false)};
+    const close=()=>{if(!d.open)finish(d.returnValue==='ok')};
+    d.addEventListener('submit',submit);d.addEventListener('cancel',cancel);d.addEventListener('close',close);
+    d.showModal();
+  });
+}
 async function approve(target){if(!await confirmChange('Разрешить '+target+'?','Домен и его поддомены будут использовать VPN. При сбое соединения блокируются до восстановления VPN или ручного выключения.'+(state.status==='disabled'?' Сейчас VPN выключен: до включения трафик идёт напрямую.':'')))return;await act('rules',{target,action:'approve',revision:state.revision});toast('Разрешение сохранено')}
 function row(title,description,buttons){const e=element('div',undefined,'list-row'),copy=element('div',undefined,'row-copy');copy.append(element('strong',title),element('p',description));e.append(copy);const actions=element('div',undefined,'row-actions');actions.append(...buttons);e.append(actions);return e}
 function empty(list,text){if(!list.childElementCount)list.append(element('div',text,'empty'))}
