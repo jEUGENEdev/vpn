@@ -13,14 +13,14 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"runtime"
 	"time"
 )
 
 type Tunnel struct {
-	device        tun.Tun
-	stack         tun.Stack
-	c             *Client
-	stopReaderLog func()
+	device tun.Tun
+	stack  tun.Stack
+	c      *Client
 }
 
 func (t *Tunnel) Name() (string, error) { return t.device.Name() }
@@ -32,34 +32,30 @@ func (c *Client) StartTunnel(ctx context.Context, options tun.Options) (*Tunnel,
 	options.Inet6Address = []netip.Prefix{netip.MustParsePrefix("fd04:6c69:6e65:ffff::1/126")}
 	options.DNSAddress = []netip.Addr{netip.MustParseAddr("172.29.255.2")}
 	options.EXP_MultiPendingPackets = true
-	rawDevice, e := tun.New(options)
+	dev, e := tun.New(options)
 	if e != nil {
 		if options.FileDescriptor > 0 {
 			os.NewFile(uintptr(options.FileDescriptor), "tun").Close()
 		}
 		return nil, e
 	}
-	dev, stopReaderLog := monitorTunnelReader(rawDevice, options)
 	st, e := tun.NewStack("gvisor", c.stackOptions(ctx, dev, options))
 	if e != nil {
-		stopReaderLog()
 		dev.Close()
 		return nil, e
 	}
 	if e = st.Start(); e != nil {
-		stopReaderLog()
 		st.Close()
 		dev.Close()
 		return nil, e
 	}
 	if e = dev.Start(); e != nil {
-		stopReaderLog()
 		st.Close()
 		dev.Close()
 		return nil, e
 	}
 	c.SetTunnel(true)
-	return &Tunnel{dev, st, c, stopReaderLog}, nil
+	return &Tunnel{dev, st, c}, nil
 }
 
 func (c *Client) stackOptions(ctx context.Context, dev tun.Tun, options tun.Options) tun.StackOptions {
@@ -71,8 +67,15 @@ func (c *Client) stackOptions(ctx context.Context, dev tun.Tun, options tun.Opti
 		UDPMapping: tun.NATMappingAddressAndPortDependent, UDPFiltering: tun.NATFilteringAddressAndPortDependent}
 }
 func (t *Tunnel) Close() {
-	t.stopReaderLog()
 	t.c.SetTunnel(false)
+	if runtime.GOOS == "linux" || runtime.GOOS == "android" {
+		// fdbased wakes its reader through an eventfd. Its TUN descriptor
+		// must remain valid until Attach(nil) has joined the reader; closing
+		// it first also lets another thread reuse the descriptor mid-read.
+		t.stack.Close()
+		t.device.Close()
+		return
+	}
 	// Wake device readers before the network stack waits for them to stop.
 	t.device.Close()
 	t.stack.Close()

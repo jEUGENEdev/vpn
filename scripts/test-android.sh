@@ -31,7 +31,7 @@ vpn_logcat_pid=$!
 # background Wi-Fi/cellular handover can reset an in-flight HTTP connection;
 # that is independent of replacing the VPN interface under test. The fixture
 # below still waits for an actual successful host connection before starting.
-adb shell svc data disable
+adb shell cmd connectivity airplane-mode enable
 adb shell svc wifi enable
 python3 -u -m http.server 8765 --bind 0.0.0.0 --directory build/native-probe > build/android-probe-server.txt 2>&1 &
 vpn_probe_pid=$!

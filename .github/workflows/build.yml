@@ -93,25 +93,6 @@ jobs:
         with:
           path: ~/.cache/go-build
           key: ${{ runner.os }}-android-go1.27.4-ndk28-${{ hashFiles('go.sum') }}
-      - name: Trace Android TUN syscall failure in disposable preview
-        if: github.ref == 'refs/heads/fix/clean-installers' || github.head_ref == 'fix/clean-installers'
-        run: |
-          python3 - <<'PY'
-          import os, pathlib, shutil, subprocess
-          subprocess.check_call(['go', 'mod', 'download', 'github.com/sagernet/gvisor'])
-          module = subprocess.check_output(['go', 'list', '-m', '-f', '{{.Dir}}', 'github.com/sagernet/gvisor'], text=True).strip()
-          copied = pathlib.Path(os.environ['RUNNER_TEMP']) / 'gvisor-trace'
-          shutil.copytree(module, copied)
-          source = copied / 'pkg/rawfile/rawfile_unsafe.go'
-          text = source.read_text()
-          start = text.index('func BlockingReadvUntilStopped(')
-          end = text.index('// BlockingRecvMMsgUntilStopped', start)
-          part = text[start:end].replace('return 0, e', 'println("TUN readv/poll failure", fd, int(e)); return 0, e')
-          part = part.replace('return int(n), 0', 'if n == 0 { println("TUN zero read", fd) }; return int(n), 0')
-          source.chmod(0o644)
-          source.write_text(text[:start] + part + text[end:])
-          subprocess.check_call(['go', 'mod', 'edit', '-replace=github.com/sagernet/gvisor=' + str(copied)])
-          PY
       - run: scripts/package-android.sh
       - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: steps.android_go_cache.outputs.cache-hit != 'true'

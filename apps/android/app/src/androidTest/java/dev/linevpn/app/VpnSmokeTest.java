@@ -179,6 +179,17 @@ public class VpnSmokeTest {
         long deadline = SystemClock.elapsedRealtime() + 30000;
         IOException lastError = null;
         while (SystemClock.elapsedRealtime() < deadline) {
+            boolean cellularStillConnected = false;
+            for (Network network : connectivity.getAllNetworks()) {
+                NetworkCapabilities capabilities = connectivity.getNetworkCapabilities(network);
+                if (capabilities != null && capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+                        && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) cellularStillConnected = true;
+            }
+            if (cellularStillConnected) {
+                lastError = new IOException("Fixture still has cellular Internet despite airplane mode");
+                Thread.sleep(250);
+                continue;
+            }
             for (Network network : connectivity.getAllNetworks()) {
                 NetworkCapabilities capabilities = connectivity.getNetworkCapabilities(network);
                 if (capabilities == null || capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
