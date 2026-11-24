@@ -2,9 +2,9 @@
 
 Личный VPN с разрешениями для отдельных доменов и IP. Клиенты для **Android, Windows и macOS**, сервер на **Xray-core / VLESS / XHTTP / REALITY**, вход по личным ключам, общая политика устройств аккаунта и административное одобрение регистраций. Собственный домен не требуется.
 
-**[Скачать Сеть 0.4.0-preview для Android, Windows и macOS](installers/current/).** Полный комплект, контрольные суммы и порядок чистой установки — в каталоге установщиков.
+**[Скачать Сеть 0.4.1-preview для Android, Windows и macOS](installers/current/).** Полный комплект, контрольные суммы и порядок чистой установки — в каталоге установщиков.
 
-- [Сборка 0.4.0 и результаты проверок](https://github.com/jEUGENEdev/vpn/actions/runs/45442737468)
+- [Сборка 0.4.1 и результаты проверок](https://github.com/jEUGENEdev/vpn/actions/runs/45508368032)
 - [Обновление приложения и ограничения preview](docs/installer-upgrade.md)
 - [Установка сервера: SH, BAT и Ansible](docs/deployment.md)
 - [Подключение клиента и аккаунта](docs/client.md)
