@@ -14,6 +14,7 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
+BASH = os.environ.get('TEST_BASH', 'bash')
 spec = importlib.util.spec_from_file_location('remote', ROOT / 'scripts/deploy-remote.py')
 remote = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(remote)
@@ -135,7 +136,7 @@ elif cmd.startswith('bash '):
                        TEST_STATE=str(tmp), TEST_PASSWORD=password, TEST_FAIL=failure)
             env.update(overrides or {})
             code = 'source ./deploy.sh; prepare_source() { tar -czf "$linevpn_tmp/source.tar.gz" -C "$linevpn_root" -T "$linevpn_root/deploy/source-files.txt"; }; verify_public() { [[ ${2:-} == example.org ]] || return 99; return ' + ('1' if failure == 'port' else '0') + '; }; main'
-            result = subprocess.run(['bash', '-c', code], cwd=root, env=env, capture_output=True, text=True)
+            result = subprocess.run([BASH, '-c', code], cwd=root, env=env, capture_output=True, text=True, timeout=45)
             combined = result.stdout + result.stderr
             self.assertNotIn(password, combined)
             self.assertNotIn(admin, combined)

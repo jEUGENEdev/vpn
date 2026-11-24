@@ -24,20 +24,21 @@ IP
 }
 
 ssh_run() {
-  local -a deadline=()
+  # Bash 3.2 treats empty arrays as unset under set -u. Keep the command nonempty.
+  local -a ssh_command=(ssh -F /dev/null -T -p "$linevpn_port" "${linevpn_ssh_opts[@]}"
+    -o PreferredAuthentications=publickey,password -o PubkeyAuthentication=yes
+    -o NumberOfPasswordPrompts=1 -o ConnectTimeout=20
+    -o ServerAliveInterval=10 -o ServerAliveCountMax=2
+    "$linevpn_user@$linevpn_host" "$@")
   if [[ -n ${linevpn_deadline:-} ]]; then
-    deadline=(python3 -c 'import subprocess,sys
+    ssh_command=(python3 -c 'import subprocess,sys
 try:
     sys.exit(subprocess.run(sys.argv[2:], timeout=int(sys.argv[1])).returncode)
 except subprocess.TimeoutExpired:
-    sys.exit(124)' "$linevpn_deadline")
+    sys.exit(124)' "$linevpn_deadline" "${ssh_command[@]}")
   fi
   SSH_ASKPASS="$linevpn_tmp/askpass" SSH_ASKPASS_REQUIRE=force DISPLAY=linevpn:0 \
-    "${deadline[@]}" ssh -F /dev/null -T -p "$linevpn_port" "${linevpn_ssh_opts[@]}" \
-      -o PreferredAuthentications=publickey,password -o PubkeyAuthentication=yes \
-      -o NumberOfPasswordPrompts=1 -o ConnectTimeout=20 \
-      -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
-      "$linevpn_user@$linevpn_host" "$@"
+    "${ssh_command[@]}"
 }
 
 configure_ssh() {
