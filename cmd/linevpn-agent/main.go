@@ -39,11 +39,19 @@ func main() {
 		}
 		return
 	}
+	prepare := flag.Bool("prepare-install", false, "prepare a fresh Windows installation after explicit removal")
+	uninstall := flag.Bool("uninstall-state", false, "remove local Windows client state after the service stops")
 	dir := flag.String("data", platform.DefaultDir(), "protected state directory")
 	service := flag.Bool("service", false, "run as Windows service")
 	check := flag.Bool("check-service", false, "wait for authenticated local service readiness without changing state")
 	recover := flag.Bool("recover-network", false, "explicitly restore DNS and remove LineVPN firewall rules")
 	flag.Parse()
+	if *prepare || *uninstall {
+		if err := cleanInstallation(*prepare); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if *check {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()

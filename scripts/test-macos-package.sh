@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 vpn_dmg="${1:?DMG path required}"
 vpn_signing="${2:-preview}"
-python3 scripts/test-installer-upgrade.py MacOSScriptTests.test_native_plistbuddy_install_paths
+python3 scripts/test-installer-upgrade.py MacOSScriptTests.test_clean_install_does_not_probe_absent_plists
 vpn_mount="$(mktemp -d "${TMPDIR:-/tmp}/linevpn-image.XXXXXX")"
 cleanup() { hdiutil detach "$vpn_mount" -quiet || true; rmdir "$vpn_mount" || true; }
 trap cleanup EXIT
@@ -44,7 +44,7 @@ PY
   for vpn_file in preinstall postinstall stop-service.sh; do
     cmp "packaging/macos/$vpn_file" "$vpn_expanded/Scripts/$vpn_file"
   done
-  for vpn_file in stop-service.sh uninstall.sh recover-network.sh service-wrapper.sh; do
+  for vpn_file in stop-service.sh uninstall.sh service-wrapper.sh; do
     cmp "packaging/macos/$vpn_file" "$vpn_expanded/Payload/Library/Application Support/LineVPN/$vpn_file"
   done
   [[ "$(cat "$vpn_expanded/Scripts/version")" == "$vpn_version" ]]
@@ -67,4 +67,4 @@ ditto "$vpn_setup" build/macos-tested-setup.app
 vpn_host_arch=x64
 [[ "$(uname -m)" != arm64 ]] || vpn_host_arch=arm64
 cp "$vpn_resources/payload-$vpn_host_arch.pkg" build/macos-tested.pkg
-printf 'PASS: universal installer, both payloads, upgrade/recovery scripts, AppleScript compilation, versions, signatures; mode=%s\n' "$vpn_signing" > build/macos-signing.txt
+printf 'PASS: universal installer, both payloads, install/uninstall scripts, AppleScript compilation, versions, signatures; mode=%s\n' "$vpn_signing" > build/macos-signing.txt

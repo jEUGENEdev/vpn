@@ -164,7 +164,7 @@ jobs:
             build/windows-native.txt
             build/windows-gui.txt
             build/windows-install.log
-            build/windows-update.log
+            build/windows-clean-install.log
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: installer-windows
@@ -207,6 +207,7 @@ jobs:
             build/macos-service.log
             build/macos-package.log
             build/macos-network.log
+            build/macos-clean-install.log
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: matrix.arch == 'arm64'
         with:

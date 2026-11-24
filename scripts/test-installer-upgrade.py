@@ -67,18 +67,16 @@ class VersionTests(unittest.TestCase):
             self.assertEqual(p.attrib['UpgradeCode'], '{0ACF9EA2-83F8-4EE0-8877-E3BAE8A42E91}')
             self.assertEqual(p.find('w:MajorUpgrade', ns).attrib['Schedule'], 'afterInstallInitialize')
             self.assertNotIn('AllowSameVersionUpgrades', p.find('w:MajorUpgrade', ns).attrib)
-            repair = p.find('w:SetProperty[@Id="REINSTALL"]', ns)
-            self.assertEqual(repair.attrib['Value'], 'ALL')
-            self.assertEqual(repair.attrib['Before'], 'CostInitialize')
-            self.assertIn('Installed AND NOT REMOVE AND NOT UPGRADINGPRODUCTCODE', repair.attrib['Condition'])
-            self.assertEqual(p.find('w:SetProperty[@Id="REINSTALLMODE"]', ns).attrib['Value'], 'amus')
-            # In a major upgrade the new ProductCode is not Installed yet.
-            # File/icon replacement must also cover a legacy Electron EXE whose
-            # Windows file version is higher than our product version.
-            overwrite = p.find('w:SetProperty[@Id="REINSTALLMODE"]', ns)
-            self.assertNotIn('Installed', overwrite.attrib['Condition'])
-            self.assertIn('NOT REMOVE', overwrite.attrib['Condition'])
-            self.assertIn('NOT UPGRADINGPRODUCTCODE', overwrite.attrib['Condition'])
+            self.assertIsNone(p.find('w:SetProperty[@Id="REINSTALL"]', ns))
+            self.assertIsNone(p.find('w:SetProperty[@Id="REINSTALLMODE"]', ns))
+            self.assertEqual(p.find('w:Property[@Id="ARPNOREPAIR"]', ns).get('Value'), '1')
+            conditions = [x.get('Condition') for x in p.findall('w:Launch', ns)]
+            self.assertIn('REMOVE~=\"ALL\" OR (NOT Installed AND NOT WIX_UPGRADE_DETECTED AND NOT REINSTALL)', conditions)
+            cleanup = p.find('w:CustomAction[@Id="RemoveClientState"]', ns)
+            self.assertEqual(cleanup.get('BinaryRef'), 'InstallerAgent')
+            self.assertEqual(cleanup.get('ExeCommand'), '-uninstall-state')
+            prepare = p.find('w:CustomAction[@Id="PrepareCleanInstall"]', ns)
+            self.assertEqual(prepare.get('ExeCommand'), '-prepare-install')
             menu = p.find('w:StandardDirectory[@Id="ProgramMenuFolder"]', ns)
             shortcut = menu.find('w:Component/w:Shortcut', ns)
             self.assertIsNotNone(shortcut, 'Сеть must have a current, directly discoverable Start menu shortcut')
@@ -98,8 +96,7 @@ class VersionTests(unittest.TestCase):
             scheduled = first.find('.//w:Custom[@Action="CheckServiceReady"]', ns)
             self.assertEqual(scheduled.get('After'), 'StartServices')
             self.assertIn('NOT REMOVE', scheduled.get('Condition'))
-            self.assertNotIn('NOT REINSTALLMODE', overwrite.attrib['Condition'],
-                             'the default omus mode must not suppress forced replacement of old Electron files')
+
 
 
 class AndroidTests(unittest.TestCase):
@@ -245,7 +242,14 @@ elif name == 'launchctl':
 elif name == 'id':
     sys.exit(0)  # Existing service account must be reused.
 elif name == 'dscl':
-    sys.exit(99)  # Recreating the existing account is a regression.
+    if sys.argv[2] == '-read':
+        key = sys.argv[-1]
+        values = {'UniqueID': '399', 'PrimaryGroupID': '399', 'NFSHomeDirectory': '/var/empty', 'UserShell': '/usr/bin/false'}
+        if os.environ.get('FOREIGN_ACCOUNT') == '1': values['UniqueID'] = '501'
+        print(key + ': ' + values[key])
+    elif sys.argv[2] != '-delete':
+        sys.exit(99)
+
 '''
 
 
@@ -282,9 +286,12 @@ class MacOSScriptTests(unittest.TestCase):
             source = path.read_text()
             # Privilege/root paths are substituted in the temporary test copy.
             source = source.replace('"$EUID"', '"0"').replace('/var/lib/linevpn', str(self.data))
+            source = source.replace('in /Users/*', 'in ' + str(self.root / 'Users') + '/*').replace('/var/root', str(self.root / 'root-home'))
             source = source.replace('/etc/pf.conf', str(self.root / 'pf.conf'))
             source = source.replace('/Applications/', str(self.applications) + '/')
+            source = source.replace('$vpn_home/Library/Application Support/LineVPN', '$vpn_home/Library/Application Support/__UI_LINEVPN__')
             source = source.replace('/Library/Application Support/LineVPN', str(self.support))
+            source = source.replace('__UI_LINEVPN__', 'LineVPN')
             source = source.replace('/Library/LaunchDaemons/', str(self.root) + '/LaunchDaemons/')
             source = source.replace('/var/run/', str(self.root) + '/').replace('/var/log/', str(self.root) + '/')
             source = source.replace("'/Library/Application Support/LineVPN/linevpn-agent'", str(self.commands / 'linevpn-agent'))
@@ -299,37 +306,33 @@ class MacOSScriptTests(unittest.TestCase):
 
     def run_script(self, script, target='/', **env):
         args = ['fixture.pkg', '/', target] if script in ('preinstall', 'postinstall') else []
+        before = {name: (self.data / name).read_bytes() for name in self.files if (self.data / name).exists()}
         result = subprocess.run(['bash', str(self.root / script), *args], env=dict(self.env, **env), text=True, capture_output=True, timeout=15)
-        for name, content in self.files.items():
-            self.assertEqual((self.data / name).read_bytes(), content, f'{name} changed')
+        for name, content in before.items():
+            if script != 'uninstall.sh' or result.returncode != 0:
+                self.assertEqual((self.data / name).read_bytes(), content, f'{name} changed')
         return result
 
     def trace(self):
         file = self.root / 'trace'
         return [json.loads(line) for line in file.read_text().splitlines()] if file.exists() else []
 
-    def test_fresh_upgrade_and_repeat_preserve_state(self):
-        for previous in ['', '0.2.0', product_version()]:
-            with self.subTest(previous=previous):
-                result = self.run_script('preinstall', INSTALLED_VERSION=previous, STOP_POLLS='2')
-                self.assertEqual(result.returncode, 0, result.stderr)
-                result = self.run_script('postinstall')
-                self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertNotIn('dscl', [call[0] for call in self.trace()])
-        self.assertFalse(any('-recover-network' in call for call in self.trace()), 'upgrade removed protection')
-        self.assertEqual((self.root / 'pf.conf').read_text().count('anchor "linevpn"'), 1)
-        self.assertTrue(any(call[:2] == ['launchctl', 'bootstrap'] for call in self.trace()))
+    def clear_installation(self):
+        import shutil
+        shutil.rmtree(self.data, ignore_errors=True)
+        shutil.rmtree(self.support, ignore_errors=True)
 
-    def test_downgrade_rejected_before_stopping_anything(self):
-        self.assertNotEqual(self.run_script('preinstall', INSTALLED_VERSION='1.0.0').returncode, 0)
-        for name in ('LineVPN.app', 'Сеть.app'):
-            with self.subTest(name=name):
-                bundle = self.bundle(name, version='1.0.0')
-                self.assertNotEqual(self.run_script('preinstall').returncode, 0)
-                (bundle / 'Contents/Info.plist').unlink()
-                (bundle / 'Contents').rmdir()
-                bundle.rmdir()
+    def test_existing_state_blocks_install_before_stopping_service(self):
+        result = self.run_script('preinstall')
+        self.assertNotEqual(result.returncode, 0)
         self.assertFalse(any(call[0] in ('launchctl', 'pkill') for call in self.trace()))
+
+    def test_receipt_blocks_install_even_without_payload(self):
+        self.clear_installation()
+        for previous in ['0.2.0', product_version(), '1.0.0']:
+            result = self.run_script('preinstall', INSTALLED_VERSION=previous)
+            self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any(call[0] == 'pkill' for call in self.trace()))
 
     def bundle(self, name, identifier='dev.linevpn.desktop', version=None):
         bundle = self.applications / name
@@ -340,81 +343,18 @@ class MacOSScriptTests(unittest.TestCase):
         }))
         return bundle
 
-    def test_missing_bundles_do_not_turn_plistbuddy_diagnostics_into_versions(self):
-        # Fresh install and reinstall after explicit removal have neither name.
+    def test_clean_install_does_not_probe_absent_plists(self):
+        self.clear_installation()
         result = self.run_script('preinstall')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse(any(call[0] == 'PlistBuddy' for call in self.trace()))
-        self.assertTrue(any(call[:2] == ['launchctl', 'bootout'] for call in self.trace()))
-        self.assertFalse(any('-recover-network' in call for call in self.trace()))
+        self.assertFalse(any(call[0] in ('PlistBuddy', 'pkill') for call in self.trace()))
 
-    def test_upgrade_with_only_one_bundle_name_preserves_state(self):
-        for name in ('LineVPN.app', 'Сеть.app'):
-            with self.subTest(name=name):
-                bundle = self.bundle(name, version='0.2.0')
-                (self.root / 'trace').unlink(missing_ok=True)
-                result = self.run_script('preinstall', INSTALLED_VERSION='0.2.0')
-                self.assertEqual(result.returncode, 0, result.stderr)
-                reads = [call[-1] for call in self.trace() if call[0] == 'PlistBuddy']
-                self.assertTrue(reads)
-                self.assertEqual(set(reads), {str(bundle / 'Contents/Info.plist')})
-                self.assertFalse(any('-recover-network' in call for call in self.trace()))
-                (bundle / 'Contents/Info.plist').unlink()
-                (bundle / 'Contents').rmdir()
-                bundle.rmdir()
-
-    def test_failed_version_read_rejects_before_stopping_anything(self):
-        self.bundle('LineVPN.app')
-        self.bundle('Сеть.app')
-        result = self.run_script('preinstall', FAIL_VERSION_READ='1')
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('Cannot read installed Сеть version', result.stderr)
-        self.assertFalse(any(call[0] in ('launchctl', 'pkill') for call in self.trace()))
-
-    def test_missing_or_empty_version_in_existing_bundle_rejected(self):
-        bundle = self.bundle('Сеть.app', version='')
-        info = bundle / 'Contents/Info.plist'
-        for missing_key in (False, True):
-            with self.subTest(missing_key=missing_key):
-                if missing_key:
-                    info.write_bytes(plistlib.dumps({'CFBundleIdentifier': 'dev.linevpn.desktop'}))
-                result = self.run_script('preinstall', INSTALLED_VERSION='0.2.0')
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn('Cannot read installed Сеть version', result.stderr)
-                self.assertFalse(any(call[0] in ('launchctl', 'pkill') for call in self.trace()))
-
-    def test_unknown_installed_version_still_rejected(self):
-        self.bundle('Сеть.app', version='not-a-version')
+    def test_old_and_current_bundle_require_explicit_removal(self):
+        self.clear_installation()
+        self.bundle('LineVPN.app', version='0.2.0')
         result = self.run_script('preinstall')
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('Cannot compare installed Сеть version', result.stderr)
-        self.assertFalse(any(call[0] in ('launchctl', 'pkill') for call in self.trace()))
-
-    @unittest.skipUnless(sys.platform == 'darwin', 'requires Apple PlistBuddy')
-    def test_native_plistbuddy_install_paths(self):
-        # Read real temporary plists with Apple's tool; service/process commands
-        # remain fixtures. This test does not install anything or need root.
-        script = self.root / 'preinstall'
-        script.write_text(script.read_text().replace(str(self.commands / 'PlistBuddy'), '/usr/libexec/PlistBuddy'))
-        for name in (None, 'LineVPN.app', 'Сеть.app'):
-            with self.subTest(bundle=name):
-                bundle = self.bundle(name, version='0.2.0') if name else None
-                result = self.run_script('preinstall')
-                self.assertEqual(result.returncode, 0, result.stderr)
-                if bundle:
-                    (bundle / 'Contents/Info.plist').unlink()
-                    (bundle / 'Contents').rmdir()
-                    bundle.rmdir()
-
-    def test_renamed_bundle_migrates_only_after_replacement(self):
-        old = self.bundle('LineVPN.app')
-        self.assertEqual(self.run_script('postinstall').returncode, 0)
-        self.assertTrue(old.exists(), 'old app removed before replacement exists')
-        new = self.bundle('Сеть.app')
-        self.assertEqual(self.run_script('preinstall').returncode, 0)
-        self.assertEqual(self.run_script('postinstall').returncode, 0)
-        self.assertFalse(old.exists())
-        self.assertTrue(new.exists())
+        self.assertTrue((self.applications / 'LineVPN.app').exists())
 
     def test_foreign_bundle_is_not_replaced(self):
         for name in ('LineVPN.app', 'Сеть.app'):
@@ -429,22 +369,23 @@ class MacOSScriptTests(unittest.TestCase):
             self.assertNotEqual(self.run_script(script, target='/Volumes/Other').returncode, 0)
         self.assertEqual(self.trace(), [])
 
-    def test_failed_bootout_is_allowed_only_when_already_stopped(self):
-        self.assertEqual(self.run_script('preinstall', BOOTOUT_CODE='3').returncode, 0)
+    def test_stop_helper_requires_all_processes_to_exit(self):
+        self.assertEqual(self.run_script('stop-service.sh', BOOTOUT_CODE='3').returncode, 0)
         for flag in ('STUCK_SERVICE', 'STUCK_WORKER', 'STUCK_GUI'):
             with self.subTest(flag=flag):
-                self.assertNotEqual(self.run_script('preinstall', BOOTOUT_CODE='3', **{flag: '1'}).returncode, 0)
+                self.assertNotEqual(self.run_script('stop-service.sh', BOOTOUT_CODE='3', **{flag: '1'}).returncode, 0)
 
-    def test_upgrade_stops_an_orphan_without_recovering_network(self):
-        result = self.run_script('preinstall', ORPHAN_WORKER='1')
+    def test_stop_helper_stops_an_orphan_without_changing_network(self):
+        result = self.run_script('stop-service.sh', ORPHAN_WORKER='1')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(any(call[0] == 'pkill' and 'Contents/MacOS' not in call[-1] for call in self.trace()))
         self.assertFalse(any('-recover-network' in call for call in self.trace()))
 
-    def test_uninstall_waits_for_launchd_and_preserves_profile(self):
+    def test_uninstall_waits_for_launchd_and_removes_local_state(self):
         result = self.run_script('uninstall.sh', STOP_POLLS='2')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.support.exists())
+        self.assertFalse(self.data.exists())
         self.assertTrue(any('-recover-network' in call for call in self.trace()))
 
     def test_uninstall_refuses_recovery_while_worker_is_alive(self):
@@ -457,6 +398,24 @@ class MacOSScriptTests(unittest.TestCase):
         result = self.run_script('uninstall.sh', RECOVERY_CODE='1')
         self.assertNotEqual(result.returncode, 0)
         self.assertTrue((self.support / 'linevpn-agent').exists())
+
+    def test_uninstall_does_not_delete_an_unexpected_system_account(self):
+        result = self.run_script('uninstall.sh', FOREIGN_ACCOUNT='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(self.data.exists())
+        self.assertFalse(any(call[:3] == ['dscl', '.', '-delete'] for call in self.trace()))
+
+    def test_uninstall_clears_own_ui_data_and_preserves_other_apps(self):
+        home = self.root / 'Users/fixture/Library/Application Support'
+        own, foreign = home / 'LineVPN', home / 'Electron'
+        own.mkdir(parents=True)
+        foreign.mkdir()
+        (own / 'Preferences').write_text('old UI state')
+        (foreign / 'Preferences').write_text('other application')
+        result = self.run_script('uninstall.sh')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(own.exists())
+        self.assertEqual((foreign / 'Preferences').read_text(), 'other application')
 
     def test_uninstall_removes_only_owned_pf_hooks(self):
         pf = self.root / 'pf.conf'
@@ -497,8 +456,7 @@ class MacOSScriptTests(unittest.TestCase):
         result = self.run_manager('uninstall', STOP_POLLS='2')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.support.exists())
-        for name, content in self.files.items():
-            self.assertEqual((self.data / name).read_bytes(), content)
+        self.assertFalse(self.data.exists())
 
     def test_manager_reports_install_failure_and_releases_lock(self):
         result = self.run_manager('install', INSTALL_CODE='1')

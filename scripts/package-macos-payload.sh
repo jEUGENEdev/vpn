@@ -32,7 +32,7 @@ GOOS=darwin GOARCH="$vpn_arch" CGO_ENABLED=0 go build -tags with_gvisor -trimpat
 cp packaging/macos/dev.linevpn.agent.plist build/macos-root/Library/LaunchDaemons/
 cp packaging/macos/preinstall packaging/macos/postinstall packaging/macos/stop-service.sh build/macos-scripts/
 printf '%s\n' "$vpn_version" > build/macos-scripts/version
-cp packaging/macos/recover-network.sh packaging/macos/service-wrapper.sh packaging/macos/uninstall.sh packaging/macos/stop-service.sh 'build/macos-root/Library/Application Support/LineVPN/'
+cp packaging/macos/service-wrapper.sh packaging/macos/uninstall.sh packaging/macos/stop-service.sh 'build/macos-root/Library/Application Support/LineVPN/'
 cp packaging/macos/Uninstall-LineVPN.command apps/desktop/assets/
 chmod 755 apps/desktop/assets/Uninstall-LineVPN.command
 chmod 755 build/macos-scripts/preinstall build/macos-scripts/postinstall build/macos-scripts/stop-service.sh 'build/macos-root/Library/Application Support/LineVPN/'*

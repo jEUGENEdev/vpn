@@ -69,10 +69,16 @@ func checkService(ctx context.Context, dir, address string) error {
 	}
 	defer response.Body.Close()
 	var state struct {
-		Enabled *bool `json:"vpn_enabled"`
+		Enabled    *bool  `json:"vpn_enabled"`
+		Tunnel     bool   `json:"tunnel"`
+		Guard      bool   `json:"guard"`
+		PowerError string `json:"power_error"`
 	}
 	if response.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(response.Body, 8<<20)).Decode(&state) != nil || state.Enabled == nil {
 		return errors.New("service readiness: status response is not valid")
+	}
+	if state.PowerError != "" || (*state.Enabled && (!state.Tunnel || !state.Guard)) {
+		return errors.New("service readiness: network initialization failed; inspect the service log")
 	}
 	return nil
 }

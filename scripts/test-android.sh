@@ -76,3 +76,15 @@ printf 'PASS: repeated APK installation preserves profile and application decisi
 # Package removal must leave ordinary networking without recovery commands.
 adb uninstall dev.linevpn.app
 adb shell ping -c 1 -W 5 10.0.2.2
+
+# Explicit uninstall must also allow a fresh installation without old state.
+adb install apps/android/app/build/outputs/apk/debug/app-debug.apk
+if adb exec-out run-as dev.linevpn.app cat files/core/profile.json > /dev/null 2>&1; then
+  echo 'Old profile returned after uninstall' >&2; exit 1
+fi
+adb shell pm grant dev.linevpn.app android.permission.POST_NOTIFICATIONS
+adb shell appops set dev.linevpn.app ACTIVATE_VPN allow
+adb shell am instrument -w dev.linevpn.app.test/androidx.test.runner.AndroidJUnitRunner | tee build/android-clean-install.txt
+grep -q '^OK (1 test)' build/android-clean-install.txt
+adb uninstall dev.linevpn.app
+adb shell ping -c 1 -W 5 10.0.2.2

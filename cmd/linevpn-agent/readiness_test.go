@@ -41,7 +41,12 @@ func TestInstallerReadiness(t *testing.T) {
 	if err := checkService(context.Background(), dir, server.URL); err != nil {
 		t.Fatal(err)
 	}
-	for _, invalid := range []string{`{}`, `{"vpn_enabled":"yes"}`, `broken`} {
+	invalidStates := []string{`{}`, `{"vpn_enabled":"yes"}`, `broken`,
+		`{"vpn_enabled":true}`, `{"vpn_enabled":true,"tunnel":false,"guard":true}`,
+		`{"vpn_enabled":true,"tunnel":true,"guard":false}`,
+		`{"vpn_enabled":true,"tunnel":true,"guard":true,"power_error":"TUN failed"}`,
+		`{"vpn_enabled":false,"power_error":"cleanup failed"}`}
+	for _, invalid := range invalidStates {
 		body = invalid
 		if checkService(context.Background(), dir, server.URL) == nil {
 			t.Fatal("invalid status accepted")
@@ -61,7 +66,7 @@ func TestInstallerReadiness(t *testing.T) {
 	if waitForService(ctx, dir, server.URL) == nil {
 		t.Fatal("stopped service accepted")
 	}
-	if calls != 6 {
+	if calls != 3+len(invalidStates) {
 		t.Fatalf("unexpected request count: %d", calls)
 	}
 	got, _ := os.ReadFile(filepath.Join(dir, "ui-token"))
@@ -91,7 +96,7 @@ func TestReadinessUsesActualServiceCertificate(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer "+token {
 			t.Error("wrong token")
 		}
-		w.Write([]byte(`{"vpn_enabled":true}`))
+		w.Write([]byte(`{"vpn_enabled":true,"tunnel":true,"guard":true}`))
 	})}
 	defer server.Close()
 	go server.Serve(channel.Listener)
