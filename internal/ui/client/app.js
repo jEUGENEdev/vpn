@@ -169,12 +169,27 @@ async function waitForPower(enabled){
   }
   throw Error('Служба не завершила переключение. Проверьте её состояние; сеть ещё не подтверждена.');
 }
+let vpnPermissionSequence=0;
+function prepareAndroidVPN(){
+  if(!window.LineBridge?.prepareVPN)return Promise.resolve();
+  return new Promise((resolve,reject)=>{
+    const id=Date.now()+':'+(++vpnPermissionSequence);
+    const finish=(granted,message)=>{
+      clearTimeout(timeout);window.lineVpnPermissionResult=null;
+      if(granted)resolve();else reject(Error(message||'Android не разрешил VPN. Проверьте системные настройки VPN.'));
+    };
+    const timeout=setTimeout(()=>finish(false,'Подтверждение Android не получено. Повторите включение VPN.'),60000);
+    window.lineVpnPermissionResult=(request,granted,message)=>{if(request===id)finish(granted,message)};
+    try{window.LineBridge.prepareVPN(id)}catch(e){finish(false,e.message)}
+  });
+}
 $('vpn-toggle').onclick=async()=>{
   if(powerBusy||trafficBusy||state.power_transition)return;
   const enabled=state.vpn_enabled===false&&!state.power_error;
   if(!enabled&&!await confirmChange('Выключить VPN?','Весь трафик этого устройства, включая разрешённые адреса и доверенные приложения, будет идти напрямую. Правила сохранятся.'))return;
   ++updateSequence;powerBusy=true;render();
   try{
+    if(enabled)await prepareAndroidVPN();
     const out=await api('vpn',{enabled,confirm:!enabled});
     ++updateSequence;state=out;render();
     if(out.power_transition)await waitForPower(enabled);

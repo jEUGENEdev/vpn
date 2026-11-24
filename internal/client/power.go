@@ -49,6 +49,19 @@ func (c *Client) disabled() bool {
 func (c *Client) SetVPNEnabled(enabled bool) error {
 	c.change.Lock()
 	defer c.change.Unlock()
+	return c.setVPNEnabled(enabled)
+}
+
+// RetryNetwork retries the saved mode after native permission is granted.
+// Read intent under the same change lock as explicit off/on, so a retry cannot
+// overwrite a user switch with a stale value read before acquiring the lock.
+func (c *Client) RetryNetwork() error {
+	c.change.Lock()
+	defer c.change.Unlock()
+	return c.setVPNEnabled(c.VPNEnabled())
+}
+
+func (c *Client) setVPNEnabled(enabled bool) error {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()

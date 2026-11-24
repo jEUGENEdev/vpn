@@ -138,6 +138,31 @@ func TestAndroidStartupFailureLeavesControlUIAndNoTunnel(t *testing.T) {
 	}
 }
 
+func TestAndroidRestartRetriesFailedTunnelWithoutReplacingControlUI(t *testing.T) {
+	p := &idleService{}
+	dir := t.TempDir()
+	url, err := Start(dir, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer Stop()
+	// A running local HTTP server does not mean Android granted a TUN.
+	// Retrying from the Activity after consent must retry the network too.
+	retryURL, err := Start(dir, p)
+	if err != nil || retryURL != url || p.opens != 2 || p.closes != 0 {
+		t.Fatal("retry did not preserve the UI and retry Android", err, p.opens, p.closes)
+	}
+	if !strings.Contains(Snapshot(), `"status":"network_error"`) || !current.c.VPNEnabled() {
+		t.Fatal("failed retry changed enabled intent or hid the error", Snapshot())
+	}
+	if err := current.c.SetVPNEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Start(dir, p); err != nil || p.opens != 2 || current.c.VPNEnabled() {
+		t.Fatal("opening the existing UI re-enabled a disabled VPN", err, Snapshot())
+	}
+}
+
 type testTunnel struct {
 	c      *client.Client
 	closes int
