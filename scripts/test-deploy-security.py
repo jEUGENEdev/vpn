@@ -2,6 +2,7 @@
 import os
 import hashlib
 import io
+import json
 import shutil
 import tarfile
 import textwrap
@@ -11,10 +12,11 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
+BASH = os.environ.get('TEST_BASH', 'bash')
 
 class DeploymentSecurityTest(unittest.TestCase):
     def shell(self, code, **kwargs):
-        return subprocess.run(['bash', '-c', 'source ./deploy.sh; ' + code], cwd=ROOT,
+        return subprocess.run([BASH, '-c', 'source ./deploy.sh; ' + code], cwd=ROOT,
                               capture_output=True, text=True, **kwargs)
 
     def test_invalid_base64_never_emits_partial_output(self):
@@ -37,9 +39,63 @@ class DeploymentSecurityTest(unittest.TestCase):
             (p/'askpass').write_text('#!/bin/sh\nprintf synthetic-password\n')
             (p/'askpass').chmod(0o700)
             env = dict(os.environ, PATH=tmp+os.pathsep+os.environ['PATH'], TEST_TMP=tmp)
-            result = self.shell('linevpn_tmp=$TEST_TMP; linevpn_host=8.8.8.8; linevpn_user=root; linevpn_port=22; linevpn_password=synthetic-password; linevpn_ssh_opts=(); ssh_run true', env=env)
+            result = self.shell('linevpn_tmp=$TEST_TMP; linevpn_host=8.8.8.8; linevpn_user=root; linevpn_port=22; linevpn_password=synthetic-password; linevpn_ssh_opts=(-o StrictHostKeyChecking=yes); ssh_run true', env=env)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout, 'synthetic-password')
+
+    def test_ssh_arguments_stdin_environment_and_exit_status(self):
+        with tempfile.TemporaryDirectory(prefix='vpn ssh ') as tmp:
+            stub = Path(tmp) / 'ssh'
+            stub.write_text(textwrap.dedent('''\
+                #!/usr/bin/env python3
+                import json, os, sys
+                print(json.dumps({
+                    'args': sys.argv[1:],
+                    'stdin': sys.stdin.read(),
+                    'askpass': os.environ['SSH_ASKPASS'],
+                    'require': os.environ['SSH_ASKPASS_REQUIRE'],
+                    'display': os.environ['DISPLAY'],
+                }))
+                sys.exit(int(os.environ['TEST_EXIT']))
+            '''))
+            stub.chmod(0o700)
+            code = ('linevpn_tmp=$TEST_TMP; linevpn_host=8.8.8.8; linevpn_user=root; '
+                    'linevpn_port=2222; linevpn_ssh_opts=(-i "$TEST_TMP/key file" '
+                    '-o StrictHostKeyChecking=yes); ssh_run "$TEST_COMMAND" ""')
+            command = "printf '%s' 'literal $() * words'"
+            for deadline in (None, '', '5'):
+                for status in (0, 42):
+                    with self.subTest(deadline=deadline, status=status):
+                        env = dict(os.environ, PATH=tmp+os.pathsep+os.environ['PATH'],
+                                   TEST_TMP=tmp, TEST_COMMAND=command, TEST_EXIT=str(status))
+                        env.pop('linevpn_deadline', None)
+                        if deadline is not None:
+                            env['linevpn_deadline'] = deadline
+                        result = self.shell(code, env=env, input='synthetic input\n', timeout=10)
+                        self.assertEqual(result.returncode, status, result.stderr)
+                        self.assertEqual(json.loads(result.stdout), {
+                            'args': ['-F', '/dev/null', '-T', '-p', '2222', '-i', tmp+'/key file',
+                                     '-o', 'StrictHostKeyChecking=yes',
+                                     '-o', 'PreferredAuthentications=publickey,password',
+                                     '-o', 'PubkeyAuthentication=yes',
+                                     '-o', 'NumberOfPasswordPrompts=1', '-o', 'ConnectTimeout=20',
+                                     '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=2',
+                                     'root@8.8.8.8', command, ''],
+                            'stdin': 'synthetic input\n', 'askpass': tmp+'/askpass',
+                            'require': 'force', 'display': 'linevpn:0',
+                        })
+
+    def test_ssh_deadline_terminates_stalled_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp) / 'ssh'
+            stub.write_text('#!/usr/bin/env python3\nimport time\ntime.sleep(30)\n')
+            stub.chmod(0o700)
+            env = dict(os.environ, PATH=tmp+os.pathsep+os.environ['PATH'], TEST_TMP=tmp)
+            result = self.shell('linevpn_tmp=$TEST_TMP; linevpn_host=8.8.8.8; '
+                                'linevpn_user=root; linevpn_port=22; '
+                                'linevpn_ssh_opts=(-o StrictHostKeyChecking=yes); '
+                                'linevpn_deadline=1 ssh_run true', env=env, timeout=10)
+            self.assertEqual(result.returncode, 124, result.stderr)
 
     def test_fingerprint_trusts_only_matching_key(self):
         with tempfile.TemporaryDirectory() as tmp:

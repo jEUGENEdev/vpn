@@ -192,6 +192,12 @@ jobs:
         with: {go-version: '1.27.4', cache: true}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: {node-version: '24', cache: npm, cache-dependency-path: apps/desktop/package-lock.json}
+      - name: Verify deployment launcher with the macOS system Bash
+        env:
+          TEST_BASH: /bin/bash
+        run: |
+          python3 scripts/test-deploy-manual.py
+          python3 scripts/test-deploy-security.py
       - name: Verify macOS socket ownership
         run: go test ./internal/owner
       - run: scripts/package-macos.sh
