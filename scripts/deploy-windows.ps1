@@ -1,4 +1,4 @@
-# Native Windows PowerShell 5.1+. Posh-SSH is installed automatically for this user.
+﻿# Native Windows PowerShell 5.1+. Posh-SSH is installed automatically for this user.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $LineVpnRoot = Split-Path -Parent $PSScriptRoot
@@ -185,8 +185,7 @@ function Invoke-Deployment {
         Test-PublicPort $server 8443
         $address = if ($server.Contains(':')) { "[$server]" } else { $server }
         Write-Host "`nDeployment verified: remote HTTPS health and public TCP 443/8443."
-        Write-Host "Admin tunnel: ssh -N -p $port -L 8443:127.0.0.1:8444 $username@$address"
-        Write-Host 'Admin (after starting the tunnel): https://127.0.0.1:8443/'
+        Write-Host "Admin: https://${address}:8443/"
         Write-Host 'Public API identity (no enrollment key):'
         Write-Host (Get-Content -LiteralPath (Join-Path $output 'vpn1-bootstrap.txt') -Raw)
         Write-Host 'Get the current connection profile in Admin > Server profile.'

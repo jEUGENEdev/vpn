@@ -176,8 +176,7 @@ SHA
   local address=$linevpn_host
   [[ "$address" != *:* ]] || address="[$address]"
   printf '\nDeployment verified: authenticated HTTPS API and REALITY TLS listener.\n'
-  printf 'Admin tunnel: ssh -N -p %s -L 8443:127.0.0.1:8444 %s@%s\n' "$linevpn_port" "$linevpn_user" "$address"
-  printf 'Admin (after starting the tunnel): https://127.0.0.1:8443/\n'
+  printf 'Admin: https://%s:8443/\n' "$address"
   printf 'Public API identity (no enrollment key):\n'
   cat "$output/vpn1-bootstrap.txt"
   printf 'Get the current connection profile in Admin > Server profile.\n'

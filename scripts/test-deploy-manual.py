@@ -157,6 +157,7 @@ elif cmd.startswith('bash '):
         result, commands = self.run_launcher()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('Deployment verified:', result.stdout)
+        self.assertIn('Admin: https://8.8.8.8:8443/', result.stdout)
         self.assertIn('StrictHostKeyChecking=accept-new', commands)
         self.assertIn('PubkeyAuthentication=yes', commands)
         self.assertNotIn('LINEVPN_SSH_PASSWORD', commands)

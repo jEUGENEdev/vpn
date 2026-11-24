@@ -17,7 +17,7 @@ func TestPublicListenerNeverServesAdministration(t *testing.T) {
 			r.Host = "localhost:8444"
 			r.Header.Set("X-Forwarded-For", "127.0.0.1")
 			w := httptest.NewRecorder()
-			f.s.Handler().ServeHTTP(w, r)
+			f.s.Handler(nil).ServeHTTP(w, r)
 			if w.Code != http.StatusNotFound {
 				t.Fatalf("public %s %s: got %d", method, path, w.Code)
 			}
@@ -34,7 +34,7 @@ func testServerHandler(s *Server) http.Handler {
 		if strings.HasPrefix(r.URL.Path, "/api/admin/") {
 			s.AdminHandler(nil).ServeHTTP(w, r)
 		} else {
-			s.Handler().ServeHTTP(w, r)
+			s.Handler(nil).ServeHTTP(w, r)
 		}
 	})
 }

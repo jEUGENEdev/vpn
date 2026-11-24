@@ -1,20 +1,43 @@
-name: Test and build current installers
+name: Build or publish installers
 on:
-  push:
-    branches: [main]
-    paths-ignore: ['installers/**', 'docs/**', 'README.md']
-  pull_request:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a new installer version from main after all checks
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: true
+  group: installers-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   security:
     uses: ./.github/workflows/security.yml
-  test:
+  prepare:
     needs: security
+    runs-on: ubuntu-24.04
+    outputs:
+      publish: ${{ steps.release.outputs.publish }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false}
+      - name: Check requested installer release
+        id: release
+        env:
+          PUBLISH_REQUESTED: ${{ inputs.publish && 'true' || 'false' }}
+        run: |
+          python3 scripts/package_version.py --check-consistent
+          if [ "$PUBLISH_REQUESTED" = true ]; then
+            if [ "$GITHUB_REF" != refs/heads/main ]; then
+              echo 'Installer publication is allowed only from main.' >&2
+              exit 1
+            fi
+            python3 scripts/package_version.py --check-newer
+          fi
+          echo "publish=$PUBLISH_REQUESTED" >> "$GITHUB_OUTPUT"
+  test:
+    needs: [security, prepare]
     timeout-minutes: 15
     runs-on: ubuntu-24.04
     steps:
@@ -39,22 +62,16 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with: {name: ui-previews, path: 'build/ui-*.png'}
-      - run: scripts/build-server.sh
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: server-binaries
-          path: build/*-linux-amd64
-          if-no-files-found: error
   android:
     timeout-minutes: 35
-    needs: security
+    needs: [security, prepare]
     runs-on: ubuntu-24.04
     env:
       LINEVPN_ANDROID_VARIANT: debug
-      LINEVPN_ANDROID_TEST_ONLY: ${{ (github.event_name == 'pull_request' || github.ref != 'refs/heads/main') && '1' || '0' }}
-      ANDROID_STORE_PASSWORD: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.ANDROID_STORE_PASSWORD || '' }}
-      ANDROID_KEY_ALIAS: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.ANDROID_KEY_ALIAS || '' }}
-      ANDROID_KEY_PASSWORD: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.ANDROID_KEY_PASSWORD || '' }}
+      LINEVPN_ANDROID_TEST_ONLY: ${{ needs.prepare.outputs.publish == 'true' && '0' || '1' }}
+      ANDROID_STORE_PASSWORD: ${{ github.ref == 'refs/heads/main' && needs.prepare.outputs.publish == 'true' && secrets.ANDROID_STORE_PASSWORD || '' }}
+      ANDROID_KEY_ALIAS: ${{ github.ref == 'refs/heads/main' && needs.prepare.outputs.publish == 'true' && secrets.ANDROID_KEY_ALIAS || '' }}
+      ANDROID_KEY_PASSWORD: ${{ github.ref == 'refs/heads/main' && needs.prepare.outputs.publish == 'true' && secrets.ANDROID_KEY_PASSWORD || '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: {persist-credentials: false}
@@ -65,7 +82,7 @@ jobs:
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with: {distribution: temurin, java-version: '17'}
       - name: Restore the existing Android signing key
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && needs.prepare.outputs.publish == 'true'
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
@@ -138,7 +155,7 @@ jobs:
         run: rm -f "$RUNNER_TEMP/linevpn-signing.keystore"
   windows:
     timeout-minutes: 25
-    needs: security
+    needs: [security, prepare]
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -175,7 +192,7 @@ jobs:
           if-no-files-found: error
   macos:
     timeout-minutes: 45
-    needs: security
+    needs: [security, prepare]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -192,12 +209,6 @@ jobs:
         with: {go-version: '1.27.4', cache: true}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: {node-version: '24', cache: npm, cache-dependency-path: apps/desktop/package-lock.json}
-      - name: Verify deployment launcher with the macOS system Bash
-        env:
-          TEST_BASH: /bin/bash
-        run: |
-          python3 scripts/test-deploy-manual.py
-          python3 scripts/test-deploy-security.py
       - name: Verify macOS socket ownership
         run: go test ./internal/owner
       - run: scripts/package-macos.sh
@@ -225,8 +236,8 @@ jobs:
           if-no-files-found: error
   publish-current:
     timeout-minutes: 15
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: [test, android, windows, macos]
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
+    needs: [prepare, test, android, windows, macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -260,5 +271,6 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add installers/current docs/screenshots
-          git commit -m 'build: update current preview installers [skip ci]' || exit 0
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'build: update current preview installers [skip ci]'
           git push origin "HEAD:$TARGET_BRANCH"

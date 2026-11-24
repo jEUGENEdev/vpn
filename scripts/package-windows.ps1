@@ -1,7 +1,7 @@
 ﻿$ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
-$vpnVersion = python scripts/package_version.py --check-newer
-if ($LASTEXITCODE -ne 0) { throw 'Installer version must be newer than the published release' }
+$vpnVersion = python scripts/package_version.py --check-consistent
+if ($LASTEXITCODE -ne 0) { throw 'Installer version metadata must be consistent' }
 New-Item -ItemType Directory -Force apps/desktop/assets | Out-Null
 python scripts/collect-licenses.py apps/desktop/assets/THIRD_PARTY_NOTICES.txt
 if ($LASTEXITCODE -ne 0) { throw 'Dependency notices failed' }

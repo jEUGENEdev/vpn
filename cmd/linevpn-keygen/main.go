@@ -21,6 +21,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -33,7 +34,22 @@ func main() {
 	ensureAdminSAN := flag.Bool("ensure-admin-san", false, "renew an existing certificate only if loopback SANs are missing or renewal is due")
 	hashAdmin := flag.Bool("hash-admin-password", false, "hash admin password supplied on stdin")
 	migrateAdmin := flag.String("migrate-admin-password", "", "replace legacy admin password file with bcrypt hash")
+	publicAdmin := flag.String("public-admin", "", "set true or false to configure public HTTPS administration on an existing server")
 	flag.Parse()
+	if *publicAdmin != "" {
+		enabled, err := strconv.ParseBool(*publicAdmin)
+		if err != nil {
+			log.Fatal("-public-admin must be true or false")
+		}
+		changed, err := setPublicAdmin(filepath.Join(*dir, "server.json"), enabled)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if changed {
+			fmt.Println("changed")
+		}
+		return
+	}
 	if *hashAdmin || *migrateAdmin != "" {
 		var raw []byte
 		var err error

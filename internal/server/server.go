@@ -26,6 +26,7 @@ import (
 
 type Config struct {
 	AdminAddress      string                  `json:"admin_address,omitempty"`
+	PublicAdmin       bool                    `json:"public_admin,omitempty"`
 	Address           string                  `json:"address"`
 	PublicIP          string                  `json:"public_ip"`
 	Database          string                  `json:"database"`
@@ -241,9 +242,9 @@ func (s *Server) profile(d store.Device, a store.Account, token string) model.Pr
 	return model.Profile{ApplicationRules: applicationRules(a, d.Platform), Login: a.Login, DeviceID: d.ID, AccountID: a.ID, Token: token, Server: s.Config.PublicIP, Port: o.Port, UUID: d.Secret, AppUUID: d.AppSecret, SNI: o.SNI, PublicKey: o.PublicKey, ShortID: o.ShortID, Path: o.Path, Rules: a.Rules, Revision: a.Revision, Status: a.Status}
 }
 
-// Handler serves only the public client API. Host and forwarding headers cannot
-// grant access to administration, even when the request originates on loopback.
-func (s *Server) Handler() http.Handler {
+// Handler serves the client API and, when explicitly configured, the admin UI.
+// Host and forwarding headers never enable administration.
+func (s *Server) Handler(static http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { JSON(w, 200, map[string]string{"status": "ok"}) })
 	mux.HandleFunc("POST /api/register", s.register)
@@ -258,10 +259,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/dismiss", s.dismiss)
 	mux.HandleFunc("POST /api/pair", s.pair)
 	mux.HandleFunc("POST /api/revoke", s.revoke)
+	if s.Config.PublicAdmin {
+		admin := s.AdminHandler(static)
+		mux.Handle("/api/admin/", admin)
+		mux.Handle("/", admin)
+	}
 	return securityHeaders(mux)
 }
 
-// AdminHandler is bound exclusively to the validated loopback listener.
+// AdminHandler applies the same authentication and origin policy on both listeners.
 func (s *Server) AdminHandler(static http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/admin/login", s.adminLogin)
@@ -272,6 +278,10 @@ func (s *Server) AdminHandler(static http.Handler) http.Handler {
 	mux.HandleFunc("POST /api/admin/account", s.adminAccount)
 	mux.HandleFunc("POST /api/admin/revoke", s.adminRevoke)
 	mux.HandleFunc("POST /api/admin/logout", func(w http.ResponseWriter, r *http.Request) {
+		if !s.admin(r) {
+			fail(w, http.StatusUnauthorized, ErrForbidden)
+			return
+		}
 		s.mu.Lock()
 		delete(s.admins, secure.Hash(bearer(r)))
 		s.mu.Unlock()

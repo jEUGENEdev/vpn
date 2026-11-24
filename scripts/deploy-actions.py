@@ -35,7 +35,7 @@ def settings(env):
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        raise RuntimeError('Health endpoint redirected')
+        raise RuntimeError('Deployment endpoint redirected')
 
 
 def verify(host, certificate, reality_sni='www.microsoft.com'):
@@ -47,14 +47,26 @@ def verify(host, certificate, reality_sni='www.microsoft.com'):
     with opener.open('https://' + address + ':8443/healthz', timeout=20) as response:
         if response.status != 200 or json.loads(response.read(4096)).get('status') != 'ok':
             raise RuntimeError('API health check failed')
-    # The public listener must not expose even unauthenticated admin routes.
-    for path in ('/', '/api/admin/login'):
+    with opener.open('https://' + address + ':8443/', timeout=20) as response:
+        if (response.status != 200 or
+                not response.headers.get('Content-Type', '').startswith('text/html') or
+                b'id="login-form"' not in response.read(65536)):
+            raise RuntimeError('Public admin login page is unavailable')
+    # The page is public; account data, profiles and mutations require a session.
+    protected = [('GET', '/api/admin/accounts'), ('GET', '/api/admin/bootstrap'),
+                 ('POST', '/api/admin/bootstrap/rotate'), ('POST', '/api/admin/account'),
+                 ('POST', '/api/admin/access-key'), ('POST', '/api/admin/revoke'),
+                 ('POST', '/api/admin/logout')]
+    for method, path in protected:
+        request = urllib.request.Request('https://' + address + ':8443' + path,
+            data=b'{}' if method == 'POST' else None,
+            headers={'Content-Type': 'application/json'}, method=method)
         try:
-            with opener.open('https://' + address + ':8443' + path, timeout=20):
-                raise RuntimeError('Administration is exposed on the public API')
+            with opener.open(request, timeout=20):
+                raise RuntimeError('Admin endpoint accepted an unauthenticated request')
         except urllib.error.HTTPError as error:
-            if error.code != 404:
-                raise RuntimeError('Administration is exposed on the public API') from None
+            if error.code != 401:
+                raise RuntimeError('Admin endpoint did not require authentication') from None
     # REALITY forwards an unauthenticated TLS handshake to its configured target.
     # This checks TLS/target identity, not an authenticated VLESS round trip.
     reality_context = ssl.create_default_context()
@@ -87,7 +99,7 @@ def main():
             print('::error::External deployment check failed (' + type(error).__name__ +
                   '). Check TCP 443/8443, the service and its certificate.', file=sys.stderr)
             return 1
-        print('Verified HTTPS API with the SSH-fetched certificate and REALITY TLS handshake on 443; public admin routes are closed.')
+        print('Verified HTTPS API and public admin login with the SSH-fetched certificate, admin authentication and REALITY TLS handshake on 443.')
     else:
         print('Required deployment secrets are configured and valid.')
     return 0

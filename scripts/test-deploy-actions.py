@@ -54,22 +54,42 @@ class DeploymentSettingsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             deploy.settings(dict(self.env, VPN_ADMIN_PASSWORD='я' * 40))
 
-    def test_verification_authenticates_tls_and_rejects_public_admin(self):
+    def test_verification_authenticates_tls_and_checks_public_admin_authorization(self):
         response = mock.MagicMock()
         response.__enter__.return_value = response
         response.status = 200
         response.read.return_value = b'{"status":"ok"}'
-        hidden = deploy.urllib.error.HTTPError('https://fixture',404,'missing',{},None)
+        page = mock.MagicMock()
+        page.__enter__.return_value = page
+        page.status = 200
+        page.headers = {'Content-Type': 'text/html; charset=utf-8'}
+        page.read.return_value = b'<form id="login-form"></form>'
+        denied = deploy.urllib.error.HTTPError('https://fixture',401,'unauthorized',{},None)
         with mock.patch.object(deploy.ssl,'create_default_context') as context, \
              mock.patch.object(deploy.urllib.request,'build_opener') as opener, \
              mock.patch.object(deploy.socket,'create_connection') as tcp:
-            opener.return_value.open.side_effect = [response, hidden, hidden]
+            opener.return_value.open.side_effect = [response, page] + [denied] * 7
             deploy.verify('2606:4700:4700::1111','trusted.pem')
             self.assertEqual(context.call_args_list[0],mock.call(cafile='trusted.pem'))
             tcp.assert_called_once_with(('2606:4700:4700::1111',443),timeout=20)
             context.return_value.wrap_socket.assert_called_once()
-            opener.return_value.open.side_effect = [response,response]
-            with self.assertRaises(RuntimeError): deploy.verify('8.8.8.8','trusted.pem')
+            self.assertEqual(context.return_value.minimum_version, deploy.ssl.TLSVersion.TLSv1_3)
+            for call in opener.return_value.open.call_args_list[2:]:
+                request = call.args[0]
+                self.assertTrue(request.full_url.startswith('https://[2606:4700:4700::1111]:8443/api/admin/'))
+                self.assertIsNone(request.get_header('Authorization'))
+            for status in (200, 403, 404, 500):
+                for endpoint in range(7):
+                    with self.subTest(status=status, endpoint=endpoint):
+                        unexpected = response if status == 200 else deploy.urllib.error.HTTPError('https://fixture',status,'failed',{},None)
+                        opener.return_value.open.side_effect = [response, page] + [denied] * endpoint + [unexpected]
+                        with self.assertRaises(RuntimeError):
+                            deploy.verify('8.8.8.8','trusted.pem')
+            for content in (b'wrong application', b'{"status":"ok"}'):
+                page.read.return_value = content
+                opener.return_value.open.side_effect = [response, page]
+                with self.assertRaises(RuntimeError):
+                    deploy.verify('8.8.8.8','trusted.pem')
 
     @unittest.skipUnless(shutil.which('ansible-playbook'), 'requires deployment tools')
     def test_admin_hash_survives_redeploy(self):

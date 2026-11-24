@@ -75,8 +75,13 @@ Gitleaks в общем прогоне сканирует текущее дере
 
 ## CI
 
-`build.yml` вызывает reusable `security.yml` перед тестами и сборками.
-`deploy.yml` требует его успеха перед шагами с VPS-секретами. Проверки не
+`checks.yml` запускает проверки кода на push/PR и вызывает reusable `security.yml`.
+Ручной `build.yml` отдельно собирает установщики; `publish=false` разрешает
+повторную тестовую сборку текущей версии без production-ключа Android. Выпуск
+с `publish=true` допускается только из `main` с новой версией, после security,
+общих и нативных проверок; прежняя Android-подпись сохраняется.
+`deploy.yml` независимо требует успеха security и проверок Linux/Windows/macOS
+перед шагами с VPS-секретами. Проверки не
 наследуют секреты и не вызывают LLM API. Все внешние Actions закреплены SHA.
 UI-тесты используют отдельный lockfile и `npm ci --ignore-scripts`.
 Dependabot предлагает обновления Actions, Go, npm и Python зависимостей;

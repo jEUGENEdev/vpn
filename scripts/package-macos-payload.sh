@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [[ "$(uname -s)" == Darwin ]] || { echo 'Build macOS installers on a Mac.' >&2; exit 1; }
-vpn_version="$(python3 scripts/package_version.py --check-newer)"
+vpn_version="$(python3 scripts/package_version.py --check-consistent)"
 vpn_arch="${1:-arm64}"
 case "$vpn_arch" in arm64) vpn_electron_arch=arm64;; amd64) vpn_electron_arch=x64;; *) echo 'Use arm64 or amd64' >&2; exit 1;; esac
 export LINEVPN_MACOS_SIGNING="${LINEVPN_MACOS_SIGNING:-preview}"

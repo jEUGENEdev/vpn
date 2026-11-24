@@ -112,6 +112,13 @@
       changed_when: "'changed' in vpn_admin_migration.stdout"
       no_log: true
       notify: Restart LineVPN
+    - name: Configure public HTTPS administration
+      ansible.builtin.command:
+        argv: [/usr/local/bin/linevpn-keygen, -dir, /etc/linevpn, -public-admin=true]
+      register: vpn_admin_visibility
+      changed_when: "'changed' in vpn_admin_visibility.stdout"
+      no_log: true
+      notify: Restart LineVPN
     - name: Make configuration files read-only for service
       ansible.builtin.file:
         path: "/etc/linevpn/{{ item }}"

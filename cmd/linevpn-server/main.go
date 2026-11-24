@@ -87,7 +87,7 @@ func run() error {
 	newHTTPServer := func(address string, handler http.Handler) *http.Server {
 		return &http.Server{Addr: address, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, GetCertificate: loader}}
 	}
-	h := newHTTPServer(cfg.Address, s.Handler())
+	h := newHTTPServer(cfg.Address, s.Handler(ui.Handler("admin")))
 	admin := newHTTPServer(cfg.AdminListenAddress(), s.AdminHandler(ui.Handler("admin")))
 	// Reserve both sockets before serving; failure must not leave half a deployment.
 	publicListener, e := net.Listen("tcp", h.Addr)
