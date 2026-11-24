@@ -129,13 +129,15 @@ public class VpnSmokeTest {
                     }
                 } catch (Exception ignored) { /* A descriptor can close during enumeration. */ }
             }
+            for (String command : new String[]{"ip -s link", "ip rule", "ip route show table all", "dumpsys connectivity"}) {
             try (InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(
-                    getInstrumentation().getUiAutomation().executeShellCommand("sh -c \"ip -s link; ip rule; ip route show table all; dumpsys connectivity\""))) {
+                    getInstrumentation().getUiAutomation().executeShellCommand(command))) {
                 ByteArrayOutputStream output = new ByteArrayOutputStream();
                 byte[] buffer = new byte[4096]; int count;
                 while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
-                Log.e("LineVpnSmoke", "Interface counters: " + output.toString("UTF-8"));
+                Log.e("LineVpnSmoke", "Network diagnostic " + command + ": " + output.toString("UTF-8"));
             } catch (Exception error) { Log.e("LineVpnSmoke", "Interface counter diagnostic failed: " + error.getClass().getSimpleName()); }
+            }
             throw failure;
         }
     }
