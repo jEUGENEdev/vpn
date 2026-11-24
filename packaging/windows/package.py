@@ -5,7 +5,7 @@ from package_version import product_version, version_parts
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('payload', type=pathlib.Path)
 parser.add_argument('output', type=pathlib.Path)
-parser.add_argument('--version', help='Version override for upgrade fixtures only')
+parser.add_argument('--version', help='Version override for related-package rejection fixtures')
 args = parser.parse_args()
 version = args.version or product_version()
 version_parts(version)
@@ -23,7 +23,7 @@ node(p,'Property',Id='ARPPRODUCTICON',Value='SetIcon')
 node(p,'Property',Id='ARPNOMODIFY',Value='1')
 node(p,'Property',Id='ARPNOREPAIR',Value='1')
 node(p,'Property',Id='MsiLogging',Value='voicewarmup')
-# Remove the previous product inside the transaction so a failed upgrade rolls back.
+# Populate related-product detection; Launch below rejects replacement in place.
 node(p,'MajorUpgrade',DowngradeErrorMessage='Установлена более новая версия приложения «Сеть».',Schedule='afterInstallInitialize');node(p,'MediaTemplate',EmbedCab='yes',CompressionLevel='high')
 # ARPNOREPAIR only hides the button. Reject command-line repair and repeated
 # /i before any service or file changes, including upgrades of legacy products.
@@ -49,8 +49,7 @@ for i,file in enumerate(sorted(root.rglob('*'))):
 # files prevent removal; no wildcard deletion is scheduled by Windows Installer.
 for directory, element in sorted(dirs.items(), key=lambda pair: len(pair[0].parts), reverse=True):
  node(agent_component,'RemoveFolder',Id='R'+uuid.uuid5(uuid.NAMESPACE_URL,directory.as_posix()).hex,Directory=element.get('Id'),On='uninstall')
-# A new shortcut location needs its own component and registry key path. The
-# old MSI removes its registered menu folder during the transactional upgrade.
+# The shortcut has its own component and registry key path for clean removal.
 # Do not remove generic Electron shortcuts belonging to other applications.
 programmenu=node(p,'StandardDirectory',Id='ProgramMenuFolder')
 c=node(programmenu,'Component',Id='SetStartMenuShortcut',Guid=str(uuid.uuid5(uuid.NAMESPACE_URL,'dev.linevpn.windows.shortcut:ProgramMenuFolder/Сеть.lnk')),Bitness='always64')

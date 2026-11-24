@@ -383,6 +383,16 @@ class MacOSScriptTests(unittest.TestCase):
         self.assertTrue(any(call[0] == 'pkill' and 'Contents/MacOS' not in call[-1] for call in self.trace()))
         self.assertFalse(any('-recover-network' in call for call in self.trace()))
 
+    def test_stop_helper_matches_nested_electron_processes_only_in_our_bundles(self):
+        self.assertEqual(self.run_script('stop-service.sh').returncode, 0)
+        pattern = next(call[-1] for call in self.trace() if call[0] == 'pkill' and 'Contents/MacOS' in call[-1])
+        for name in ('LineVPN', 'Сеть'):
+            bundle = self.applications / (name + '.app')
+            for command in (f'{bundle}/Contents/MacOS/LineVPN --background', f'{bundle}/Contents/Frameworks/LineVPN Helper (Renderer).app/Contents/MacOS/LineVPN Helper (Renderer) --type=renderer'):
+                self.assertEqual(subprocess.run(['grep', '-Eq', pattern], input=command, text=True).returncode, 0, command)
+        for command in ('/Applications/Other.app/Contents/MacOS/LineVPN', '/Volumes/Сеть/Сеть.app/Contents/MacOS/LineVPN', str(self.applications / 'Сеть.app-other/Contents/MacOS/LineVPN')):
+            self.assertNotEqual(subprocess.run(['grep', '-Eq', pattern], input=command, text=True).returncode, 0, command)
+
     def test_uninstall_waits_for_launchd_and_removes_local_state(self):
         result = self.run_script('uninstall.sh', STOP_POLLS='2')
         self.assertEqual(result.returncode, 0, result.stderr)

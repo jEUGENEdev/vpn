@@ -4,7 +4,7 @@ set -euo pipefail
 [[ "$EUID" -eq 0 ]] || { echo 'Run with administrator privileges.' >&2; exit 1; }
 vpn_service=system/dev.linevpn.agent
 vpn_plist=/Library/LaunchDaemons/dev.linevpn.agent.plist
-vpn_gui='^/Applications/(LineVPN|Сеть)\.app/Contents/MacOS/(LineVPN|Сеть)( Helper[^/]*)?( |$)'
+vpn_gui='^/Applications/(LineVPN|Сеть)\.app/Contents/(MacOS|Frameworks/[^/]+\.app/Contents/MacOS)/'
 vpn_worker='^(/bin/(bash|sh) )?/Library/Application Support/LineVPN/(linevpn-agent|service-wrapper\.sh)( |$)'
 
 wait_for_gui() {
