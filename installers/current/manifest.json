@@ -12,19 +12,25 @@
   },
   "files": [
     {
-      "name": "\u0421\u0435\u0442\u044c-0.4.0-android-preview.apk",
+      "name": "Сеть-0.4.0-android-preview.apk",
       "size": 86732359,
       "sha256": "29ceea730cad19141b188c4051d997f792f3c4b7b28e8ca883bef3d79f8483d3"
     },
     {
-      "name": "\u0421\u0435\u0442\u044c-0.4.0-macos-universal.dmg",
-      "size": 313298404,
-      "sha256": "db8e58d8aaaa30f113a8f7ff8363bf67ca99dfa6ad197efcd177b6d08b6e2eca"
+      "name": "Сеть-0.4.0-macos-universal.dmg",
+      "size": 313316842,
+      "sha256": "88995f3dc654cdb840127b42813907804936431a1258de23462db73af6fd05ae",
+      "source_commit": "b3e8ca6f56064f81413fd9ec2288c42c510b77c5",
+      "built_at": "2026-11-24T21:32:35Z",
+      "build_run_id": 45489878360,
+      "build_run_url": "https://github.com/jEUGENEdev/vpn/actions/runs/45489878360"
     },
     {
-      "name": "\u0421\u0435\u0442\u044c-0.4.0-windows-x64.msi",
+      "name": "Сеть-0.4.0-windows-x64.msi",
       "size": 178200576,
       "sha256": "995f4366fa51635415a9a773b2d26220145415ed72ecd358184b2d61cbd9a0a2"
     }
-  ]
+  ],
+  "source_commit_scope": "Base installer set; per-file source_commit and built_at override it",
+  "updated_at": "2026-11-24T21:52:25.213005+00:00"
 }
