@@ -47,7 +47,7 @@ jobs:
           if-no-files-found: error
   android:
     timeout-minutes: 35
-    needs: test
+    needs: security
     runs-on: ubuntu-24.04
     env:
       LINEVPN_ANDROID_VARIANT: debug
@@ -138,7 +138,7 @@ jobs:
         run: rm -f "$RUNNER_TEMP/linevpn-signing.keystore"
   windows:
     timeout-minutes: 25
-    needs: test
+    needs: security
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -165,6 +165,7 @@ jobs:
             build/windows-gui.txt
             build/windows-install.log
             build/windows-clean-install.log
+            build/windows-installer-errors.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: installer-windows
@@ -172,7 +173,7 @@ jobs:
           if-no-files-found: error
   macos:
     timeout-minutes: 45
-    needs: test
+    needs: security
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -217,7 +218,7 @@ jobs:
   publish-current:
     timeout-minutes: 15
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: [android, windows, macos]
+    needs: [test, android, windows, macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

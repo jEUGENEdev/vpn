@@ -48,6 +48,7 @@ func main() {
 	flag.Parse()
 	if *prepare || *uninstall {
 		if err := cleanInstallation(*prepare); err != nil {
+			reportInstallerError(err)
 			log.Fatal(err)
 		}
 		return

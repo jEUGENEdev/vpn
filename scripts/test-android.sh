@@ -79,9 +79,9 @@ adb shell ping -c 1 -W 5 10.0.2.2
 
 # Explicit uninstall must also allow a fresh installation without old state.
 adb install apps/android/app/build/outputs/apk/debug/app-debug.apk
-if adb exec-out run-as dev.linevpn.app cat files/core/profile.json > /dev/null 2>&1; then
-  echo 'Old profile returned after uninstall' >&2; exit 1
-fi
+# exec-out does not propagate the remote process exit code. Use shell v2 so a
+# missing file is distinguished from a successful cat of an old profile.
+adb shell run-as dev.linevpn.app test ! -e files/core/profile.json
 adb shell pm grant dev.linevpn.app android.permission.POST_NOTIFICATIONS
 adb shell appops set dev.linevpn.app ACTIVATE_VPN allow
 adb shell am instrument -w dev.linevpn.app.test/androidx.test.runner.AndroidJUnitRunner | tee build/android-clean-install.txt

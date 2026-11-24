@@ -11,8 +11,18 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 	"golang.org/x/sys/windows/svc"
+	"golang.org/x/sys/windows/svc/eventlog"
 	"golang.org/x/sys/windows/svc/mgr"
 )
+
+// MSI executable actions do not capture stderr. Keep the actual failure in the
+// OS-managed Application log so error 1722 is diagnosable without a repair tool.
+func reportInstallerError(err error) {
+	if events, e := eventlog.Open("LineVPN Installer"); e == nil {
+		defer events.Close()
+		_ = events.Error(1, err.Error())
+	}
+}
 
 // MSI executes this copy from its Binary table, so removal still works when
 // the installed agent is missing. No path comes from MSI properties or -data.
@@ -33,13 +43,13 @@ func cleanInstallation(fresh bool) error {
 			return e
 		}
 		if fresh || status.State != svc.Stopped {
-			return errors.New("сначала удалите прежнюю установку «Сеть»; служба должна быть остановлена")
+			return fmt.Errorf("сначала удалите прежнюю установку «Сеть»; служба должна быть остановлена (state=%d)", status.State)
 		}
 	} else if !errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
 		return err
 	}
 	if err = closeInstalledUI(); err != nil {
-		return err
+		return fmt.Errorf("close installed processes: %w", err)
 	}
 	base, err := windows.KnownFolderPath(windows.FOLDERID_ProgramData, 0)
 	if err != nil {
@@ -49,10 +59,10 @@ func cleanInstallation(fresh bool) error {
 	// An old MSI may have left the entire data directory on explicit removal.
 	// The fresh package must never load those credentials or disabled intent.
 	if err = platform.Recover(dir); err != nil {
-		return err
+		return fmt.Errorf("remove owned network settings: %w", err)
 	}
 	if err = removeOwnedDirectory(dir); err != nil {
-		return err
+		return fmt.Errorf("remove private state: %w", err)
 	}
 	profiles, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList`, registry.READ)
 	if err != nil {
@@ -81,7 +91,7 @@ func cleanInstallation(fresh bool) error {
 			return errors.New("invalid Windows profile path")
 		}
 		if e = removeOwnedDirectory(filepath.Join(home, "AppData", "Roaming", "LineVPN")); e != nil {
-			return e
+			return fmt.Errorf("remove local UI state: %w", e)
 		}
 	}
 	if fresh {
@@ -114,7 +124,7 @@ func closeInstalledUI() error {
 			process, e := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_TERMINATE|windows.SYNCHRONIZE, false, entry.ProcessID)
 			if e != nil {
 				if !errors.Is(e, windows.ERROR_INVALID_PARAMETER) {
-					return e
+					return fmt.Errorf("open %s process %d: %w", name, entry.ProcessID, e)
 				}
 			} else {
 				buffer := make([]uint16, 32768)

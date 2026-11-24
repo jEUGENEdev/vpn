@@ -55,18 +55,19 @@ func startTunnelDNS() (io.Closer, error) {
 		s.Close()
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err = exec.CommandContext(ctx, "/usr/sbin/scutil", "-w", key, "-t", "3").Run(); err != nil {
+	// A separate `scutil -w` notification wait can time out during rapid
+	// off/on cycles. Read back the actual key until configd has applied it;
+	// never declare readiness from an elapsed delay or a successful write.
+	err = waitDNSRegistration(ctx, func(ctx context.Context) ([]byte, error) {
+		check := exec.CommandContext(ctx, "/usr/sbin/scutil")
+		check.Stdin = strings.NewReader("show " + key + "\n")
+		return check.CombinedOutput()
+	})
+	if err != nil {
 		s.Close()
-		return nil, fmt.Errorf("temporary DNS registration: %w", err)
-	}
-	check := exec.CommandContext(ctx, "/usr/sbin/scutil")
-	check.Stdin = strings.NewReader("show " + key + "\n")
-	output, err := check.CombinedOutput()
-	if err != nil || !strings.Contains(string(output), tunnelDNS) || !strings.Contains(string(output), "SupplementalMatchDomains") {
-		s.Close()
-		return nil, fmt.Errorf("temporary DNS not registered: %s (%v)", output, err)
+		return nil, err
 	}
 	return s, nil
 }

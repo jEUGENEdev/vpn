@@ -79,6 +79,12 @@ try {
     Resolve-DnsName example.com -Type A -DnsOnly -QuickTimeout | Out-Null
     $nativeOK = $true
 } finally {
+    # MSI type-2 custom actions lose stderr; the helper records its failure in
+    # the OS Application log. Collect only our source, never unrelated events.
+    Get-WinEvent -LogName Application -MaxEvents 500 -ErrorAction SilentlyContinue |
+        Where-Object { $_.ProviderName -eq 'LineVPN Installer' } |
+        ForEach-Object { "$($_.TimeCreated): $($_.Properties.Value -join ' ')" } |
+        Tee-Object -FilePath build/windows-installer-errors.txt
     if (Get-Service LineVPN -ErrorAction SilentlyContinue) {
         Set-Service LineVPN -StartupType Disabled
         Stop-Service LineVPN -ErrorAction Continue
