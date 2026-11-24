@@ -281,6 +281,10 @@ async function testCombinedAuthentication() {
     assert.equal($('accounts-search'),null);
 
     const beforeRotate=calls.length;
+    // HTML pattern uses Unicode sets (v), including its stricter escaping rules.
+    const keyPattern=new RegExp('^(?:'+$('rotation-current-key').pattern+')$','v');
+    assert.equal(keyPattern.test(key),true);
+    assert.equal(keyPattern.test('lnv_'+'?'.repeat(43)),false);
     const cancelled=$('rotate-access-key').onclick();await tick();
     input(w,'rotation-current-key',key);$('rotation-cancel').click();await cancelled;
     assert.equal(calls.length,beforeRotate,'cancel submitted rotation');

@@ -319,7 +319,7 @@ async function testKeyAuth(page) {
   if(await page.locator('#access-key').inputValue())throw Error('login key retained after submission');
   await page.locator('[data-view="devices"]').click();
   await page.locator('#rotate-access-key').click();await page.locator('#rotation-current-key').fill(issuedKey);await page.locator('#key-rotation').getByRole('button',{name:'Заменить ключ',exact:true}).click();
-  if(await page.locator('#rotation-current-key').inputValue())throw Error('current key retained in dialog');
+  await page.waitForFunction(()=>document.getElementById('rotation-current-key').value==='');
   await saveIssuedKey(page);await page.locator('#setup').waitFor({state:'visible'});
   if(!await page.locator('#tab-register').isDisabled())throw Error('revoked account allowed accidental replacement');
   await page.locator('#bootstrap').fill(bootstrapProfile);await page.locator('#import-profile').click();

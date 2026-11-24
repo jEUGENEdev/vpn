@@ -280,7 +280,7 @@
 <dialog id="key-rotation" aria-labelledby="key-rotation-title"><form method="dialog">
 <h2 id="key-rotation-title">Заменить ключ доступа</h2>
 <p>Введите текущий ключ. Старый ключ, устройства и коды привязки будут отозваны. Сохраните новый ключ для повторного входа.</p>
-<label>Текущий ключ<input id="rotation-current-key" type="password" autocomplete="off" spellcheck="false" required pattern="lnv_[A-Za-z0-9_-]{43}" placeholder="lnv_…"></label>
+<label>Текущий ключ<input id="rotation-current-key" type="password" autocomplete="off" spellcheck="false" required pattern="lnv_[A-Za-z0-9_\-]{43}" placeholder="lnv_…"></label>
 <div class="dialog-actions"><button id="rotation-cancel" type="button" class="secondary">Отмена</button><button class="primary" value="rotate">Заменить ключ</button></div>
 </form></dialog>
 <dialog id="confirm" aria-labelledby="confirm-title" aria-describedby="confirm-description">
