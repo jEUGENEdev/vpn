@@ -12,4 +12,12 @@ assert content.count(before) == 1
 content = content.replace(before, before + '\n\t\t\tfmt.Printf("LineVpnFdbased reader exit: err=%v continue=%v\\n", err, cont)')
 path.chmod(0o600)
 path.write_text(content)
+path = target / "pkg/tcpip/link/fdbased/packet_dispatchers.go"
+content = path.read_text()
+content = content.replace('import (', 'import (\n\t"fmt"', 1)
+before = "\tif n <= 0 || errno != 0 {"
+assert content.count(before) >= 1
+content = content.replace(before, before + '\n\t\tfmt.Printf("LineVpnReadv stopped: fd=%d n=%d errno=%d\\n", d.fd, n, errno)', 1)
+path.chmod(0o600)
+path.write_text(content)
 subprocess.run(["go", "mod", "edit", "-replace=" + module + "=" + str(target)], check=True)
