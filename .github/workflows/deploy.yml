@@ -26,7 +26,8 @@ on:
       - 'internal/policy/**'
       - 'internal/secure/**'
       - 'internal/transport/**'
-      - 'internal/ui/**'
+      - 'internal/ui/admin/**'
+      - 'internal/ui/ui.go'
       - 'go.mod'
       - 'go.sum'
   pull_request:
@@ -40,8 +41,22 @@ on:
       - 'scripts/*deploy*.py'
       - 'scripts/deploy-*.sh'
       - 'scripts/*deploy*.ps1'
+      - 'scripts/build-server.sh'
+      - 'scripts/package-server.sh'
       - 'deploy.sh'
       - 'deploy.bat'
+      - 'cmd/linevpn-server/**'
+      - 'cmd/linevpn-keygen/**'
+      - 'internal/server/**'
+      - 'internal/store/**'
+      - 'internal/model/**'
+      - 'internal/policy/**'
+      - 'internal/secure/**'
+      - 'internal/transport/**'
+      - 'internal/ui/admin/**'
+      - 'internal/ui/ui.go'
+      - 'go.mod'
+      - 'go.sum'
 
 permissions:
   contents: read
@@ -87,9 +102,29 @@ jobs:
         shell: powershell
         run: ./scripts/test-deploy-windows.ps1
 
+  validate-macos:
+    name: Validate macOS deployment launcher
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with: {python-version: '3.12'}
+      - name: Verify deployment launcher with the macOS system Bash
+        env:
+          TEST_BASH: /bin/bash
+        run: |
+          python3 scripts/test-deploy-manual.py
+          python3 scripts/test-deploy-security.py
+
   deploy:
     name: Deploy from main
-    needs: [security, validate, validate-windows]
+    needs: [security, validate, validate-windows, validate-macos]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 25

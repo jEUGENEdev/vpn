@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [[ "$(uname -s)" == Darwin ]] || { echo 'Build macOS installers on a Mac.' >&2; exit 1; }
-vpn_version="$(python3 scripts/package_version.py --check-newer)"
+vpn_version="$(python3 scripts/package_version.py --check-consistent)"
 export LINEVPN_MACOS_SIGNING="${LINEVPN_MACOS_SIGNING:-preview}"
 # One download supports both architectures; users never choose service tools.
 rm -rf build/macos-payloads build/macos-setup-image

@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 : "${ANDROID_HOME:?Android SDK required}"
-python3 scripts/package_version.py --check-newer
+python3 scripts/package_version.py --check-consistent
 # Check before the expensive Go/Gradle build. A runner's generated debug key
 # cannot replace the APK already installed on the user's devices.
 vpn_variant="${LINEVPN_ANDROID_VARIANT:-release}"
