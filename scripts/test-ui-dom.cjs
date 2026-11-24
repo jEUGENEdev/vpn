@@ -224,8 +224,37 @@ function visible(w, selector) { return [...w.document.querySelectorAll(selector)
     assert.equal(ad.querySelectorAll('#accounts > .list-row').length,2);
   } finally { a.close(); }
   await testCombinedAuthentication();
+  await testReopenedConfirmation();
   console.log('DOM checks passed: sources, historical search, every list, stable polling, correct action targets and safe text rendering.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
+
+async function testReopenedConfirmation() {
+  for (const name of ['client', 'admin']) {
+    const dom=load(name,name==='client'?['traffic.js','activity.js','app.js']:['app.js']);
+    const w=dom.window,d=w.document.getElementById('confirm'),queued=[];
+    try {
+      await tick();
+      // Native dialog.close queues its event; a user can reopen before it runs.
+      d.close=function(value){this.returnValue=value;this.open=false;queued.push(()=>this.dispatchEvent(new w.Event('close')))};
+      const submit=value=>{
+        const button=d.querySelector(`button[value="${value}"]`);
+        if(d.querySelector('form').dispatchEvent(new w.SubmitEvent('submit',{bubbles:true,cancelable:true,submitter:button})))d.close(value);
+      };
+      const ask=()=>w.eval(`${name==='client'?'confirmChange':'confirm'}('Confirm test','Test-only action')`);
+      const cancelled=ask();submit('cancel');
+      const accepted=ask();
+      queued.shift()();
+      assert.equal(d.open,true,'old close event dismissed the new confirmation');
+      submit('ok');while(queued.length)queued.shift()();
+      assert.equal(await cancelled,false,'cancelled action was approved by a later confirmation');
+      assert.equal(await accepted,true,'old close event consumed the new confirmation');
+      const escaped=ask();
+      if(d.dispatchEvent(new w.Event('cancel',{cancelable:true})))d.close('');
+      while(queued.length)queued.shift()();
+      assert.equal(await escaped,false,'Escape approved the action');
+    } finally { w.close(); }
+  }
+}
 
 async function testCombinedAuthentication() {
   const dom = load('client', ['traffic.js', 'activity.js', 'app.js']);

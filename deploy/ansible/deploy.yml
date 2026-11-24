@@ -17,7 +17,8 @@
       no_log: true
     - name: Install system packages
       ansible.builtin.apt:
-        name: [ca-certificates, ufw]
+        # An unprivileged SSH user needs setfacl to run checks as linevpn.
+        name: [ca-certificates, ufw, acl]
         state: present
         update_cache: true
         lock_timeout: 600
