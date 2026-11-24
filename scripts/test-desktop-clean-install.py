@@ -104,18 +104,30 @@ assert not state.get('pending_protection'), 'Old local rules restored'
 if not mac:
     for name in ('Сеть.exe', 'resources/app.asar', 'resources/agent/linevpn-agent.exe'):
         assert hashlib.sha256((app / name).read_bytes()).digest() == hashlib.sha256((root / 'apps/desktop/dist/win-unpacked' / name).read_bytes()).digest(), f'Stale installed payload: {name}'
-    subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', r'''
+    shortcut_json = subprocess.check_output(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', r'''
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $products = @(Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' | Get-ItemProperty | Where-Object { $_.DisplayName -in @('Сеть', 'LineVPN') })
 if ($products.Count -ne 1 -or $products[0].NoRepair -ne 1) { throw 'Duplicate product or repair still enabled' }
 $link = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'Сеть.lnk'
+if (-not (Test-Path -LiteralPath $link -PathType Leaf)) { throw "Missing Start menu shortcut: $link" }
 $shell = New-Object -ComObject WScript.Shell
-if ($shell.CreateShortcut($link).TargetPath -ne (Join-Path $env:ProgramFiles 'LineVPN/Сеть.exe')) { throw 'Wrong shortcut' }
-'''], check=True)
+@{target=$shell.CreateShortcut($link).TargetPath} | ConvertTo-Json -Compress
+'''], encoding='utf-8')
+    shortcut_target = json.loads(shortcut_json)['target']
+    # Shell links can return an 8.3 alias. Compare the actual file identity,
+    # and retain a strict failure for missing links, stale or foreign targets.
+    assert shortcut_target and pathlib.Path(shortcut_target).is_file(), f'Missing shortcut target: {shortcut_target!r}'
+    assert pathlib.Path(shortcut_target).samefile(app / 'Сеть.exe'), f'Wrong shortcut target: {shortcut_target!r}'
 # A damaged installed binary must not prevent removing the package.
-subprocess.run(['launchctl', 'bootout', 'system/dev.linevpn.agent'] if mac else ['sc.exe', 'stop', 'LineVPN'], check=True)
 if not mac:
-    subprocess.run(['powershell.exe', '-NoProfile', '-Command', "(Get-Service LineVPN).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))"], check=True)
+    subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', r'''
+$ErrorActionPreference = 'Stop'
+$vpnWorker = Get-Process -Id (Get-CimInstance Win32_Service -Filter "Name='LineVPN'").ProcessId
+Stop-Service LineVPN
+(Get-Service LineVPN).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
+if (-not $vpnWorker.WaitForExit(30000)) { throw 'Service process did not exit before the damaged-payload fixture' }
+'''], check=True)
 else:
     subprocess.run(['bash', str(manager.parent / 'stop-service.sh')], check=True)
 agent.unlink()
