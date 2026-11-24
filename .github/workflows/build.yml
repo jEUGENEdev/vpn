@@ -182,7 +182,7 @@ jobs:
       matrix:
         include:
           - {arch: amd64, runner: macos-15-intel}
-          - {arch: arm64, runner: macos-26}
+          - {arch: arm64, runner: macos-15}
     env:
       LINEVPN_MACOS_SIGNING: preview
     steps:
