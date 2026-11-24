@@ -35,6 +35,15 @@ if ($view.Fetch().StringData(1) -ne $expected.product_name) { throw 'Wrong MSI p
 $view.Close()
 Write-Output "PASS: compiled MSI name and all $checked file-version entries match the payload"
 
+$view = $database.OpenView('SELECT `Target` FROM `Shortcut` WHERE `Shortcut` = ''StartShortcut''')
+$view.Execute()
+if ($view.Fetch().StringData(1) -ne '[#ClientUI]') { throw 'Shortcut must directly reference the installed UI file' }
+$view.Close()
+$view = $database.OpenView('SELECT `Value` FROM `Property` WHERE `Property` = ''DISABLEADVTSHORTCUTS''')
+$view.Execute()
+if ($view.Fetch().StringData(1) -ne '1') { throw 'Installer shortcut repair must be disabled' }
+$view.Close()
+
 # Validate the compiled service contract, including compilers that have different defaults.
 $view = $database.OpenView('SELECT `Name`, `ErrorControl`, `Arguments` FROM `ServiceInstall`')
 $view.Execute()

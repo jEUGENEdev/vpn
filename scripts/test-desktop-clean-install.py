@@ -111,14 +111,24 @@ $products = @(Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uni
 if ($products.Count -ne 1 -or $products[0].NoRepair -ne 1) { throw 'Duplicate product or repair still enabled' }
 $link = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'Сеть.lnk'
 if (-not (Test-Path -LiteralPath $link -PathType Leaf)) { throw "Missing Start menu shortcut: $link" }
+Copy-Item -LiteralPath $link -Destination build/windows-shortcut.lnk -Force
 $shell = New-Object -ComObject WScript.Shell
-@{target=$shell.CreateShortcut($link).TargetPath} | ConvertTo-Json -Compress
+$target = $shell.CreateShortcut($link).TargetPath
+$env:LINEVPN_SMOKE_TEST_REPORT = Join-Path (Get-Location) 'build/windows-clean-gui.txt'
+Remove-Item -LiteralPath $env:LINEVPN_SMOKE_TEST_REPORT -ErrorAction SilentlyContinue
+$gui = Start-Process $link -ArgumentList '--background' -PassThru
+$image = $gui.MainModule.FileName
+if (-not $gui.WaitForExit(45000)) { $gui.Kill(); throw 'Start menu launch did not load the installed client UI' }
+if ($gui.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $env:LINEVPN_SMOKE_TEST_REPORT)) { throw 'Start menu launch failed' }
+if (-not (Get-Content -Raw $env:LINEVPN_SMOKE_TEST_REPORT).StartsWith('PASS:')) { throw 'Start menu launch did not authenticate with the fresh service' }
+Remove-Item Env:LINEVPN_SMOKE_TEST_REPORT
+@{target=$target; image=$image} | ConvertTo-Json -Compress
 '''], encoding='utf-8')
-    shortcut_target = json.loads(shortcut_json)['target']
-    # Shell links can return an 8.3 alias. Compare the actual file identity,
-    # and retain a strict failure for missing links, stale or foreign targets.
-    assert shortcut_target and pathlib.Path(shortcut_target).is_file(), f'Missing shortcut target: {shortcut_target!r}'
-    assert pathlib.Path(shortcut_target).samefile(app / 'Сеть.exe'), f'Wrong shortcut target: {shortcut_target!r}'
+    shortcut = json.loads(shortcut_json)
+    # Verify the executable actually launched through the installed shortcut,
+    # including its UI and authenticated fresh service session, not just metadata.
+    launched_image = shortcut['image']
+    assert launched_image and pathlib.Path(launched_image).samefile(app / 'Сеть.exe'), f'Wrong shortcut executable: {shortcut!r}'
 # A damaged installed binary must not prevent removing the package.
 if not mac:
     subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', r'''

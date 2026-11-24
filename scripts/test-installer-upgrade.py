@@ -80,6 +80,8 @@ class VersionTests(unittest.TestCase):
             self.assertIsNone(p.find('w:SetProperty[@Id="REINSTALL"]', ns))
             self.assertIsNone(p.find('w:SetProperty[@Id="REINSTALLMODE"]', ns))
             self.assertEqual(p.find('w:Property[@Id="ARPNOREPAIR"]', ns).get('Value'), '1')
+            self.assertEqual(p.find('w:Property[@Id="DISABLEADVTSHORTCUTS"]', ns).get('Value'), '1')
+            self.assertEqual(p.find('w:Feature', ns).get('AllowAdvertise'), 'no')
             for launch in p.findall('w:Launch', ns):
                 launch.get('Message').encode('cp1251')  # MSI string pool uses the declared code page.
             conditions = [x.get('Condition') for x in p.findall('w:Launch', ns)]
@@ -93,6 +95,9 @@ class VersionTests(unittest.TestCase):
             shortcut = menu.find('w:Component/w:Shortcut', ns)
             self.assertIsNotNone(shortcut, 'Сеть must have a current, directly discoverable Start menu shortcut')
             self.assertEqual(shortcut.attrib['Name'], 'Сеть')
+            self.assertEqual(shortcut.attrib['Target'], '[#ClientUI]')
+            self.assertEqual(shortcut.attrib['Advertise'], 'no')
+            self.assertEqual(Path(first.find('.//w:File[@Id="ClientUI"]', ns).get('Source')).name, 'Сеть.exe')
             component = menu.find('w:Component', ns)
             self.assertNotEqual(component.attrib['Guid'], '{9A5D6DC0-5C93-4DC6-82BC-9857E58B9B20}', 'renamed/moved shortcut must not reuse the legacy component')
             marker = component.find('w:RegistryValue', ns)

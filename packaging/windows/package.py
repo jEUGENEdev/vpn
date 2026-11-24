@@ -22,6 +22,7 @@ node(p,'Icon',Id='SetIcon',SourceFile=str(pathlib.Path(__file__).resolve().paren
 node(p,'Property',Id='ARPPRODUCTICON',Value='SetIcon')
 node(p,'Property',Id='ARPNOMODIFY',Value='1')
 node(p,'Property',Id='ARPNOREPAIR',Value='1')
+node(p,'Property',Id='DISABLEADVTSHORTCUTS',Value='1')
 node(p,'Property',Id='MsiLogging',Value='voicewarmup')
 # Populate related-product detection; Launch below rejects replacement in place.
 node(p,'MajorUpgrade',DowngradeErrorMessage='Установлена более новая версия приложения «Сеть».',Schedule='afterInstallInitialize');node(p,'MediaTemplate',EmbedCab='yes',CompressionLevel='high')
@@ -29,7 +30,7 @@ node(p,'MajorUpgrade',DowngradeErrorMessage='Установлена более �
 # /i before any service or file changes, including upgrades of legacy products.
 node(p,'Launch',Condition='REMOVE~="ALL" OR (NOT Installed AND NOT WIX_UPGRADE_DETECTED AND NOT REINSTALL)',Message='Сначала удалите «Сеть» в параметрах Windows / Приложения. Затем запустите установку заново. Локальные настройки и вход будут удалены; понадобятся профиль сервера и ключ доступа.')
 program=node(p,'StandardDirectory',Id='ProgramFiles64Folder');install=node(program,'Directory',Id='INSTALLFOLDER',Name='LineVPN')
-feature=node(p,'Feature',Id='Main',Title='Сеть',Level='1');dirs={pathlib.Path('.'):install}
+feature=node(p,'Feature',Id='Main',Title='Сеть',Level='1',AllowAdvertise='no');dirs={pathlib.Path('.'):install}
 for i,file in enumerate(sorted(root.rglob('*'))):
  if not file.is_file():continue
  rel=file.relative_to(root); parent=rel.parent
@@ -38,7 +39,7 @@ for i,file in enumerate(sorted(root.rglob('*'))):
   if d not in dirs:dirs[d]=node(dirs[d.parent],'Directory',Id='D'+uuid.uuid5(uuid.NAMESPACE_URL,str(d)).hex,Name=d.name)
  cid='C'+uuid.uuid5(uuid.NAMESPACE_URL,rel.as_posix()).hex
  c=node(dirs[parent],'Component',Id=cid,Guid=str(uuid.uuid5(uuid.NAMESPACE_URL,'linevpn:'+rel.as_posix())),Bitness='always64')
- fid='Agent' if rel.as_posix()=='resources/agent/linevpn-agent.exe' else 'F'+str(i)
+ fid='Agent' if rel.as_posix()=='resources/agent/linevpn-agent.exe' else ('ClientUI' if rel.as_posix()=='Сеть.exe' else 'F'+str(i))
  node(c,'File',Id=fid,Source=str(file),KeyPath='yes')
  if fid=='Agent':
   agent_component=c
@@ -53,7 +54,7 @@ for directory, element in sorted(dirs.items(), key=lambda pair: len(pair[0].part
 # Do not remove generic Electron shortcuts belonging to other applications.
 programmenu=node(p,'StandardDirectory',Id='ProgramMenuFolder')
 c=node(programmenu,'Component',Id='SetStartMenuShortcut',Guid=str(uuid.uuid5(uuid.NAMESPACE_URL,'dev.linevpn.windows.shortcut:ProgramMenuFolder/Сеть.lnk')),Bitness='always64')
-node(c,'Shortcut',Id='StartShortcut',Name='Сеть',Target='[INSTALLFOLDER]Сеть.exe',Icon='SetIcon',IconIndex='0',WorkingDirectory='INSTALLFOLDER')
+node(c,'Shortcut',Id='StartShortcut',Name='Сеть',Target='[#ClientUI]',Advertise='no',Icon='SetIcon',IconIndex='0',WorkingDirectory='INSTALLFOLDER')
 node(c,'RegistryValue',Root='HKLM',Key='Software\\LineVPN\\Installer',Name='StartMenuShortcut',Type='integer',Value='1',KeyPath='yes')
 node(feature,'ComponentRef',Id='SetStartMenuShortcut')
 # The cached MSI owns an independent copy. A missing installed executable must

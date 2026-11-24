@@ -30,7 +30,9 @@ try {
     if (-not $state.tunnel -or -not $state.guard) { throw 'TUN or persistent guard unavailable' }
     # Exercise the shipped Electron/ASAR against the actual service, too.
     $env:LINEVPN_SMOKE_TEST_REPORT = Join-Path (Get-Location) 'build/windows-gui.txt'
-    $gui = Start-Process (Join-Path $env:ProgramFiles 'LineVPN/Сеть.exe') -ArgumentList '--background' -PassThru
+    $shortcut = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'Сеть.lnk'
+    Copy-Item -LiteralPath $shortcut -Destination build/windows-shortcut.lnk -Force
+    $gui = Start-Process $shortcut -ArgumentList '--background' -PassThru
     if (-not $gui.WaitForExit(45000)) { $gui.Kill(); throw 'Packaged Сеть UI did not become ready' }
     if ($gui.ExitCode -ne 0 -or -not (Test-Path $env:LINEVPN_SMOKE_TEST_REPORT)) { throw 'Packaged Сеть UI cannot communicate with its service' }
     Remove-Item Env:LINEVPN_SMOKE_TEST_REPORT
