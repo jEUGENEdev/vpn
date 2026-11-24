@@ -333,6 +333,17 @@ public class VpnSmokeTest {
         assertExcludedApplication();
         awaitVPNNetwork(connectivity, true);
         assertDirectProbe("Selective mode must resume forwarding on the replacement interface", connectivity);
+        // Exercise rapid replacement of the OS VPN, including reuse of tunN
+        // names. Every transition must work on its first packet probe.
+        for (int replacement = 0; replacement < 8; replacement++) {
+            request(base+"local/traffic-mode",token,"{\"mode\":\"all\"}");
+            awaitVPNNetwork(connectivity, true);
+            try { request(PROBE_URL,null,null); fail("Repeated full mode leaked directly"); }
+            catch (IOException expected) { }
+            request(base+"local/traffic-mode",token,"{\"mode\":\"selective\"}");
+            awaitVPNNetwork(connectivity, true);
+            assertDirectProbe("Selective forwarding after replacement " + replacement, connectivity);
+        }
         JSONObject snapshot = new JSONObject(Mobile.snapshot());
         org.json.JSONArray proposals = snapshot.getJSONArray("requests");
         for (int i=0; i<proposals.length(); i++) assertNotEquals("Healthy direct traffic must not prompt", "10.0.2.2", proposals.getJSONObject(i).getString("target"));
