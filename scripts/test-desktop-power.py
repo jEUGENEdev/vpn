@@ -65,7 +65,9 @@ for cycle in range(2):
     if cycle == 0:
         # Stopping an explicitly disabled service must leave ordinary internet.
         if mac:
-            subprocess.run(["sudo", "launchctl", "bootout", "system/dev.linevpn.agent"], check=True)
+            # bootout returns before launchd has finished reaping the job.
+            # Use the shipped bounded stop/wait sequence before bootstrap.
+            subprocess.run(["sudo", "bash", "packaging/macos/stop-service.sh"], check=True)
         else:
             subprocess.run(["powershell", "-NoProfile", "-Command", "Stop-Service LineVPN"], check=True)
         direct_works()

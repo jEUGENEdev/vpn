@@ -62,7 +62,7 @@ python3 scripts/test-desktop-power.py
 sudo /usr/bin/pkill -KILL -x linevpn-agent
 sleep 2
 if curl --noproxy '*' -fsS --output /dev/null --connect-timeout 4 --max-time 8 http://1.1.1.1/cdn-cgi/trace; then echo "Protected connection escaped VPN" >&2; exit 1; fi
-sudo launchctl bootout system/dev.linevpn.agent
+sudo /bin/bash packaging/macos/stop-service.sh
 vpn_dns_keys="$(printf 'list State:/Network/Service/dev.linevpn.*/DNS\n' | /usr/sbin/scutil)"
 if [[ "$vpn_dns_keys" == *'subKey'* ]]; then echo 'Temporary DNS survived service stop' >&2; exit 1; fi
 if curl --noproxy '*' -fsS --output /dev/null --connect-timeout 4 --max-time 8 http://1.1.1.1/cdn-cgi/trace; then echo "Protected connection escaped VPN" >&2; exit 1; fi

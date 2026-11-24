@@ -44,6 +44,28 @@ public class VpnSmokeTest {
         assertNotEquals("Probe must run outside the VPN app UID", android.os.Process.myUid(), state.getInt("uid"));
         return state;
     }
+    private void revokeRunningVPN() throws Exception {
+        android.content.Context context = getInstrumentation().getTargetContext();
+        CountDownLatch connected = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<android.os.IBinder> binder = new java.util.concurrent.atomic.AtomicReference<>();
+        android.content.ServiceConnection connection = new android.content.ServiceConnection() {
+            @Override public void onServiceConnected(android.content.ComponentName name, android.os.IBinder service) {
+                binder.set(service); connected.countDown();
+            }
+            @Override public void onServiceDisconnected(android.content.ComponentName name) { }
+        };
+        Intent intent = new Intent(context, LineVpnService.class).setAction(android.net.VpnService.SERVICE_INTERFACE);
+        assertTrue("Could not bind to own VPN callback", context.bindService(intent, connection, 0));
+        try {
+            assertTrue("VPN callback unavailable", connected.await(10, TimeUnit.SECONDS));
+            android.os.Parcel data = android.os.Parcel.obtain();
+            android.os.Parcel reply = android.os.Parcel.obtain();
+            try {
+                // VpnService.Callback in AOSP uses LAST_CALL_TRANSACTION for onRevoke.
+                assertTrue("VPN revocation callback rejected", binder.get().transact(android.os.IBinder.LAST_CALL_TRANSACTION, data, reply, 0));
+            } finally { data.recycle(); reply.recycle(); }
+        } finally { context.unbindService(connection); }
+    }
     private void assertExcludedApplication() throws Exception {
         JSONObject probe = probeOtherApplication();
         assertFalse("Unapproved app sees VPN as its active network", probe.getBoolean("vpn"));
@@ -315,9 +337,9 @@ public class VpnSmokeTest {
         try (FileOutputStream out = new FileOutputStream(new File(getInstrumentation().getTargetContext().getFilesDir(), "native-preview.png"))) {
             assertTrue(preview.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out));
         } finally { preview.recycle(); }
-        // This baseline fixture has lockdown disabled. Stopping the whole service
-        // demonstrates the OS limitation; strict crash protection needs lockdown.
-        getInstrumentation().getTargetContext().stopService(new Intent(getInstrumentation().getTargetContext(), LineVpnService.class));
+        // Android keeps a live VpnService bound even after stopService().
+        // Exercise the framework's actual revocation Binder callback instead.
+        revokeRunningVPN();
         deadline = System.currentTimeMillis() + 10000;
         while (!"stopped".equals(Mobile.status()) && System.currentTimeMillis() < deadline) Thread.sleep(100);
         assertEquals("stopped", Mobile.status());

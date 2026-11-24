@@ -78,7 +78,7 @@ function pinnedFetch(url,options,certificate){
    const chunks=[];let size=0;
    res.on('data',chunk=>{size+=chunk.length;if(size>8*1024*1024){res.destroy(Error('Ответ службы слишком большой'));return}chunks.push(chunk)});
    res.on('error',reject);
-   res.on('end',()=>{try{const value=JSON.parse(Buffer.concat(chunks).toString('utf8'));resolve({ok:res.statusCode>=200&&res.statusCode<300,json:async()=>value})}catch{reject(Error('Неверный ответ службы'))}});
+   res.on('end',()=>{try{const value=JSON.parse(Buffer.concat(chunks).toString('utf8'));resolve({status:res.statusCode,ok:res.statusCode>=200&&res.statusCode<300,json:async()=>value})}catch{reject(Error('Неверный ответ службы'))}});
   });
   req.on('error',error=>{
    const code=typeof error.code==='string'&&/^[A-Z0-9_]{1,80}$/.test(error.code)?' ('+error.code+')':'';

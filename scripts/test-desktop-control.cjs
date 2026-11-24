@@ -44,7 +44,7 @@ async function testPinnedStatusChannel(){
  try {
   for(const name of ['real','impostor'])execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',directory+'/'+name+'.key','-out',directory+'/'+name+'.pem','-days','1','-subj','/CN=127.0.0.1','-addext','subjectAltName=IP:127.0.0.1'],{stdio:'ignore'});
   let received=0;
-  server=https.createServer({key:fs.readFileSync(directory+'/real.key'),cert:fs.readFileSync(directory+'/real.pem')},(req,res)=>{received++;res.end('{"ok":true}')});
+  server=https.createServer({key:fs.readFileSync(directory+'/real.key'),cert:fs.readFileSync(directory+'/real.pem')},(req,res)=>{received++;res.statusCode=req.method==='POST'?403:200;res.end('{"ok":true}')});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const address='https://127.0.0.1:'+server.address().port+'/local/state';
   const options={method:'GET',headers:{Authorization:'Bearer status-fixture'},signal:AbortSignal.timeout(5000)};
@@ -52,6 +52,7 @@ async function testPinnedStatusChannel(){
   const response=await pinnedFetch(address,options,cert('real'));assert.deepEqual(await response.json(),{ok:true});
   await assert.rejects(()=>pinnedFetch(address,options,cert('impostor')),/сертификата/);
   assert.equal(received,1,'credentials reached untrusted loopback server');
+  const rejected=await pinnedFetch(address,{...options,method:'POST',body:'{"id":"fixture"}'},cert('real'));assert.equal(rejected.status,403);assert.equal(rejected.ok,false);
   console.log('PASS: real desktop TLS validates the service certificate before sending data');
  }finally{if(server)await new Promise(resolve=>server.close(resolve));fs.rmSync(directory,{recursive:true,force:true})}
 }
