@@ -98,12 +98,14 @@ jobs:
         run: |
           python3 - <<'PY'
           import json, os, pathlib, subprocess
+          subprocess.check_call(['go', 'mod', 'download', 'github.com/sagernet/gvisor'])
           module = subprocess.check_output(['go', 'list', '-m', '-f', '{{.Dir}}', 'github.com/sagernet/gvisor'], text=True).strip()
           source = pathlib.Path(module) / 'pkg/rawfile/rawfile_unsafe.go'
           text = source.read_text()
           start = text.index('func BlockingReadvUntilStopped(')
           end = text.index('// BlockingRecvMMsgUntilStopped', start)
           part = text[start:end].replace('return 0, e', 'println("TUN readv/poll failure", fd, int(e)); return 0, e')
+          part = part.replace('return int(n), 0', 'if n == 0 { println("TUN zero read", fd) }; return int(n), 0')
           target = pathlib.Path(os.environ['RUNNER_TEMP']) / 'rawfile_trace.go'
           target.write_text(text[:start] + part + text[end:])
           overlay = target.with_suffix('.json')
