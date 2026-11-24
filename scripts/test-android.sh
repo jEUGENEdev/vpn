@@ -31,6 +31,10 @@ vpn_logcat_pid=$!
 # background Wi-Fi/cellular handover can reset an in-flight HTTP connection;
 # that is independent of replacing the VPN interface under test. The fixture
 # below still waits for an actual successful host connection before starting.
+# Exclude Wi-Fi from the airplane-mode radio set on this disposable emulator.
+# The airplane-mode broadcast is asynchronous: otherwise it can disable Wi-Fi
+# after `svc wifi enable` has returned, leaving the preflight with no network.
+adb shell settings put global airplane_mode_radios cell,bluetooth,nfc,wimax
 adb shell cmd connectivity airplane-mode enable
 adb shell svc wifi enable
 python3 -u -m http.server 8765 --bind 0.0.0.0 --directory build/native-probe > build/android-probe-server.txt 2>&1 &
