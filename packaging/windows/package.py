@@ -27,7 +27,7 @@ node(p,'Property',Id='MsiLogging',Value='voicewarmup')
 node(p,'MajorUpgrade',DowngradeErrorMessage='Установлена более новая версия приложения «Сеть».',Schedule='afterInstallInitialize');node(p,'MediaTemplate',EmbedCab='yes',CompressionLevel='high')
 # ARPNOREPAIR only hides the button. Reject command-line repair and repeated
 # /i before any service or file changes, including upgrades of legacy products.
-node(p,'Launch',Condition='REMOVE~="ALL" OR (NOT Installed AND NOT WIX_UPGRADE_DETECTED AND NOT REINSTALL)',Message='Сначала удалите «Сеть» в параметрах Windows → Приложения. Затем запустите установку заново. Локальные настройки и вход будут удалены; понадобятся профиль сервера и ключ доступа.')
+node(p,'Launch',Condition='REMOVE~="ALL" OR (NOT Installed AND NOT WIX_UPGRADE_DETECTED AND NOT REINSTALL)',Message='Сначала удалите «Сеть» в параметрах Windows / Приложения. Затем запустите установку заново. Локальные настройки и вход будут удалены; понадобятся профиль сервера и ключ доступа.')
 program=node(p,'StandardDirectory',Id='ProgramFiles64Folder');install=node(program,'Directory',Id='INSTALLFOLDER',Name='LineVPN')
 feature=node(p,'Feature',Id='Main',Title='Сеть',Level='1');dirs={pathlib.Path('.'):install}
 for i,file in enumerate(sorted(root.rglob('*'))):

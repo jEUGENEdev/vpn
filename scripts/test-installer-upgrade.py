@@ -70,6 +70,8 @@ class VersionTests(unittest.TestCase):
             self.assertIsNone(p.find('w:SetProperty[@Id="REINSTALL"]', ns))
             self.assertIsNone(p.find('w:SetProperty[@Id="REINSTALLMODE"]', ns))
             self.assertEqual(p.find('w:Property[@Id="ARPNOREPAIR"]', ns).get('Value'), '1')
+            for launch in p.findall('w:Launch', ns):
+                launch.get('Message').encode('cp1251')  # MSI string pool uses the declared code page.
             conditions = [x.get('Condition') for x in p.findall('w:Launch', ns)]
             self.assertIn('REMOVE~=\"ALL\" OR (NOT Installed AND NOT WIX_UPGRADE_DETECTED AND NOT REINSTALL)', conditions)
             cleanup = p.find('w:CustomAction[@Id="RemoveClientState"]', ns)
