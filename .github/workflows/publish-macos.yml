@@ -1,0 +1,70 @@
+name: Publish verified macOS installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful main build workflow run containing installer-macos
+        required: true
+        type: string
+      sha256:
+        description: Expected SHA-256 of the exact universal DMG to publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Serialize with full installer publication; concurrent pushes still fail closed.
+concurrency:
+  group: installers-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  security:
+    uses: ./.github/workflows/security.yml
+  publish-current:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          lfs: false
+      - name: Read build provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN_ID: ${{ inputs.run_id }}
+        run: |
+          [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
+          mkdir -p build/macos-publication
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID" > build/macos-publication/run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID/jobs?filter=latest&per_page=100" > build/macos-publication/jobs.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: installer-macos
+          path: build/macos-publication/artifact
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify exact DMG and publish through Git LFS
+        env:
+          EXPECTED_SHA256: ${{ inputs.sha256 }}
+        run: |
+          python3 scripts/test-publish-macos.py
+          python3 scripts/publish-macos.py build/macos-publication/artifact installers/current \
+            --run build/macos-publication/run.json --jobs build/macos-publication/jobs.json \
+            --repository "$GITHUB_REPOSITORY" --sha256 "$EXPECTED_SHA256"
+          git lfs install --local
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add installers/current
+          git diff --cached --check
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'build: publish verified macOS DMG [skip ci]'
+          git push origin HEAD:main
