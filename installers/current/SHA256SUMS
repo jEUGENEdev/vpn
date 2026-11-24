@@ -1,6 +1,3 @@
-fd9f0172b8bf4b6fdfd962b04694365abc19e274be19b628b83f3a81422d1ad1  Set-0.3.3-android-preview.apk
-f51e9a9ba3dd00198b0da8be3acf8b235c6f56cc0e5addaec4109f43c0108b23  Set-0.3.3-build-evidence.zip
-df29bb891be58457ec27a6d75ef1ea9a3bb8a4665c7de910c51ef5551b48bc08  Set-0.3.3-macos-universal.dmg
-e7398a3c70ea236834a900593e77135233f7ca1a75d81577b2ed477bb48047b6  Set-0.3.3-windows-x64.msi
-0fc3cad2348d26af73544473c5c6540acc729cf58c5f46fb47f52431c1115743  installer-service-hotfix-2026-11-23.md
-945c2bee9c7deb0450a70e1455579954d0c66b9937189b933e9d6cbba99a5da3  manifest.json
+29ceea730cad19141b188c4051d997f792f3c4b7b28e8ca883bef3d79f8483d3  Сеть-0.4.0-android-preview.apk
+db8e58d8aaaa30f113a8f7ff8363bf67ca99dfa6ad197efcd177b6d08b6e2eca  Сеть-0.4.0-macos-universal.dmg
+995f4366fa51635415a9a773b2d26220145415ed72ecd358184b2d61cbd9a0a2  Сеть-0.4.0-windows-x64.msi

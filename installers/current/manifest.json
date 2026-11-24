@@ -1,57 +1,30 @@
 {
-  "version": "0.3.3-preview",
-  "android_version_code": 3003,
+  "version": "0.4.0-preview",
+  "android_version_code": 4000,
   "android_certificate_sha256": "a5ed967ba9dd5cc7626793c6b8eae8ab7d8a904e855355b71d6ba9b17e84b8a5",
-  "source_commit": "9be48a1257ef4337fc3fad1a774715a9e3a32771",
-  "source_tree": "6aa3db03a6b37d63861a8341954f902877984050",
-  "merge_commit": "9be48a1257ef4337fc3fad1a774715a9e3a32771",
-  "integrated_prs": [
-    43
-  ],
-  "built_at": "2026-11-23T18:22:38.216041+00:00",
-  "built_date": "2026-11-23",
+  "source_commit": "8b5ffbb2b4f70a107fe387ea535dfb740acaa29c",
+  "built_at": "2026-11-24T17:10:15.379055+00:00",
   "status": "preview-native-acceptance-required",
-  "build_method": "manual-linux-cross-build",
-  "native_platform_tests": false,
-  "vps_deployment_performed": false,
-  "backend_update_required": false,
-  "release_tag": null,
-  "release_url": null,
-  "storage": "chatgpt-library-owner-access",
-  "macos_downloads": 1,
   "signing": {
-    "android": "persistent certificate verified against pinned identity and previous 0.3.2 APK",
+    "android": "persistent certificate verified against the pinned identity; see docs/android-signing.md for legacy migration",
     "macos": "ad-hoc signed app and agent; not Apple notarized; PKG unsigned",
     "windows": "not Authenticode signed"
   },
   "files": [
     {
-      "name": "Set-0.3.3-windows-x64.msi",
-      "size": 184218112,
-      "sha256": "e7398a3c70ea236834a900593e77135233f7ca1a75d81577b2ed477bb48047b6",
-      "download_url": "https://chatgpt.com/library?file_id=libfile_fde3_f-f0bb5743e1508191aee40006604c7345_fc3cc296b86481919e16d10029f6df30&account_id=personal",
-      "platform": "Windows · x64",
-      "source_commit": "9be48a1257ef4337fc3fad1a774715a9e3a32771"
+      "name": "\u0421\u0435\u0442\u044c-0.4.0-android-preview.apk",
+      "size": 86732359,
+      "sha256": "29ceea730cad19141b188c4051d997f792f3c4b7b28e8ca883bef3d79f8483d3"
     },
     {
-      "name": "Set-0.3.3-macos-universal.dmg",
-      "size": 307789643,
-      "sha256": "df29bb891be58457ec27a6d75ef1ea9a3bb8a4665c7de910c51ef5551b48bc08",
-      "download_url": "https://chatgpt.com/library?file_id=libfile_fde3_f-783a4afba9588191ab51d02209f5d5f1_fc3cc296b86481919e16d10029f6df30&account_id=personal",
-      "platform": "macOS · Intel / Apple Silicon",
-      "source_commit": "9be48a1257ef4337fc3fad1a774715a9e3a32771"
+      "name": "\u0421\u0435\u0442\u044c-0.4.0-macos-universal.dmg",
+      "size": 313298404,
+      "sha256": "db8e58d8aaaa30f113a8f7ff8363bf67ca99dfa6ad197efcd177b6d08b6e2eca"
     },
     {
-      "name": "Set-0.3.3-android-preview.apk",
-      "size": 86007639,
-      "sha256": "fd9f0172b8bf4b6fdfd962b04694365abc19e274be19b628b83f3a81422d1ad1",
-      "download_url": "https://chatgpt.com/library?file_id=libfile_fde3_f-e9fc7ad899188191936e66426e5bb028_fc3cc296b86481919e16d10029f6df30&account_id=personal",
-      "platform": "Android 10+ · ARM64 / x86_64",
-      "source_commit": "9be48a1257ef4337fc3fad1a774715a9e3a32771"
+      "name": "\u0421\u0435\u0442\u044c-0.4.0-windows-x64.msi",
+      "size": 178200576,
+      "sha256": "995f4366fa51635415a9a773b2d26220145415ed72ecd358184b2d61cbd9a0a2"
     }
-  ],
-  "provenance_note": "All three installers built after PR #43 merge from source tree 6aa3db03a6b37d63861a8341954f902877984050.",
-  "publication_status": "built-and-delivered-github-upload-incomplete",
-  "planned_release_tag": "v0.3.3-preview.20261123",
-  "publication_note": "Installers were built and delivered to the repository owner. Browser attachment attempts did not complete; no GitHub release for 0.3.3 was published. Download links use the owner existing file access."
+  ]
 }
