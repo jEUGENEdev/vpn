@@ -85,6 +85,17 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(workflow('build.yml')['permissions']['contents'], 'read')
         self.assertEqual(publish['permissions']['contents'], 'write')
 
+    def test_macos_promotion_requires_explicit_artifact_and_main_security_gate(self):
+        promotion = workflow('publish-macos.yml')
+        self.assertEqual(set(promotion['on']), {'workflow_dispatch'})
+        self.assertEqual(set(promotion['on']['workflow_dispatch']['inputs']), {'run_id', 'sha256'})
+        self.assertEqual(promotion['permissions']['contents'], 'read')
+        publish = promotion['jobs']['publish-current']
+        self.assertEqual(publish['needs'], 'security')
+        self.assertIn("github.ref == 'refs/heads/main'", publish['if'])
+        self.assertEqual(publish['permissions'], {'contents': 'write', 'actions': 'read'})
+        self.assertEqual(promotion['concurrency'], workflow('build.yml')['concurrency'])
+
 
 if __name__ == '__main__':
     unittest.main()

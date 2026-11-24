@@ -31,6 +31,7 @@ if [[ "$suite" == all || "$suite" == portable ]]; then
   python3 scripts/package_version.py --check-consistent
   python3 scripts/test-installer-upgrade.py
   python3 scripts/test-ci-workflows.py
+  python3 scripts/test-publish-macos.py
   python3 scripts/test-deploy-actions.py
   python3 scripts/test-deploy-manual.py
   python3 scripts/test-deploy-security.py
