@@ -4,20 +4,27 @@ set -euo pipefail
 [[ "${3:-/}" == / ]] || { echo 'Install Сеть on the running system volume.' >&2; exit 1; }
 # Called by Apple's Installer as root; no credentials are stored here.
 [[ "$EUID" -eq 0 && "${3:-/}" == / ]] || { echo 'Install on the running system volume as root.' >&2; exit 1; }
-if ! /usr/bin/id _linevpn >/dev/null 2>&1; then
-  vpn_uid=399
+vpn_tools="$(cd "$(dirname "$0")" && pwd)"
+source "$vpn_tools/service-account.sh"
+vpn_check_service_account
+if [[ -z "$vpn_service_id" ]]; then
+  vpn_service_id=399
   # The account and group share a number; it must be unused in BOTH namespaces.
   # macOS may reserve a GID even when no user has the corresponding UID.
-  vpn_used_ids="$( { /usr/bin/dscl . -list /Users UniqueID; /usr/bin/dscl . -list /Groups PrimaryGroupID; } | /usr/bin/awk '{print $2}')"
-  while printf '%s\n' "$vpn_used_ids" | /usr/bin/grep -x "$vpn_uid" >/dev/null; do
-    vpn_uid=$((vpn_uid - 1))
-    [[ "$vpn_uid" -ge 200 ]] || { echo 'No unused service UID/GID' >&2; exit 1; }
+  vpn_used_ids="$(printf '%s\n' "$vpn_users" "$vpn_groups" "$vpn_primary_groups" | /usr/bin/awk '{print $2}')"
+  while printf '%s\n' "$vpn_used_ids" | /usr/bin/grep -x "$vpn_service_id" >/dev/null; do
+    vpn_service_id=$((vpn_service_id - 1))
+    [[ "$vpn_service_id" -ge 200 ]] || { echo 'No unused service UID/GID' >&2; exit 1; }
   done
+fi
+if [[ -z "$vpn_group" ]]; then
   /usr/bin/dscl . -create /Groups/_linevpn
-  /usr/bin/dscl . -create /Groups/_linevpn PrimaryGroupID "$vpn_uid"
+  /usr/bin/dscl . -create /Groups/_linevpn PrimaryGroupID "$vpn_service_id"
+fi
+if [[ -z "$vpn_uid" ]]; then
   /usr/bin/dscl . -create /Users/_linevpn
-  /usr/bin/dscl . -create /Users/_linevpn UniqueID "$vpn_uid"
-  /usr/bin/dscl . -create /Users/_linevpn PrimaryGroupID "$vpn_uid"
+  /usr/bin/dscl . -create /Users/_linevpn UniqueID "$vpn_service_id"
+  /usr/bin/dscl . -create /Users/_linevpn PrimaryGroupID "$vpn_service_id"
   /usr/bin/dscl . -create /Users/_linevpn UserShell /usr/bin/false
   /usr/bin/dscl . -create /Users/_linevpn NFSHomeDirectory /var/empty
   /usr/bin/dscl . -create /Users/_linevpn IsHidden 1

@@ -15,7 +15,7 @@ for arch in ('arm64', 'x64'):
     for name in (f'payload-{arch}.pkg', f'recovery-{arch}'):
         shutil.copy2(payloads / name, resources / name)
     (resources / f'recovery-{arch}').chmod(0o755)
-for name in ('installer.applescript', 'manage.sh', 'uninstall.sh', 'stop-service.sh'):
+for name in ('installer.applescript', 'manage.sh', 'uninstall.sh', 'stop-service.sh', 'service-account.sh'):
     shutil.copy2(ROOT / 'packaging/macos' / name, resources / name)
 shutil.copy2(ROOT / 'apps/desktop/branding/set.icns', resources / 'set.icns')
 (app / 'Contents/Info.plist').write_bytes(plistlib.dumps({
