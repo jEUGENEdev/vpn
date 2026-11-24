@@ -251,6 +251,10 @@ async function testCombinedAuthentication() {
       assert.equal(body.access_key,undefined);
       assert.equal(body.password,undefined);
       out = {login:body.login,access_key:key,status:'pending'};
+    } else if (url === '/local/access-key/rotate') {
+      assert.equal(body.confirm,true);
+      assert.equal(body.current_key,key,'rotation did not prove knowledge of current key');
+      out = {login:'Alice',access_key:key};
     } else if (url === '/local/vpn') {
       state.vpn_enabled = body.enabled;
       state.status = body.enabled ? 'setup' : 'disabled';
@@ -275,6 +279,18 @@ async function testCombinedAuthentication() {
     assert.equal($('access-key').value,'','successful login retained key');
     assert.equal($('dashboard').hidden,false);
     assert.equal($('accounts-search'),null);
+
+    const beforeRotate=calls.length;
+    const cancelled=$('rotate-access-key').onclick();await tick();
+    input(w,'rotation-current-key',key);$('rotation-cancel').click();await cancelled;
+    assert.equal(calls.length,beforeRotate,'cancel submitted rotation');
+    assert.equal($('rotation-current-key').value,'','cancel retained current key');
+    const rotating=$('rotate-access-key').onclick();await tick();
+    input(w,'rotation-current-key',key);$('key-rotation').close('rotate');await rotating;
+    assert.equal(calls.at(-1).url,'/local/access-key/rotate');
+    assert.equal($('rotation-current-key').value,'','rotation retained current key');
+    assert.equal($('issued-key').value,key,'rotation lost one-time result');
+    $('key-result').close('saved');
 
     Object.assign(state,{account_id:'',status:'setup'}); await w.eval('update()');
     $('tab-pair').click();input(w,'pair-code',code);

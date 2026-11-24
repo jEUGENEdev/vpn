@@ -20,51 +20,33 @@ spec.loader.exec_module(remote)
 
 
 class RemoteDeploymentTest(unittest.TestCase):
-    def test_four_values_roundtrip_and_input_removed(self):
+    def test_three_values_roundtrip_from_pipe(self):
         admin = "Admin'$(){{literal}}\u2028password"
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / 'input'
-            path.write_text('8.8.8.8\n2222\nssh $() password\n' + admin + '\n')
-            self.assertEqual(remote.read_input(path), ('8.8.8.8', 2222, admin))
-            self.assertFalse(path.exists())
+        self.assertEqual(remote.read_input(io.BytesIO(('8.8.8.8\n2222\n' + admin + '\n').encode())), ('8.8.8.8',2222,admin))
 
     def test_invalid_remote_input(self):
-        for host, port, admin in [('127.0.0.1', '22', 'a' * 20), ('8.8.8.8', '0', 'a' * 20),
-                                 ('8.8.8.8', '22', 'я' * 40), ('8.8.8.8', '22', ' ' + 'a' * 20)]:
-            with self.subTest(host=host, port=port), tempfile.TemporaryDirectory() as tmp:
-                path = Path(tmp) / 'input'
-                path.write_text(f'{host}\n{port}\npassword\n{admin}\n')
-                with self.assertRaises(ValueError):
-                    remote.read_input(path)
-                self.assertFalse(path.exists())
+        for host,port,admin in [('127.0.0.1','22','a'*20),('8.8.8.8','0','a'*20),('8.8.8.8','22','я'*40),('8.8.8.8','22',' '+'a'*20)]:
+            with self.subTest(host=host), self.assertRaises(ValueError):
+                remote.read_input(io.BytesIO(f'{host}\n{port}\n{admin}\n'.encode()))
 
-    def test_go_download_checksum_and_safe_extraction(self):
-        for kind in ('valid', 'checksum', 'traversal', 'symlink'):
-            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
-                stream = io.BytesIO()
-                with tarfile.open(fileobj=stream, mode='w:gz') as tar:
-                    info = tarfile.TarInfo('../escape' if kind == 'traversal' else 'go/bin/go')
-                    info.size = 4
-                    if kind == 'symlink':
-                        info.type = tarfile.SYMTYPE
-                        info.linkname = '/etc/passwd'
-                        info.size = 0
-                    tar.addfile(info, io.BytesIO(b'test'))
-                archive = stream.getvalue()
-                metadata = [{'version': 'go' + remote.GO_VERSION, 'files': [{
-                    'filename': f'go{remote.GO_VERSION}.linux-amd64.tar.gz', 'os': 'linux', 'arch': 'amd64',
-                    'sha256': '0' * 64 if kind == 'checksum' else hashlib.sha256(archive).hexdigest()}]}]
-                with mock.patch.object(remote, 'TOOLS', Path(tmp)), \
-                     mock.patch.object(remote.urllib.request, 'urlopen', side_effect=[io.BytesIO(json.dumps(metadata).encode()), io.BytesIO(archive)]):
-                    if kind == 'valid':
-                        self.assertEqual(remote.install_go().read_bytes(), b'test')
-                    else:
-                        with self.assertRaises(RuntimeError):
-                            remote.install_go()
-                        self.assertFalse((Path(tmp) / f'go{remote.GO_VERSION}').exists())
+    def test_prebuilt_binary_checksums_reject_corruption_and_links(self):
+        for failure in ('checksum','symlink',None):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);build=root/'build';build.mkdir()
+                names=['linevpn-server-linux-amd64','linevpn-keygen-linux-amd64']
+                for name in names: (build/name).write_bytes(b'synthetic binary')
+                manifest=''.join(hashlib.sha256(b'synthetic binary').hexdigest()+'  '+name+'\n' for name in names)
+                (build/'SHA256SUMS').write_text(manifest)
+                if failure=='checksum': (build/names[0]).write_bytes(b'corrupted')
+                if failure=='symlink':
+                    (build/names[0]).unlink();(build/names[0]).symlink_to(build/names[1])
+                with mock.patch.object(remote,'ROOT',root):
+                    if failure:
+                        with self.assertRaises(RuntimeError): remote.verify_binaries()
+                    else: remote.verify_binaries()
 
     def test_remote_failures_do_not_emit_success_or_secrets(self):
-        for failure in ('build', 'ansible', 'health', None):
+        for failure in ('binaries', 'ansible', 'health', None):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 output = io.StringIO()
@@ -79,8 +61,6 @@ class RemoteDeploymentTest(unittest.TestCase):
                     command = [str(x) for x in command]
                     calls.append((command, (env or {}).copy()))
                     self.assertNotIn(password, ' '.join(command))
-                    if failure == 'build' and command[1] == 'test':
-                        raise RuntimeError('build failed')
                     if command[0].endswith('ansible-playbook'):
                         self.assertEqual(env['VPN_ADMIN_PASSWORD'], password)
                         data = Path(command[2]).read_text()
@@ -92,7 +72,7 @@ class RemoteDeploymentTest(unittest.TestCase):
                         self.assertNotIn('VPN_ADMIN_PASSWORD', env or {})
 
                 with mock.patch.object(remote, 'ROOT', root), mock.patch.object(remote, 'TOOLS', root / 'tools'), \
-                     mock.patch.object(remote, 'install_go', return_value=Path('/fake/go/bin/go')), \
+                     mock.patch.object(remote, 'verify_binaries', side_effect=RuntimeError('binary checksum failed') if failure == 'binaries' else None), mock.patch.object(remote,'prepare_tools'), \
                      mock.patch.object(remote, 'run', side_effect=fake_run), \
                      mock.patch.object(remote, 'verify_server', side_effect=RuntimeError('health failed') if failure == 'health' else None) as verify, \
                      contextlib.redirect_stdout(output):
@@ -103,7 +83,7 @@ class RemoteDeploymentTest(unittest.TestCase):
                         remote.deploy('8.8.8.8', 22, password)
                 self.assertNotIn(password, output.getvalue())
                 self.assertEqual('LINEVPN_REMOTE_OK=1' in output.getvalue(), failure is None)
-                if failure in ('build', 'ansible'):
+                if failure in ('binaries', 'ansible'):
                     verify.assert_not_called()
 
 
@@ -136,11 +116,11 @@ if answer!=os.environ['TEST_PASSWORD']:sys.exit(91)
 cmd=args[-1]
 if 'mktemp -d' in cmd:
  if os.environ['TEST_FAIL']=='ssh':sys.exit(1)
- print('/tmp/linevpn-deploy.1234abcd')
+ print('/dev/shm/linevpn-deploy.1234abcd')
 elif 'source.tar.gz' in cmd:(state/'archive.tar.gz').write_bytes(sys.stdin.buffer.read())
 elif cmd.startswith('umask'):(state/'input').write_bytes(sys.stdin.buffer.read())
 elif 'cat >' in cmd:sys.stdin.buffer.read()
-elif cmd.startswith('if '):
+elif cmd.startswith('bash '):
  if os.environ['TEST_FAIL']=='deploy':sys.exit(1)
  print('LINEVPN_PROFILE_B64='+base64.b64encode(b'linevpn://8.8.8.8:8443?pin=test\\n').decode())
  print('LINEVPN_CERT_B64='+base64.b64encode(b'certificate').decode())
@@ -153,7 +133,7 @@ elif cmd.startswith('if '):
                        VPS_HOST='8.8.8.8', VPS_USERNAME='root', VPS_PASSWORD=password, VPN_ADMIN_PASSWORD=admin,
                        TEST_STATE=str(tmp), TEST_PASSWORD=password, TEST_FAIL=failure)
             env.update(overrides or {})
-            code = 'source ./deploy.sh; check_port() { return ' + ('1' if failure == 'port' else '0') + '; }; main'
+            code = 'source ./deploy.sh; prepare_source() { tar -czf "$linevpn_tmp/source.tar.gz" -C "$linevpn_root" -T "$linevpn_root/deploy/source-files.txt"; }; verify_public() { return ' + ('1' if failure == 'port' else '0') + '; }; main'
             result = subprocess.run(['bash', '-c', code], cwd=root, env=env, capture_output=True, text=True)
             combined = result.stdout + result.stderr
             self.assertNotIn(password, combined)
@@ -171,12 +151,13 @@ elif cmd.startswith('if '):
                     self.assertFalse(any('vault.yml' in n or n.endswith('/input') or '.git/' in n or 'generated/' in n for n in names))
             return result, commands
 
-    def test_four_values_succeed_without_local_build_tools(self):
+    def test_four_values_with_prebuilt_payload(self):
         result, commands = self.run_launcher()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('Deployment verified:', result.stdout)
         self.assertIn('StrictHostKeyChecking=accept-new', commands)
-        self.assertIn('sudo -S', commands)
+        self.assertIn('PubkeyAuthentication=yes', commands)
+        self.assertNotIn('LINEVPN_SSH_PASSWORD', commands)
 
     def test_failed_ssh_remote_deploy_or_public_port_never_report_success(self):
         for stage in ('ssh', 'deploy', 'port'):

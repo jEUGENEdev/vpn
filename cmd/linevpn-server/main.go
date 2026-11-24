@@ -5,12 +5,15 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"flag"
+	"github.com/jEUGENEdev/vpn/internal/secure"
 	"github.com/jEUGENEdev/vpn/internal/server"
 	"github.com/jEUGENEdev/vpn/internal/store"
 	"github.com/jEUGENEdev/vpn/internal/transport"
 	"github.com/jEUGENEdev/vpn/internal/ui"
 	"log"
+	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"strings"
@@ -19,53 +22,92 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Print(err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	path := flag.String("config", "/etc/linevpn/server.json", "configuration path")
 	check := flag.Bool("check", false, "validate configuration without opening listeners")
 	flag.Parse()
 	raw, e := os.ReadFile(*path)
 	if e != nil {
-		log.Fatal(e)
+		return e
 	}
 	var cfg server.Config
 	if e = json.Unmarshal(raw, &cfg); e != nil {
-		log.Fatal(e)
+		return e
 	}
 	if e = cfg.Validate(); e != nil {
-		log.Fatal(e)
+		return e
+	}
+	loader, e := secure.CertificateLoader(cfg.Cert, cfg.Key)
+	if e != nil {
+		return e
 	}
 	if *check {
-		return
+		return nil
 	}
 	password, e := os.ReadFile(cfg.AdminPasswordFile)
 	if e != nil {
-		log.Fatal(e)
+		return e
 	}
 	st, e := store.Open(cfg.Database)
 	if e != nil {
-		log.Fatal(e)
+		return e
 	}
 	defer st.Close()
-	transport.InstallDialer(&transport.Dialer{PublicOnly: true})
+	publicIP := netip.MustParseAddr(cfg.PublicIP).Unmap()
+	transport.InstallDialer(&transport.Dialer{PublicOnly: true, Deny: []netip.Prefix{netip.PrefixFrom(publicIP, publicIP.BitLen())}})
+	cfg.Transport.BlockedIPs = append(cfg.Transport.BlockedIPs, cfg.PublicIP)
 	var runtime transport.Runtime
 	defer runtime.Close()
 	apply := func(state store.State) error {
 		return runtime.Apply(transport.ServerConfig(state, cfg.Transport, time.Now()))
 	}
-	s, e := server.New(st, cfg, strings.TrimSpace(string(password)), apply)
+	s, e := server.New(st, cfg, strings.TrimRight(string(password), "\r\n"), apply)
 	if e != nil {
-		log.Fatal(e)
+		return e
+	}
+	s.ValidateApply = func(state store.State) error {
+		if err := transport.ValidateConfig(transport.ServerConfig(state, cfg.Transport, time.Now())); err != nil {
+			log.Printf("VPN configuration validation failed (%T)", err)
+			return server.ErrInvalidConfiguration
+		}
+		return nil
 	}
 	if e = st.View(apply); e != nil {
-		log.Fatal(e)
+		return e
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer cancel()
-	h := &http.Server{Addr: cfg.Address, Handler: s.Handler(ui.Handler("admin")), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}}
+
+	newHTTPServer := func(address string, handler http.Handler) *http.Server {
+		return &http.Server{Addr: address, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, GetCertificate: loader}}
+	}
+	h := newHTTPServer(cfg.Address, s.Handler())
+	admin := newHTTPServer(cfg.AdminListenAddress(), s.AdminHandler(ui.Handler("admin")))
+	// Reserve both sockets before serving; failure must not leave half a deployment.
+	publicListener, e := net.Listen("tcp", h.Addr)
+	if e != nil {
+		return e
+	}
+	defer publicListener.Close()
+	adminListener, e := net.Listen("tcp", admin.Addr)
+	if e != nil {
+		return e
+	}
+	defer adminListener.Close()
+	defer h.Close()
+	defer admin.Close()
+	serveErrors := make(chan error, 2)
 	go func() {
-		<-ctx.Done()
-		stop, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		h.Shutdown(stop)
+		serveErrors <- admin.ServeTLS(adminListener, "", "")
+	}()
+	go func() {
+		serveErrors <- h.ServeTLS(publicListener, "", "")
 	}()
 	go func() {
 		tick := time.NewTicker(time.Minute)
@@ -82,7 +124,18 @@ func main() {
 		}
 	}()
 	log.Print("LineVPN server started")
-	if e = h.ListenAndServeTLS(cfg.Cert, cfg.Key); e != nil && e != http.ErrServerClosed {
-		log.Fatal(e)
+	select {
+	case e = <-serveErrors:
+	case <-ctx.Done():
+		e = nil
 	}
+	cancel()
+	stop, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer stopCancel()
+	h.Shutdown(stop)
+	admin.Shutdown(stop)
+	if e == http.ErrServerClosed {
+		return nil
+	}
+	return e
 }

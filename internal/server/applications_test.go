@@ -36,7 +36,7 @@ func TestAppTunnelAndFailureReportsAreDeviceScoped(t *testing.T) {
 		r := httptest.NewRequest(method, path, bytes.NewReader(raw))
 		r.Header.Set("Authorization", "Bearer "+token)
 		w := httptest.NewRecorder()
-		s.Handler(nil).ServeHTTP(w, r)
+		testServerHandler(s).ServeHTTP(w, r)
 		if w.Code != status {
 			t.Fatalf("%s returned %d: %s", path, w.Code, w.Body.String())
 		}

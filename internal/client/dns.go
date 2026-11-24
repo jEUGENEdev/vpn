@@ -4,11 +4,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"github.com/jEUGENEdev/vpn/internal/policy"
+	"github.com/jEUGENEdev/vpn/internal/secure"
 	"github.com/miekg/dns"
 	"go.etcd.io/bbolt"
 	"net"
 	"net/netip"
-	"os"
 	"path/filepath"
 	"time"
 )
@@ -16,10 +16,10 @@ import (
 type FakeDNS struct{ db *bbolt.DB }
 
 func OpenDNS(dir string) (*FakeDNS, error) {
-	if e := os.MkdirAll(dir, 0700); e != nil {
+	if e := secure.PrepareDirectory(dir); e != nil {
 		return nil, e
 	}
-	db, e := bbolt.Open(filepath.Join(dir, "dns.db"), 0600, &bbolt.Options{Timeout: time.Second})
+	db, e := bbolt.Open(filepath.Join(dir, "dns.db"), 0600, &bbolt.Options{Timeout: time.Second, OpenFile: secure.OpenPrivateFile})
 	if e != nil {
 		return nil, e
 	}

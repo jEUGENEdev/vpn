@@ -26,3 +26,11 @@ __pycache__/
 *.pyc
 
 apps/android/app/src/main/assets/THIRD_PARTY_NOTICES.txt
+
+.env.*
+!.env.example
+*.retry
+.idea/
+.vscode/
+apps/android/app/google-services.json
+apps/android/keystore.properties

@@ -41,7 +41,7 @@ func policyServer(t *testing.T) (*server.Server, *httptest.Server, *atomic.Bool)
 		t.Fatal(err)
 	}
 	offline := &atomic.Bool{}
-	handler := s.Handler(nil)
+	handler := s.Handler()
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if offline.Load() {
 			http.Error(w, "offline", 503)

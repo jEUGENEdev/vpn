@@ -7,6 +7,7 @@ require (
 	github.com/sagernet/sing v0.9.6
 	github.com/sagernet/sing-tun v0.9.6
 	github.com/tailscale/wf v0.0.0-20240214030419-6fbb0a674ee6
+	// Release v26.11.9 (676eaf66f8f0); upstream v26 tag lacks a /v26 module path.
 	github.com/xtls/xray-core v1.260327.1-0.20261109052709-676eaf66f8f0
 	go.etcd.io/bbolt v1.5.0
 	golang.org/x/crypto v0.59.0
@@ -27,6 +28,7 @@ require (
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/gopacket v1.1.19 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	// v1.5.3 lacks the security fix at d67f41855da4; do not downgrade to that tag.
 	github.com/gorilla/websocket v1.5.4-0.20240701034025-d67f41855da4 // indirect
 	github.com/huin/goupnp v1.2.0 // indirect
 	github.com/jackpal/go-nat-pmp v1.0.2 // indirect
@@ -47,6 +49,7 @@ require (
 	github.com/pion/transport/v4 v4.1.0 // indirect
 	github.com/pires/go-proxyproto v0.16.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
+	// Xray v26.11.9 requires this Chrome/REALITY compatibility commit; see docs/dependency-pins.md.
 	github.com/refraction-networking/utls v1.8.3-0.20261108164504-a13c59ffe98b // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/sagernet/fswatch v0.1.2 // indirect
@@ -56,6 +59,7 @@ require (
 	github.com/vishvananda/netlink v1.3.1 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
+	// Pinned by the Xray release; upstream publishes no module release tags.
 	github.com/xtls/reality v0.0.0-20261108101329-4bb46b2afd8b // indirect
 	github.com/yuin/gopher-lua v1.1.2 // indirect
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba // indirect
@@ -73,6 +77,7 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260817212433-ac3dfec99bb1 // indirect
 	google.golang.org/grpc v1.85.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
+	// Transitive tool-only import in tailscale/wf; not linked into VPN executables.
 	honnef.co/go/tools v0.6.1 // indirect
 	layeh.com/gopher-luar v1.0.11 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect

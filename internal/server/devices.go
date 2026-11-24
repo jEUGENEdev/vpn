@@ -102,6 +102,7 @@ func (s *Server) enrollChoiceAuthorized(choice deviceChoice, pairHash string, au
 		}
 		device.Name = name
 		device.Revoked = false
+		device.RevokedAt = time.Time{}
 		device.Expires = time.Now().Add(90 * 24 * time.Hour)
 		token := secure.Token()
 		device.Hash, device.Secret = secure.Hash(token), secure.UUID()
@@ -118,7 +119,11 @@ func (s *Server) enrollChoiceAuthorized(choice deviceChoice, pairHash string, au
 		return nil
 	})
 	if err == nil && changed && s.Apply != nil {
-		err = s.Store.View(s.Apply)
+		err = s.applyLocked()
+		// Preserve one-time device/pair credentials after a durable commit.
+		if errors.Is(err, errApplyPending) {
+			err = nil
+		}
 	}
 	return result, err
 }

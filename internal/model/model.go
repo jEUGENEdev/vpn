@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"log/slog"
+	"time"
+)
 
 type Account struct {
 	ID           string    `json:"id"`
@@ -54,3 +57,9 @@ type Profile struct {
 	Revision  uint64   `json:"revision"`
 	Status    string   `json:"status"`
 }
+
+// Logging a profile must not disclose bearer or transport credentials (or rules).
+// JSON encoding remains explicit for authenticated API responses and persistence.
+func (Profile) String() string         { return "Profile{redacted}" }
+func (p Profile) GoString() string     { return p.String() }
+func (p Profile) LogValue() slog.Value { return slog.StringValue(p.String()) }

@@ -119,10 +119,16 @@ $('key-result').addEventListener('cancel',e=>e.preventDefault());
 $('key-result').addEventListener('close',()=>{$('issued-key').value='';$('key-owner').textContent='';});
 $('key-reveal').onclick=()=>{const visible=$('issued-key').type==='password';$('issued-key').type=visible?'text':'password';$('key-reveal').textContent=visible?'Скрыть':'Показать'};
 $('key-copy').onclick=async()=>{try{await navigator.clipboard.writeText($('issued-key').value);$('key-copy-status').textContent='Ключ скопирован. Сохраните его в надёжном месте.'}catch{const field=$('issued-key');field.type='text';field.focus();field.select();$('key-reveal').textContent='Скрыть';$('key-copy-status').textContent='Скопируйте выделенный ключ вручную.'}};
+$('rotation-cancel').onclick=()=>$('key-rotation').close('cancel');
 $('rotate-access-key').onclick=async()=>{
-  if(!await confirmChange('Заменить ключ доступа?','Старый ключ, все устройства этого аккаунта и коды привязки будут отозваны. Сохраните новый ключ и войдите с ним заново.'))return;
+  const dialog=$('key-rotation'), field=$('rotation-current-key');
+  field.value='';dialog.returnValue='';dialog.showModal();
+  const currentKey=await new Promise(resolve=>dialog.addEventListener('close',()=>{
+    const value=dialog.returnValue==='rotate'?field.value.trim():'';field.value='';resolve(value);
+  },{once:true}));
+  if(!currentKey)return;
   const b=$('rotate-access-key');b.disabled=true;
-  try{const out=await act('access-key/rotate',{confirm:true});showKey(out,'Новый ключ доступа')}catch(e){}finally{b.disabled=false}
+  try{const out=await act('access-key/rotate',{confirm:true,current_key:currentKey});showKey(out,'Новый ключ доступа')}catch(e){}finally{b.disabled=false}
 };
 function renderPower(){
   const enabled=state.vpn_enabled!==false, pending=powerBusy||state.power_transition;

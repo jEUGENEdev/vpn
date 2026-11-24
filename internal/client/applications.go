@@ -44,7 +44,7 @@ func validApplication(a model.ApplicationInfo) bool {
 	return err == nil && len(id) == 32 && len(a.Name) > 0 && len(a.Name) <= 200 && len(a.Path) > 0 && len(a.Path) <= 4096 && (a.Platform == "android" || a.Platform == "windows" || a.Platform == "darwin" || a.Platform == "linux")
 }
 func (c *Client) loadApplications() error {
-	raw, err := os.ReadFile(filepath.Join(c.dir, "applications.json"))
+	raw, err := secure.ReadPrivateFile(filepath.Join(c.dir, "applications.json"))
 	if os.IsNotExist(err) {
 		return nil
 	}

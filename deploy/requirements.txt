@@ -1,1 +1,2 @@
-ansible-core==2.21.6
+# Same complete, hash-checked dependency lock on controller and VPS.
+-r remote-requirements.txt
