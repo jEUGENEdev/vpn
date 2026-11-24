@@ -6,18 +6,20 @@ import (
 	"time"
 
 	"github.com/jEUGENEdev/vpn/internal/model"
+	"github.com/jEUGENEdev/vpn/internal/policy"
 	"github.com/jEUGENEdev/vpn/internal/store"
 )
 
 type ServerOptions struct {
-	Listen     string `json:"listen"`
-	Port       int    `json:"port"`
-	PrivateKey string `json:"private_key"`
-	PublicKey  string `json:"public_key"`
-	SNI        string `json:"sni"`
-	Target     string `json:"target"`
-	ShortID    string `json:"short_id"`
-	Path       string `json:"path"`
+	BlockedIPs []string `json:"blocked_ips,omitempty"`
+	Listen     string   `json:"listen"`
+	Port       int      `json:"port"`
+	PrivateKey string   `json:"private_key"`
+	PublicKey  string   `json:"public_key"`
+	SNI        string   `json:"sni"`
+	Target     string   `json:"target"`
+	ShortID    string   `json:"short_id"`
+	Path       string   `json:"path"`
 }
 
 func ServerConfig(s store.State, o ServerOptions, now time.Time) obj {
@@ -82,7 +84,7 @@ func ServerConfig(s store.State, o ServerOptions, now time.Time) obj {
 			{
 				"tag":            "allowed",
 				"protocol":       "freedom",
-				"settings":       obj{},
+				"settings":       obj{"finalRules": []obj{{"action": "block", "ip": append(policy.NonPublicCIDRs(), o.BlockedIPs...)}}},
 				"streamSettings": obj{"sockopt": obj{"domainStrategy": "UseIP"}},
 			},
 		},

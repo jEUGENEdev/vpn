@@ -72,3 +72,11 @@ func TestNoFallback(t *testing.T) {
 		t.Fatal("route")
 	}
 }
+
+func TestRejectDeprecatedSpecialNetworks(t *testing.T) {
+	for _, address := range []string{"192.88.99.1", "fec0::1"} {
+		if Public(netip.MustParseAddr(address)) {
+			t.Fatal("special-purpose address accepted", address)
+		}
+	}
+}

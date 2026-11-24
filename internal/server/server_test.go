@@ -24,7 +24,7 @@ func TestAccountLifecycle(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	h := s.Handler(nil)
+	h := testServerHandler(s)
 	call := func(path, token string, input any, want int) map[string]any {
 		t.Helper()
 		raw, _ := json.Marshal(input)
@@ -121,7 +121,7 @@ func TestAccountIsolation(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/revoke", bytes.NewReader(raw))
 	req.Header.Set("Authorization", "Bearer "+a.Token)
 	w := httptest.NewRecorder()
-	s.Handler(nil).ServeHTTP(w, req)
+	testServerHandler(s).ServeHTTP(w, req)
 	if w.Code != 403 {
 		t.Fatal(w.Code)
 	}

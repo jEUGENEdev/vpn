@@ -25,6 +25,7 @@ $work = Join-Path ([IO.Path]::GetTempPath()) ('vpn package ' + [Guid]::NewGuid()
 New-Item -ItemType Directory -Path $work | Out-Null
 try {
     $zip = Join-Path $work 'source.zip'
+    Prepare-ServerBinaries
     New-SourceArchive $zip
     $archive = [IO.Compression.ZipFile]::OpenRead($zip)
     try {

@@ -3,8 +3,10 @@ package server
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jEUGENEdev/vpn/internal/secure"
 	"github.com/jEUGENEdev/vpn/internal/store"
@@ -26,6 +28,7 @@ func revokeAccountDevices(st *store.State, account string) {
 	for id, d := range st.Devices {
 		if d.AccountID == account {
 			d.Revoked = true
+			d.RevokedAt = time.Now()
 			st.Devices[id] = d
 		}
 	}
@@ -54,14 +57,19 @@ func (s *Server) replaceAccessKey(w http.ResponseWriter, r *http.Request, admin 
 	} else {
 		d, a, err := s.device(r)
 		if err != nil {
-			fail(w, 401, ErrForbidden)
+			fail(w, 401, err)
 			return
 		}
 		caller, account = d, a.ID
+		if s.limitedKey("rotate:"+account, 5, time.Hour) {
+			fail(w, 429, errors.New("слишком много попыток замены ключа"))
+			return
+		}
 	}
 	var input struct {
-		ID      string `json:"id"`
-		Confirm bool   `json:"confirm"`
+		ID         string `json:"id"`
+		CurrentKey string `json:"current_key"`
+		Confirm    bool   `json:"confirm"`
 	}
 	if !body(w, r, &input) {
 		return
@@ -85,6 +93,9 @@ func (s *Server) replaceAccessKey(w http.ResponseWriter, r *http.Request, admin 
 		if !ok {
 			return ErrForbidden
 		}
+		if !admin && (!validAccessKey(strings.TrimSpace(input.CurrentKey)) || !secure.Equal(a.KeyHash, secure.Hash(strings.TrimSpace(input.CurrentKey)))) {
+			return ErrForbidden
+		}
 		login = a.Login
 		a.KeyHash, a.Hash = secure.Hash(key), ""
 		a.Revision++
@@ -92,7 +103,7 @@ func (s *Server) replaceAccessKey(w http.ResponseWriter, r *http.Request, admin 
 		revokeAccountDevices(st, account)
 		return nil
 	})
-	if err != nil {
+	if err != nil && !errors.Is(err, errApplyPending) {
 		if errors.Is(err, ErrForbidden) {
 			fail(w, 403, ErrForbidden)
 			return
@@ -100,5 +111,5 @@ func (s *Server) replaceAccessKey(w http.ResponseWriter, r *http.Request, admin 
 		fail(w, 503, errors.New("не удалось завершить замену ключа; повторите выпуск через администратора"))
 		return
 	}
-	JSON(w, 200, map[string]string{"access_key": key, "login": login})
+	JSON(w, 200, map[string]string{"access_key": key, "login": login, "vpn_apply_pending": fmt.Sprint(errors.Is(err, errApplyPending))})
 }

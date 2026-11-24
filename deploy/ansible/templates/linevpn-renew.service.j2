@@ -3,6 +3,6 @@ Description=Renew API certificate without changing its pinned public key
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/linevpn-keygen -dir /etc/linevpn -ip {{ vpn_public_ip }} -renew
-ExecStartPost=/usr/bin/chown linevpn:linevpn /etc/linevpn/api-cert.pem
-ExecStartPost=/usr/bin/systemctl restart linevpn.service
+ExecStartPost=/usr/bin/chown root:linevpn /etc/linevpn/api-cert.pem
+ExecStartPost=/usr/bin/chmod 0640 /etc/linevpn/api-cert.pem
 UMask=0077

@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +25,7 @@ import (
 )
 
 type Config struct {
+	AdminAddress      string                  `json:"admin_address,omitempty"`
 	Address           string                  `json:"address"`
 	PublicIP          string                  `json:"public_ip"`
 	Database          string                  `json:"database"`
@@ -36,17 +40,20 @@ type bucket struct {
 	count int
 }
 type Server struct {
-	Store     *store.Store
-	Config    Config
-	Apply     func(store.State) error
-	change    sync.Mutex
-	mu        sync.Mutex
-	admins    map[string]session
-	attempts  map[string]bucket
-	adminHash []byte
+	Store         *store.Store
+	Config        Config
+	Apply         func(store.State) error
+	ValidateApply func(store.State) error
+	change        sync.Mutex
+	mu            sync.Mutex
+	admins        map[string]session
+	attempts      map[string]bucket
+	adminHash     []byte
+	applyPending  bool
 }
 
 var ErrForbidden = errors.New("доступ запрещён")
+var ErrInvalidConfiguration = errors.New("изменение не сохранено: конфигурация VPN недопустима")
 
 const maxDiscoveryRequests = 1000
 const maxDismissedTargets = 1000
@@ -54,10 +61,7 @@ const maxDismissedTargets = 1000
 var errDismissedLimit = errors.New("достигнут лимит сохранённых решений «Оставить напрямую» (1000)")
 
 func New(st *store.Store, c Config, password string, apply func(store.State) error) (*Server, error) {
-	if len(password) < 16 || len(password) > 72 {
-		return nil, errors.New("пароль администратора должен содержать 16–72 байта")
-	}
-	hash, e := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hash, e := secure.AdminHash(password)
 	if e != nil {
 		return nil, e
 	}
@@ -77,6 +81,14 @@ func JSON(w http.ResponseWriter, status int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 func fail(w http.ResponseWriter, status int, e error) {
+	if errors.Is(e, store.ErrStorage) {
+		status = http.StatusServiceUnavailable
+	}
+	if status >= 500 {
+		// Error types aid diagnosis without logging Xray configurations or secrets.
+		log.Printf("server operation failed (%T)", e)
+		e = errors.New("внутренняя ошибка сервера; повторите позже")
+	}
 	JSON(w, status, map[string]string{"error": e.Error()})
 }
 func body(w http.ResponseWriter, r *http.Request, v any) bool {
@@ -89,37 +101,78 @@ func body(w http.ResponseWriter, r *http.Request, v any) bool {
 	}
 	return true
 }
+func clientKey(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	ip, parseErr := netip.ParseAddr(host)
+	if err != nil || parseErr != nil {
+		return "unknown"
+	}
+	ip = ip.Unmap()
+	if ip.Is6() {
+		return netip.PrefixFrom(ip, 64).Masked().String()
+	}
+	return ip.String()
+}
 func (s *Server) limited(r *http.Request, kind string, limit int, window time.Duration) bool {
-	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-	key := kind + ":" + ip
+	return s.limitedKey(kind+":"+clientKey(r), limit, window)
+}
+func (s *Server) limitedKey(key string, limit int, window time.Duration) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
-	b := s.attempts[key]
-	if now.Sub(b.at) > window {
-		b = bucket{at: now}
-	}
-	b.count++
-	s.attempts[key] = b
-	if len(s.attempts) > 8192 {
+	b, exists := s.attempts[key]
+	if !exists && len(s.attempts) >= 8192 {
 		for k, v := range s.attempts {
-			if now.Sub(v.at) > time.Hour {
+			if now.Sub(v.at) >= time.Hour {
 				delete(s.attempts, k)
 			}
 		}
+		if len(s.attempts) >= 8192 {
+			return true
+		}
 	}
+	if now.Sub(b.at) >= window {
+		b = bucket{at: now}
+	}
+	if b.count < limit+1 {
+		b.count++
+	}
+	s.attempts[key] = b
 	return b.count > limit
+}
+
+var errApplyPending = errors.New("изменение сохранено; применение VPN ожидает повторной попытки")
+
+// Never roll back a committed revocation or restore old transport credentials.
+// Runtime.Apply closes failed configurations. Retry the latest durable state.
+func (s *Server) applyLocked() error {
+	if s.Apply == nil {
+		s.applyPending = false
+		return nil
+	}
+	err := s.Store.View(s.Apply)
+	s.applyPending = err != nil
+	if err != nil {
+		log.Printf("VPN configuration pending retry (%T)", err)
+		return errApplyPending
+	}
+	return nil
 }
 func (s *Server) mutation(fn func(*store.State) error) error {
 	s.change.Lock()
 	defer s.change.Unlock()
-	if e := s.Store.Update(fn); e != nil {
+	if e := s.Store.Update(func(st *store.State) error {
+		if err := fn(st); err != nil {
+			return err
+		}
+		if s.ValidateApply != nil {
+			return s.ValidateApply(*st)
+		}
+		return nil
+	}); e != nil {
 		return e
 	}
-	if s.Apply != nil {
-		return s.Store.View(s.Apply)
-	}
-	return nil
+	return s.applyLocked()
 }
 func (s *Server) Refresh() error { return s.mutation(func(*store.State) error { return nil }) }
 
@@ -130,19 +183,37 @@ func (s *Server) Expire(now time.Time) error {
 	defer s.change.Unlock()
 	changed := false
 	if e := s.Store.Update(func(st *store.State) error {
+		for id, a := range st.Accounts {
+			if a.Status == "pending" && now.Sub(a.Created) > 7*24*time.Hour {
+				delete(st.Accounts, id)
+			}
+		}
+		for hash, pair := range st.Pairs {
+			if !now.Before(pair.Expires) {
+				delete(st.Pairs, hash)
+			}
+		}
 		for id, d := range st.Devices {
 			if !d.Revoked && !now.Before(d.Expires) {
 				d.Revoked = true
+				d.RevokedAt = now
 				st.Devices[id] = d
 				changed = true
+			}
+			revokedAt := d.RevokedAt
+			if revokedAt.IsZero() {
+				revokedAt = d.Expires
+			}
+			if d.Revoked && now.Sub(revokedAt) > 30*24*time.Hour {
+				deleteDevice(st, d)
 			}
 		}
 		return nil
 	}); e != nil {
 		return e
 	}
-	if changed && s.Apply != nil {
-		return s.Store.View(s.Apply)
+	if changed || s.applyPending {
+		return s.applyLocked()
 	}
 	return nil
 }
@@ -156,25 +227,11 @@ func (s *Server) admin(r *http.Request) bool {
 	return ok && time.Now().Before(v.expires)
 }
 func (s *Server) device(r *http.Request) (store.Device, store.Account, error) {
-	var d store.Device
-	var a store.Account
-	found := false
-	h := secure.Hash(bearer(r))
-	e := s.Store.View(func(st store.State) error {
-		for _, v := range st.Devices {
-			if secure.Equal(v.Hash, h) && !v.Revoked && time.Now().Before(v.Expires) {
-				d = v
-				a = st.Accounts[d.AccountID]
-				found = a.Status == "active"
-				break
-			}
-		}
-		return nil
-	})
-	if e != nil {
-		return d, a, e
+	d, a, ok, err := s.Store.LookupDevice(secure.Hash(bearer(r)))
+	if err != nil {
+		return d, a, err
 	}
-	if !found {
+	if !ok || d.Revoked || !time.Now().Before(d.Expires) || a.Status != "active" {
 		return d, a, ErrForbidden
 	}
 	return d, a, nil
@@ -184,17 +241,33 @@ func (s *Server) profile(d store.Device, a store.Account, token string) model.Pr
 	return model.Profile{ApplicationRules: applicationRules(a, d.Platform), Login: a.Login, DeviceID: d.ID, AccountID: a.ID, Token: token, Server: s.Config.PublicIP, Port: o.Port, UUID: d.Secret, AppUUID: d.AppSecret, SNI: o.SNI, PublicKey: o.PublicKey, ShortID: o.ShortID, Path: o.Path, Rules: a.Rules, Revision: a.Revision, Status: a.Status}
 }
 
-func (s *Server) Handler(static http.Handler) http.Handler {
+// Handler serves only the public client API. Host and forwarding headers cannot
+// grant access to administration, even when the request originates on loopback.
+func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { JSON(w, 200, map[string]string{"status": "ok"}) })
 	mux.HandleFunc("POST /api/register", s.register)
 	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("POST /api/pair/claim", s.claim)
+	mux.HandleFunc("POST /api/access-key/rotate", s.rotateAccessKey)
+	mux.HandleFunc("GET /api/sync", s.syncState)
+	mux.HandleFunc("POST /api/discover", s.discover)
+	mux.HandleFunc("POST /api/rules", s.rules)
+	mux.HandleFunc("POST /api/app-vpn", s.appVPN)
+	mux.HandleFunc("POST /api/application-rules", s.saveApplicationRules)
+	mux.HandleFunc("POST /api/dismiss", s.dismiss)
+	mux.HandleFunc("POST /api/pair", s.pair)
+	mux.HandleFunc("POST /api/revoke", s.revoke)
+	return securityHeaders(mux)
+}
+
+// AdminHandler is bound exclusively to the validated loopback listener.
+func (s *Server) AdminHandler(static http.Handler) http.Handler {
+	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/admin/login", s.adminLogin)
 	mux.HandleFunc("GET /api/admin/bootstrap", s.adminBootstrap)
 	mux.HandleFunc("POST /api/admin/bootstrap/rotate", s.adminRotateBootstrap)
 	mux.HandleFunc("POST /api/admin/access-key", s.adminAccessKey)
-	mux.HandleFunc("POST /api/access-key/rotate", s.rotateAccessKey)
 	mux.HandleFunc("GET /api/admin/accounts", s.adminAccounts)
 	mux.HandleFunc("POST /api/admin/account", s.adminAccount)
 	mux.HandleFunc("POST /api/admin/revoke", s.adminRevoke)
@@ -204,17 +277,22 @@ func (s *Server) Handler(static http.Handler) http.Handler {
 		s.mu.Unlock()
 		JSON(w, 200, map[string]bool{"ok": true})
 	})
-	mux.HandleFunc("GET /api/sync", s.syncState)
-	mux.HandleFunc("POST /api/discover", s.discover)
-	mux.HandleFunc("POST /api/rules", s.rules)
-	mux.HandleFunc("POST /api/app-vpn", s.appVPN)
-	mux.HandleFunc("POST /api/application-rules", s.saveApplicationRules)
-	mux.HandleFunc("POST /api/dismiss", s.dismiss)
-	mux.HandleFunc("POST /api/pair", s.pair)
-	mux.HandleFunc("POST /api/revoke", s.revoke)
 	if static != nil {
 		mux.Handle("/", static)
 	}
+	return securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if origin := r.Header.Get("Origin"); origin != "" {
+			u, err := url.Parse(origin)
+			if err != nil || u.Scheme != "https" || u.Host != r.Host || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+				fail(w, http.StatusForbidden, ErrForbidden)
+				return
+			}
+		}
+		mux.ServeHTTP(w, r)
+	}))
+}
+
+func securityHeaders(mux http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
@@ -252,10 +330,17 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		if err := checkBootstrap(*st, r); err != nil {
 			return err
 		}
+		pending := 0
 		for _, a := range st.Accounts {
+			if a.Status == "pending" {
+				pending++
+			}
 			if a.Login == c.Login {
 				return errors.New("логин уже занят")
 			}
+		}
+		if pending >= 200 {
+			return errors.New("лимит ожидающих заявок; дождитесь решения администратора")
 		}
 		if len(st.Accounts) >= 10000 {
 			return errors.New("лимит регистраций")
@@ -332,7 +417,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminLogin(w http.ResponseWriter, r *http.Request) {
-	if s.limited(r, "admin", 8, 15*time.Minute) {
+	if s.limitedKey("admin:global", 30, 15*time.Minute) || s.limited(r, "admin", 8, 15*time.Minute) {
 		fail(w, 429, errors.New("слишком много попыток входа"))
 		return
 	}
@@ -371,7 +456,7 @@ func (s *Server) adminAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	accounts := []accountSummary{}
 	devices := []model.Device{}
-	s.Store.View(func(st store.State) error {
+	if err := s.Store.View(func(st store.State) error {
 		for _, a := range st.Accounts {
 			accounts = append(accounts, accountSummary{a.ID, a.Login, a.Status, a.Created})
 		}
@@ -379,7 +464,10 @@ func (s *Server) adminAccounts(w http.ResponseWriter, r *http.Request) {
 			devices = append(devices, d.Device)
 		}
 		return nil
-	})
+	}); err != nil {
+		fail(w, 503, err)
+		return
+	}
 	JSON(w, 200, map[string]any{"accounts": accounts, "devices": devices})
 }
 func (s *Server) adminAccount(w http.ResponseWriter, r *http.Request) {
@@ -430,7 +518,7 @@ func (s *Server) syncState(w http.ResponseWriter, r *http.Request) {
 	requests := []model.Request{}
 	dismissed := []string{}
 	devices := []model.Device{}
-	s.Store.View(func(st store.State) error {
+	if err := s.Store.View(func(st store.State) error {
 		for _, v := range st.Requests {
 			if v.AccountID == a.ID && v.Dismissed {
 				dismissed = append(dismissed, v.Target)
@@ -448,7 +536,10 @@ func (s *Server) syncState(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		fail(w, 503, err)
+		return
+	}
 	sort.Slice(requests, func(i, j int) bool {
 		if requests[i].FirstSeen.Equal(requests[j].FirstSeen) {
 			return requests[i].Target < requests[j].Target
@@ -474,6 +565,10 @@ func (s *Server) discover(w http.ResponseWriter, r *http.Request) {
 	d, a, e := s.device(r)
 	if e != nil {
 		fail(w, 401, e)
+		return
+	}
+	if s.limitedKey("discover:"+d.ID, 120, time.Minute) {
+		fail(w, 429, errors.New("слишком часто"))
 		return
 	}
 	var input struct {
@@ -588,7 +683,11 @@ func (s *Server) discover(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if e != nil {
-		fail(w, 500, e)
+		if errors.Is(e, ErrForbidden) {
+			fail(w, 403, ErrForbidden)
+		} else {
+			fail(w, 503, e)
+		}
 		return
 	}
 	JSON(w, 200, map[string]bool{"ok": true})
@@ -650,7 +749,7 @@ func (s *Server) rules(w http.ResponseWriter, r *http.Request) {
 		st.Accounts[a.ID] = v
 		return nil
 	})
-	if e != nil {
+	if e != nil && !errors.Is(e, errApplyPending) {
 		fail(w, 409, e)
 		return
 	}
@@ -814,7 +913,21 @@ func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request, admin bool
 }
 func (s *Server) revoke(w http.ResponseWriter, r *http.Request)      { s.revokeDevice(w, r, false) }
 func (s *Server) adminRevoke(w http.ResponseWriter, r *http.Request) { s.revokeDevice(w, r, true) }
+func (c Config) AdminListenAddress() string {
+	if c.AdminAddress == "" {
+		return "127.0.0.1:8444"
+	}
+	return c.AdminAddress
+}
+
 func (c Config) Validate() error {
+	host, port, err := net.SplitHostPort(c.AdminListenAddress())
+	ip, ipErr := netip.ParseAddr(host)
+	n, portErr := strconv.ParseUint(port, 10, 16)
+	if err != nil || ipErr != nil || !ip.IsLoopback() || ip.Zone() != "" || portErr != nil || n == 0 {
+		return errors.New("admin_address должен быть loopback IP с портом")
+	}
+
 	if ip, e := netip.ParseAddr(c.PublicIP); e != nil || !policy.Public(ip) {
 		return errors.New("public_ip должен быть публичным IP")
 	}

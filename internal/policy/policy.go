@@ -122,10 +122,18 @@ const (
 )
 
 func Decide(rules []string, target string, ready bool) Route {
-	if _, err := Normalize(target); err != nil {
+	normalized, err := Normalize(target)
+	if err != nil {
 		return Block
 	}
-	if !Approved(rules, target) {
+	approved := false
+	for _, rule := range rules {
+		if Matches(rule, normalized) {
+			approved = true
+			break
+		}
+	}
+	if !approved {
 		return Direct
 	}
 	if !ready {
@@ -138,6 +146,17 @@ func Decide(rules []string, target string, ready bool) Route {
 // allocations are not necessarily excluded by netip.Addr.IsGlobalUnicast.
 // Source: https://www.iana.org/assignments/iana-ipv6-special-registry/
 var nonPublicPrefixes = [...]netip.Prefix{
+	netip.MustParsePrefix("10.0.0.0/8"),
+	netip.MustParsePrefix("127.0.0.0/8"),
+	netip.MustParsePrefix("169.254.0.0/16"),
+	netip.MustParsePrefix("172.16.0.0/12"),
+	netip.MustParsePrefix("192.168.0.0/16"),
+	netip.MustParsePrefix("192.88.99.0/24"),
+	netip.MustParsePrefix("224.0.0.0/4"),
+	netip.MustParsePrefix("fc00::/7"),
+	netip.MustParsePrefix("fe80::/10"),
+	netip.MustParsePrefix("fec0::/10"),
+	netip.MustParsePrefix("ff00::/8"),
 	netip.MustParsePrefix("0.0.0.0/8"),
 	netip.MustParsePrefix("100.64.0.0/10"),
 	netip.MustParsePrefix("192.0.0.0/24"),
@@ -174,4 +193,14 @@ func Public(ip netip.Addr) bool {
 		}
 	}
 	return true
+}
+
+// NonPublicCIDRs is shared with Xray's per-packet final egress rules. It does not
+// require downloading a mutable geoip database on the VPN host.
+func NonPublicCIDRs() []string {
+	out := make([]string, 0, len(nonPublicPrefixes))
+	for _, p := range nonPublicPrefixes {
+		out = append(out, p.String())
+	}
+	return out
 }

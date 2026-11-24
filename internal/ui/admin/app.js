@@ -118,10 +118,12 @@ $('key-reveal').onclick=()=>{const visible=$('issued-key').type==='password';$('
 $('key-copy').onclick=async()=>{try{await navigator.clipboard.writeText($('issued-key').value);$('key-copy-status').textContent='Ключ скопирован.'}catch{const f=$('issued-key');f.type='text';f.focus();f.select();$('key-reveal').textContent='Скрыть';$('key-copy-status').textContent='Скопируйте выделенный ключ вручную.'}};
 $('profile-rotate').onclick=async()=>{
   const revoke=$('profile-revoke-devices').checked;
+  const revokeConfirmation=$('profile-revoke-confirmation').value.trim();
+  if(revoke&&revokeConfirmation!=='REVOKE-ALL'){toast('Введите REVOKE-ALL для отзыва всех устройств.');return;}
   if(!await confirm('Перевыпустить профиль сервера?', 'Старая ссылка и все коды привязки перестанут работать. '+(revoke?'Все подключённые устройства потеряют доступ. Им потребуется новый профиль и повторный вход по личному ключу.':'Подключённые устройства сохранят доступ. Новый профиль нужен для регистрации и повторного входа.')))return;
   profileRequest++;profileLoading=true;$('profile-rotate').disabled=true;$('profile-refresh').disabled=true;
   $('server-profile').value='';$('profile-copy').disabled=true;$('profile-download').disabled=true;
-  try{const out=await api('bootstrap/rotate',{confirm:true,revoke_devices:revoke});if(!token)return;$('server-profile').value=out.profile;$('profile-copy').disabled=false;$('profile-download').disabled=false;$('profile-status').textContent='Новый профиль готов. Старая ссылка отозвана.';$('profile-status').classList.remove('profile-error');$('profile-revoke-devices').checked=false;}
+  try{const out=await api('bootstrap/rotate',{confirm:true,revoke_devices:revoke,revoke_confirmation:revokeConfirmation});if(!token)return;$('server-profile').value=out.profile;$('profile-copy').disabled=false;$('profile-download').disabled=false;$('profile-status').textContent='Новый профиль готов. Старая ссылка отозвана.';$('profile-status').classList.remove('profile-error');$('profile-revoke-devices').checked=false;$('profile-revoke-confirmation').value='';}
   catch(e){$('profile-status').textContent=e.message;$('profile-status').classList.add('profile-error')}
   finally{profileLoading=false;$('profile-rotate').disabled=false;$('profile-refresh').disabled=false}
 };

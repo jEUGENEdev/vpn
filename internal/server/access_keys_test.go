@@ -56,7 +56,7 @@ func (f *authFixture) call(path, token string, input any, want int) map[string]a
 	r.Header.Set("Authorization", "Bearer "+token)
 	r.Header.Set("X-LineVPN-Profile", f.key)
 	w := httptest.NewRecorder()
-	f.s.Handler(nil).ServeHTTP(w, r)
+	testServerHandler(f.s).ServeHTTP(w, r)
 	if w.Code != want {
 		f.t.Fatalf("%s: got %d want %d: %s", path, w.Code, want, w.Body.String())
 	}
@@ -144,7 +144,7 @@ func TestSelfKeyRotationRevokesEveryDeviceAndCannotCrossAccounts(t *testing.T) {
 	token := p["token"].(string)
 	second := f.call("/api/login", "", cred, 200)["token"].(string)
 	f.call("/api/access-key/rotate", token, map[string]any{"id": "other", "confirm": true}, 403)
-	next := f.call("/api/access-key/rotate", token, map[string]any{"confirm": true}, 200)["access_key"].(string)
+	next := f.call("/api/access-key/rotate", token, map[string]any{"confirm": true, "current_key": cred["access_key"]}, 200)["access_key"].(string)
 	f.call("/api/sync", token, nil, 401)
 	f.call("/api/sync", second, nil, 401)
 	f.call("/api/access-key/rotate", token, map[string]any{"confirm": true}, 401)
@@ -186,7 +186,7 @@ func TestBootstrapRotationInvalidatesEnrollmentAndOptionallyDevices(t *testing.T
 	if err != nil || got != next {
 		t.Fatal("rotation lost after restart", err)
 	}
-	f.call("/api/admin/bootstrap/rotate", "admin", map[string]bool{"confirm": true, "revoke_devices": true}, 200)
+	f.call("/api/admin/bootstrap/rotate", "admin", map[string]any{"confirm": true, "revoke_devices": true, "revoke_confirmation": "REVOKE-ALL"}, 200)
 	f.call("/api/sync", token, nil, 401)
 	if f.applied == applied {
 		t.Fatal("explicit revoke not applied")
@@ -248,7 +248,7 @@ func TestOldSessionCannotRotateKeyAfterDeviceReauthentication(t *testing.T) {
 	r := httptest.NewRequest("POST", "/api/access-key/rotate", body)
 	r.Header.Set("Authorization", "Bearer "+first["token"].(string))
 	w := httptest.NewRecorder()
-	f.s.Handler(nil).ServeHTTP(w, r)
+	testServerHandler(f.s).ServeHTTP(w, r)
 	if w.Code != 403 {
 		t.Fatalf("stale session rotated key: %d %s", w.Code, w.Body)
 	}

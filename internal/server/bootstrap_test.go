@@ -69,7 +69,7 @@ func TestAdminBootstrapUsesConfiguredServerAndCurrentCertificate(t *testing.T) {
 				admins: map[string]session{secure.Hash("admin-token"): {expires: time.Now().Add(time.Hour)},
 					secure.Hash("expired-admin"): {expires: time.Now().Add(-time.Minute)}},
 				Apply: func(store.State) error { t.Fatal("retrieval must not restart VPN"); return nil }}
-			h := s.Handler(nil)
+			h := testServerHandler(s)
 			request := func(token string) *httptest.ResponseRecorder {
 				r := httptest.NewRequest("GET", "/api/admin/bootstrap", nil)
 				r.Host = "untrusted.example:1234"
@@ -130,7 +130,7 @@ func TestAdminBootstrapRejectsUnusableCertificate(t *testing.T) {
 		r := httptest.NewRequest("GET", "/api/admin/bootstrap", nil)
 		r.Header.Set("Authorization", "Bearer admin-token")
 		w := httptest.NewRecorder()
-		s.Handler(nil).ServeHTTP(w, r)
+		testServerHandler(s).ServeHTTP(w, r)
 		if w.Code != 503 || strings.Contains(w.Body.String(), "linevpn://") || strings.Contains(w.Body.String(), path) {
 			t.Fatalf("unusable certificate returned a profile or leaked a path: %d %s", w.Code, w.Body.String())
 		}

@@ -50,6 +50,13 @@ func Start(dir string, p Protector) (string, error) {
 	mu.Lock()
 	defer mu.Unlock()
 	if current != nil {
+		// The control UI survives a failed establish(). Retry the saved mode
+		// after the Activity obtains consent; a live HTTP server is not a TUN.
+		// RetryNetwork records failures for that same UI and is a no-op when
+		// the mode is already applied. Never turn an explicitly disabled VPN on.
+		if err := current.c.RetryNetwork(); err != nil {
+			current.c.SetNetworkError(err)
+		}
 		return current.url, nil
 	}
 	if p == nil {

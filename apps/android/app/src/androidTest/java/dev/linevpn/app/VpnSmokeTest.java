@@ -220,6 +220,32 @@ public class VpnSmokeTest {
         }
         return null;
     }
+    private android.widget.Button findOpenVPN(View view) {
+        if (view instanceof android.widget.Button && "Открыть VPN".contentEquals(((android.widget.Button) view).getText())) return (android.widget.Button) view;
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                android.widget.Button button = findOpenVPN(group.getChildAt(i));
+                if (button != null) return button;
+            }
+        }
+        return null;
+    }
+    private void reopenStoppedVPN(Activity activity) throws Exception {
+        AtomicBoolean ready = new AtomicBoolean(false);
+        long deadline = SystemClock.elapsedRealtime() + 10000;
+        while (!ready.get() && SystemClock.elapsedRealtime() < deadline) {
+            getInstrumentation().runOnMainSync(() -> {
+                View root = activity.getWindow().getDecorView();
+                android.widget.Button button = findOpenVPN(root);
+                ready.set(findWeb(root) == null && button != null && button.isShown());
+            });
+            if (!ready.get()) Thread.sleep(100);
+        }
+        assertTrue("Stopped service left Activity attached to its dead control WebView", ready.get());
+        assertEquals("Returning to the launcher must not silently restart VPN", "stopped", Mobile.status());
+        getInstrumentation().runOnMainSync(() -> findOpenVPN(activity.getWindow().getDecorView()).performClick());
+    }
     private void awaitNativeUI(Activity activity) throws Exception {
         AtomicBoolean ready = new AtomicBoolean(false);
         long deadline = System.currentTimeMillis() + 30000;
@@ -393,10 +419,13 @@ public class VpnSmokeTest {
                 while (!"stopped".equals(Mobile.status()) && System.currentTimeMillis() < deadline) Thread.sleep(100);
                 assertEquals("stopped", Mobile.status());
                 assertEquals(PROBE_BODY, requestOnNetwork(null, PROBE_URL, null, null).trim());
-                getInstrumentation().getTargetContext().startForegroundService(new Intent(getInstrumentation().getTargetContext(), LineVpnService.class));
+                // Reuse the already-open Activity, as after another VPN revokes
+                // this service. No activity recreation or profile deletion.
+                reopenStoppedVPN(activity);
                 deadline = System.currentTimeMillis() + 10000;
                 while (!"running".equals(Mobile.status()) && System.currentTimeMillis() < deadline) Thread.sleep(100);
                 assertEquals("running", Mobile.status());
+                awaitNativeUI(activity);
                 JSONObject off = new JSONObject(Mobile.snapshot());
                 assertFalse("Service restart re-enabled VPN", off.getBoolean("vpn_enabled"));
                 assertFalse("Off startup created TUN", off.getBoolean("tunnel"));

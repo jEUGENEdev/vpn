@@ -81,14 +81,19 @@ func (s *Server) adminRotateBootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Confirm       bool `json:"confirm"`
-		RevokeDevices bool `json:"revoke_devices"`
+		Confirm            bool   `json:"confirm"`
+		RevokeConfirmation string `json:"revoke_confirmation"`
+		RevokeDevices      bool   `json:"revoke_devices"`
 	}
 	if !body(w, r, &input) {
 		return
 	}
 	if !input.Confirm {
 		fail(w, 400, errors.New("подтвердите отзыв старого профиля"))
+		return
+	}
+	if input.RevokeDevices && input.RevokeConfirmation != "REVOKE-ALL" {
+		fail(w, 400, errors.New("введите REVOKE-ALL для отзыва всех устройств"))
 		return
 	}
 	base, err := s.bootstrapBaseURI()
@@ -105,19 +110,20 @@ func (s *Server) adminRotateBootstrap(w http.ResponseWriter, r *http.Request) {
 		if input.RevokeDevices {
 			for id, device := range st.Devices {
 				device.Revoked = true
+				device.RevokedAt = time.Now()
 				st.Devices[id] = device
 			}
 		}
 		return nil
 	})
 	if err == nil && input.RevokeDevices && s.Apply != nil {
-		err = s.Store.View(s.Apply)
+		err = s.applyLocked()
 	}
-	if err != nil {
+	if err != nil && !errors.Is(err, errApplyPending) {
 		fail(w, 503, errors.New("не удалось завершить перевыпуск; проверьте сервер и заново получите текущий профиль"))
 		return
 	}
-	JSON(w, 200, map[string]string{"profile": base + "&access=" + key})
+	JSON(w, 200, map[string]string{"profile": base + "&access=" + key, "vpn_apply_pending": strconv.FormatBool(errors.Is(err, errApplyPending))})
 }
 
 func (s *Server) adminBootstrap(w http.ResponseWriter, r *http.Request) {

@@ -32,6 +32,7 @@ if [[ "$suite" == all || "$suite" == portable ]]; then
   python3 scripts/test-installer-upgrade.py
   python3 scripts/test-deploy-actions.py
   python3 scripts/test-deploy-manual.py
+  python3 scripts/test-deploy-security.py
   python3 scripts/test-deploy-ssh.py
 fi
 
