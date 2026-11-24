@@ -73,6 +73,12 @@ class PasswordSSHTest(unittest.TestCase):
                             channel.sendall(f'LINEVPN_PROFILE_B64={profile}\nLINEVPN_CERT_B64={cert}\nLINEVPN_REMOTE_OK=1\n'.encode())
                         channel.send_exit_status(1 if command == 'if fail-fixture' else 0)
                         channel.close()
+                        # Let the client acknowledge CHANNEL_CLOSE and disconnect
+                        # before closing TCP. Immediate transport teardown races
+                        # OpenSSH's final write and yields a spurious exit 255.
+                        transport.join(10)
+                        if transport.is_active():
+                            raise RuntimeError('SSH client did not finish disconnecting')
                 except Exception as error:
                     errors.append(error)
 

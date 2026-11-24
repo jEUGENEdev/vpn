@@ -8,6 +8,13 @@ vpn_tools="$(cd "$(dirname "$0")" && pwd)"
 # uses the installed one. Neither path executes an older installed uninstaller.
 vpn_recovery="${1:-$vpn_base/linevpn-agent}"
 [[ -x "$vpn_recovery" ]] || { echo 'Откройте свежий установщик «Сеть» и выберите «Удалить».' >&2; exit 1; }
+# Never report successful removal while a foreign/unknown bundle remains at
+# the installation path. Validate before stopping anything or deleting state.
+for vpn_bundle in /Applications/LineVPN.app /Applications/Сеть.app; do
+  if [[ -e "$vpn_bundle" || -L "$vpn_bundle" ]]; then
+    [[ ! -L "$vpn_bundle" && "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$vpn_bundle/Contents/Info.plist" 2>/dev/null || true)" == dev.linevpn.desktop ]] || { echo "Не удалось подтвердить принадлежность приложения: $vpn_bundle. Файлы не удалены." >&2; exit 1; }
+  fi
+done
 /bin/bash "$vpn_tools/stop-service.sh"
 # Cleanup MUST succeed before deleting the executable or recovery data.
 "$vpn_recovery" -data /var/lib/linevpn -recover-network

@@ -279,7 +279,7 @@ class MacOSScriptTests(unittest.TestCase):
         }
         for name, content in self.files.items():
             (self.data / name).write_bytes(content)
-        for name in ('preinstall', 'postinstall', 'uninstall.sh', 'stop-service.sh', 'recover-network.sh', 'manage.sh'):
+        for name in ('preinstall', 'postinstall', 'uninstall.sh', 'stop-service.sh', 'manage.sh'):
             path = ROOT / 'packaging/macos' / name
             if not path.exists():
                 continue
@@ -398,6 +398,14 @@ class MacOSScriptTests(unittest.TestCase):
         result = self.run_script('uninstall.sh', RECOVERY_CODE='1')
         self.assertNotEqual(result.returncode, 0)
         self.assertTrue((self.support / 'linevpn-agent').exists())
+
+    def test_uninstall_rejects_foreign_bundle_before_touching_state(self):
+        foreign = self.bundle('Сеть.app', identifier='org.example.other')
+        result = self.run_script('uninstall.sh')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(foreign.exists())
+        self.assertTrue(self.support.exists())
+        self.assertFalse(any(call[0] in ('pkill', 'launchctl', 'linevpn-agent') for call in self.trace()))
 
     def test_uninstall_does_not_delete_an_unexpected_system_account(self):
         result = self.run_script('uninstall.sh', FOREIGN_ACCOUNT='1')

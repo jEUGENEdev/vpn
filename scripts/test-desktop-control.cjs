@@ -29,7 +29,7 @@ const id='a'.repeat(43),receipt='b'.repeat(43);
  let currentToken='first';
  const rotating=createControl({token:()=>currentToken,fetchImpl:async(_url,opts)=>({ok:true,json:async()=>opts.headers.Authorization})});
  assert.equal(await rotating('state'),'Bearer first');
- currentToken='second';assert.equal(await rotating('state'),'Bearer second','stale status token after repair');
+ currentToken='second';assert.equal(await rotating('state'),'Bearer second','stale status token after service restart');
  await testPinnedStatusChannel();
  console.log('PASS: desktop broker requires elevation, hides secrets, validates actions and handles cancellation');
 })().catch(e=>{console.error(e);process.exitCode=1});

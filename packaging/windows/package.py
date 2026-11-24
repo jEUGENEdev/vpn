@@ -41,9 +41,14 @@ for i,file in enumerate(sorted(root.rglob('*'))):
  fid='Agent' if rel.as_posix()=='resources/agent/linevpn-agent.exe' else 'F'+str(i)
  node(c,'File',Id=fid,Source=str(file),KeyPath='yes')
  if fid=='Agent':
+  agent_component=c
   node(c,'ServiceInstall',Id='InstallAgent',Name='LineVPN',DisplayName='Сеть',Description='VPN routing with protection until explicit off',Type='ownProcess',Start='auto',ErrorControl='normal',Vital='yes',Account='LocalSystem',Arguments='-service')
   node(c,'ServiceControl',Id='ControlAgent',Name='LineVPN',Start='install',Stop='both',Remove='uninstall',Wait='yes')
  node(feature,'ComponentRef',Id=cid)
+# Explicitly remove every empty payload directory on uninstall. Unrelated
+# files prevent removal; no wildcard deletion is scheduled by Windows Installer.
+for directory, element in sorted(dirs.items(), key=lambda pair: len(pair[0].parts), reverse=True):
+ node(agent_component,'RemoveFolder',Id='R'+uuid.uuid5(uuid.NAMESPACE_URL,directory.as_posix()).hex,Directory=element.get('Id'),On='uninstall')
 # A new shortcut location needs its own component and registry key path. The
 # old MSI removes its registered menu folder during the transactional upgrade.
 # Do not remove generic Electron shortcuts belonging to other applications.

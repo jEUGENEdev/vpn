@@ -84,6 +84,15 @@ func cleanInstallation(fresh bool) error {
 			return e
 		}
 	}
+	if fresh {
+		base, err := windows.KnownFolderPath(windows.FOLDERID_ProgramFiles, 0)
+		if err != nil {
+			return err
+		}
+		// The previous MSI has already been removed and no worker is alive.
+		// Clear stale payload too, so Windows file-version rules cannot retain it.
+		return removeOwnedDirectory(filepath.Join(base, "LineVPN"))
+	}
 	return nil
 }
 
