@@ -10,7 +10,7 @@ cleanup() {
   trap - EXIT
   set +e
   timeout 10s adb shell dumpsys connectivity > build/android-connectivity.txt 2>&1
-  timeout 10s adb shell 'ip addr; ip rule; ip route show table all' > build/android-network.txt 2>&1
+  timeout 10s adb shell 'ip -s addr; ip rule; ip route show table all' > build/android-network.txt 2>&1
   if [[ -n "$vpn_logcat_pid" ]]; then
     kill "$vpn_logcat_pid" 2>/dev/null
     wait "$vpn_logcat_pid" 2>/dev/null

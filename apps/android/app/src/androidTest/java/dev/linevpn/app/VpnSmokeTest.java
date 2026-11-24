@@ -80,10 +80,38 @@ public class VpnSmokeTest {
                 NetworkCapabilities caps = connectivity.getNetworkCapabilities(network);
                 if (caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) found = network;
             }
-            if ((found != null) == enabled) { vpnNetwork = found; return; }
+            if ((found != null) == enabled) {
+                vpnNetwork = found;
+                Log.i("LineVpnSmoke", "Selected VPN network " + found);
+                return;
+            }
             Thread.sleep(100);
         }
         fail("VPN network did not reach enabled=" + enabled);
+    }
+    private void assertDirectProbe(String stage, ConnectivityManager connectivity) throws Exception {
+        Log.i("LineVpnSmoke", "Direct probe: " + stage + " on " + vpnNetwork);
+        try {
+            assertEquals(stage, PROBE_BODY, request(PROBE_URL, null, null).trim());
+        } catch (Exception | AssertionError failure) {
+            // Preserve the original failure. These diagnostics never retry the
+            // failed HTTP assertion or print credentials from the local API.
+            Log.e("LineVpnSmoke", "Failed network capabilities: " + connectivity.getNetworkCapabilities(vpnNetwork));
+            Log.e("LineVpnSmoke", "Failed network links: " + connectivity.getLinkProperties(vpnNetwork));
+            JSONObject state = new JSONObject(Mobile.snapshot());
+            JSONObject diagnostic = new JSONObject();
+            for (String key : new String[]{"status", "vpn_enabled", "tunnel", "traffic_mode", "power_transition", "power_error"})
+                diagnostic.put(key, state.opt(key));
+            org.json.JSONArray apps = state.getJSONArray("applications");
+            for (int i = 0; i < apps.length(); i++) {
+                JSONObject app = apps.getJSONObject(i);
+                if (app.getString("path").equals(getInstrumentation().getTargetContext().getPackageName())) {
+                    for (String key : new String[]{"decision", "last_seen", "target"}) diagnostic.put(key, app.opt(key));
+                }
+            }
+            Log.e("LineVpnSmoke", "Failed direct probe state: " + diagnostic);
+            throw failure;
+        }
     }
     private void power(boolean enabled) throws Exception {
         String local = Mobile.url(); int hash = local.indexOf("#token=");
@@ -278,6 +306,7 @@ public class VpnSmokeTest {
         request(base+"local/traffic-mode",token,"{\"mode\":\"selective\"}");
         assertExcludedApplication();
         awaitVPNNetwork(connectivity, true);
+        assertDirectProbe("Selective mode must resume forwarding on the replacement interface", connectivity);
         JSONObject snapshot = new JSONObject(Mobile.snapshot());
         org.json.JSONArray proposals = snapshot.getJSONArray("requests");
         for (int i=0; i<proposals.length(); i++) assertNotEquals("Healthy direct traffic must not prompt", "10.0.2.2", proposals.getJSONObject(i).getString("target"));
@@ -293,8 +322,7 @@ public class VpnSmokeTest {
         try { request(PROBE_URL,null,null); fail("Offline trusted app bypassed VPN"); } catch (IOException expected) { }
         request(base+"local/applications",token,new JSONObject().put("id",applicationID).put("decision","addresses").toString());
         awaitVPNNetwork(connectivity, true);
-        assertEquals("Revoking application trust must restore the direct route", PROBE_BODY,
-                request(PROBE_URL,null,null).trim());
+        assertDirectProbe("Revoking application trust must restore the direct route", connectivity);
         // No server has been configured. Approval must remain saved locally
         // before the API returns an error and retain the rule on disk.
         try { request(base+"local/rules",token,"{\"action\":\"approve\",\"target\":\"10.0.2.2\",\"revision\":0}"); fail("Missing server must fail approval sync"); }
