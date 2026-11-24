@@ -83,7 +83,17 @@ if not mac:
         operation('install', expect_success=False, package=work / 'next.msi')
 assert (data / 'ui-token').read_bytes() == old_token
 ready()
+gui = None
+if not mac:
+    # Users uninstall with a live tray UI. Verify removal closes it and helpers.
+    gui_env = dict(os.environ)
+    gui_env.pop('LINEVPN_SMOKE_TEST_REPORT', None)
+    gui = subprocess.Popen([str(app / 'Сеть.exe'), '--background'], env=gui_env)
+    time.sleep(1)
+    assert gui.poll() is None, 'Installed UI exited before uninstall'
 operation('uninstall')
+if gui is not None:
+    gui.wait(timeout=15)
 removed()
 operation('install')
 state = ready()

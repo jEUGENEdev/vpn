@@ -67,6 +67,7 @@ vpn_dns_keys="$(printf 'list State:/Network/Service/dev.linevpn.*/DNS\n' | /usr/
 if [[ "$vpn_dns_keys" == *'subKey'* ]]; then echo 'Temporary DNS survived service stop' >&2; exit 1; fi
 if curl --noproxy '*' -fsS --output /dev/null --connect-timeout 4 --max-time 8 http://1.1.1.1/cdn-cgi/trace; then echo "Protected connection escaped VPN" >&2; exit 1; fi
 sudo launchctl bootstrap system /Library/LaunchDaemons/dev.linevpn.agent.plist
+/usr/bin/open -g /Applications/Сеть.app --args --background
 sudo env GITHUB_ACTIONS=true python3 scripts/test-desktop-clean-install.py build/macos-tested.pkg
 # The ordinary user must also reach the newly created session.
 python3 - <<'PYGUI'

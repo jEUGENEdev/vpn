@@ -125,17 +125,16 @@ func closeInstalledUI() error {
 					installed = filepath.Join(base, "LineVPN", "resources", "agent", name)
 				}
 				if e == nil && strings.EqualFold(windows.UTF16ToString(buffer[:size]), installed) {
-					if strings.EqualFold(name, "linevpn-agent.exe") {
-						windows.CloseHandle(process)
-						return errors.New("прежний процесс службы ещё работает; завершите удаление или перезагрузите Windows")
-					}
-					e = windows.TerminateProcess(process, 0)
-					if e == nil {
-						var result uint32
-						result, e = windows.WaitForSingleObject(process, 10000)
-						if e == nil && result != windows.WAIT_OBJECT_0 {
-							e = errors.New("приложение «Сеть» не завершилось")
-						}
+					// SCM can report STOPPED shortly before the process exits.
+					// Wait for the worker; only the explicitly removed UI may
+					// be terminated. Do not release WFP under a live worker.
+					e = waitInstalledProcess(process, !strings.EqualFold(name, "linevpn-agent.exe"))
+				}
+				if e != nil {
+					// Another process from the snapshot may have exited when
+					// its parent UI was terminated earlier in this pass.
+					if result, err := windows.WaitForSingleObject(process, 0); err == nil && result == windows.WAIT_OBJECT_0 {
+						e = nil
 					}
 				}
 				windows.CloseHandle(process)
@@ -150,4 +149,28 @@ func closeInstalledUI() error {
 		return nil
 	}
 	return err
+}
+
+func waitInstalledProcess(process windows.Handle, terminate bool) error {
+	if result, err := windows.WaitForSingleObject(process, 0); err != nil {
+		return err
+	} else if result == windows.WAIT_OBJECT_0 {
+		return nil
+	}
+	if terminate {
+		if err := windows.TerminateProcess(process, 0); err != nil {
+			if result, waitErr := windows.WaitForSingleObject(process, 0); waitErr == nil && result == windows.WAIT_OBJECT_0 {
+				return nil
+			}
+			return err
+		}
+	}
+	result, err := windows.WaitForSingleObject(process, 10000)
+	if err != nil {
+		return err
+	}
+	if result != windows.WAIT_OBJECT_0 {
+		return errors.New("процесс «Сеть» ещё работает; перезагрузите Windows и повторите удаление")
+	}
+	return nil
 }
