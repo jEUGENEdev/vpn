@@ -12,7 +12,7 @@ on run argv
             do shell script "/bin/bash " & quoted form of (resources & "/manage.sh") & " " & quoted form of operation with administrator privileges
         end timeout
         if operation is "install" then
-            display dialog "Приложение «Сеть» установлено. Фоновая служба и локальная сеть проверены. Добавьте профиль сервера и войдите." with title "Готово" buttons {"Закрыть", "Открыть «Сеть»"} default button "Открыть «Сеть»" with icon iconFile
+            display dialog "Приложение «Сеть» установлено. Фоновая служба запущена и проверена. Добавьте профиль сервера и войдите." with title "Готово" buttons {"Закрыть", "Открыть «Сеть»"} default button "Открыть «Сеть»" with icon iconFile
             if button returned of result is "Открыть «Сеть»" then do shell script "/usr/bin/open /Applications/Сеть.app"
         else
             display dialog "Приложение «Сеть», служба и локальные данные удалены. Запустите установщик снова и выберите «Установить»." with title "Готово" buttons {"Закрыть"} default button "Закрыть" with icon iconFile

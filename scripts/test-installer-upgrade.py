@@ -20,6 +20,16 @@ import verify_android_update as android
 
 
 class VersionTests(unittest.TestCase):
+    def test_utf8_metadata_on_a_windows_legacy_locale(self):
+        original_read = Path.read_text
+        expected = product_version()
+        def windows_read(path, encoding=None, errors=None):
+            return original_read(path, encoding=encoding or 'cp1252', errors=errors)
+        with patch.object(Path, 'read_text', windows_read):
+            self.assertEqual(product_version(), expected)
+            check_consistent()
+            check_newer()
+
     def test_new_release_and_platform_order(self):
         check_consistent()
         versions = ['0.2.0', '0.2.1', '0.2.999', '0.3.0', '1.0.0']
