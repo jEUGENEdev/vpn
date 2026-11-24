@@ -1,9 +1,9 @@
 {
-  "version": "0.4.0-preview",
-  "android_version_code": 4000,
+  "version": "0.4.1-preview",
+  "android_version_code": 4001,
   "android_certificate_sha256": "a5ed967ba9dd5cc7626793c6b8eae8ab7d8a904e855355b71d6ba9b17e84b8a5",
-  "source_commit": "8b5ffbb2b4f70a107fe387ea535dfb740acaa29c",
-  "built_at": "2026-11-24T17:10:15.379055+00:00",
+  "source_commit": "680274bad416a1ae84f5507d5844ed74c5871d75",
+  "built_at": "2026-11-24T23:37:36.040684+00:00",
   "status": "preview-native-acceptance-required",
   "signing": {
     "android": "persistent certificate verified against the pinned identity; see docs/android-signing.md for legacy migration",
@@ -12,25 +12,19 @@
   },
   "files": [
     {
-      "name": "Сеть-0.4.0-android-preview.apk",
-      "size": 86732359,
-      "sha256": "29ceea730cad19141b188c4051d997f792f3c4b7b28e8ca883bef3d79f8483d3"
+      "name": "\u0421\u0435\u0442\u044c-0.4.1-android-preview.apk",
+      "size": 86789959,
+      "sha256": "dce07cdfef65a5d6528961a5495232006557cb6d312b98e19efccea251dba1ba"
     },
     {
-      "name": "Сеть-0.4.0-macos-universal.dmg",
-      "size": 313316842,
-      "sha256": "88995f3dc654cdb840127b42813907804936431a1258de23462db73af6fd05ae",
-      "source_commit": "b3e8ca6f56064f81413fd9ec2288c42c510b77c5",
-      "built_at": "2026-11-24T21:32:35Z",
-      "build_run_id": 45489878360,
-      "build_run_url": "https://github.com/jEUGENEdev/vpn/actions/runs/45489878360"
+      "name": "\u0421\u0435\u0442\u044c-0.4.1-macos-universal.dmg",
+      "size": 313396456,
+      "sha256": "34fc520e6d5e20334159a77c897e4fb0814808153a7bc782fce7cf85ef2d1186"
     },
     {
-      "name": "Сеть-0.4.0-windows-x64.msi",
-      "size": 178200576,
-      "sha256": "995f4366fa51635415a9a773b2d26220145415ed72ecd358184b2d61cbd9a0a2"
+      "name": "\u0421\u0435\u0442\u044c-0.4.1-windows-x64.msi",
+      "size": 178319360,
+      "sha256": "fa512e6f55196e3ffc0bf45caae1710ec5ee8c8eee7c5901af29ee3567c778ad"
     }
-  ],
-  "source_commit_scope": "Base installer set; per-file source_commit and built_at override it",
-  "updated_at": "2026-11-24T21:52:25.213005+00:00"
+  ]
 }
