@@ -31,6 +31,8 @@ func Description(action string, raw json.RawMessage, server string, application 
 	var lines []string
 	lines = append(lines, title, "Сервер: "+clean(server))
 	switch action {
+	case "settings-session":
+		lines = append(lines, "Разрешить включать и выключать VPN, менять режим трафика и правила адресов и приложений без повторного ввода пароля. Доступ действует до выхода из приложения «Сеть», максимум 12 часов.")
 	case "bootstrap":
 		uri, _ := data["uri"].(string)
 		u, e := url.Parse(uri)

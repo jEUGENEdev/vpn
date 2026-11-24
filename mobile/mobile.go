@@ -28,6 +28,7 @@ type Protector interface {
 	OpenTunnel(all bool, applications string) (int64, error)
 	WaitTunnelReady(name string) error
 	InstalledApplications() (string, error)
+	InstalledApplication(packageName string) (string, error)
 	CheckDisable() error
 	CloseTunnel() error
 }
@@ -205,16 +206,38 @@ func (s *session) applyScope(enabled, all bool, apps []model.ApplicationInfo) er
 	return nil
 }
 
-func updateApplications(c *client.Client, p Protector) error {
-	raw, err := p.InstalledApplications()
+func (s *session) InstalledPackage(name string) (model.ApplicationInfo, error) {
+	return installedPackage(s.p, name)
+}
+
+func installedPackage(p Protector, name string) (model.ApplicationInfo, error) {
+	raw, err := p.InstalledApplication(name)
 	if err != nil {
-		return err
+		return model.ApplicationInfo{}, err
 	}
-	var apps []model.ApplicationInfo
-	if len(raw) > 2*1024*1024 || json.Unmarshal([]byte(raw), &apps) != nil || apps == nil {
-		return errors.New("не удалось прочитать каталог приложений Android")
+	if raw == "" {
+		// Android confirmed absence or ineligibility. A lookup error is distinct.
+		return model.ApplicationInfo{}, nil
 	}
-	return c.SetInstalledApplications(apps)
+	var info model.ApplicationInfo
+	if len(raw) > 8192 || json.Unmarshal([]byte(raw), &info) != nil || info.Path != name || info.Platform != "android" {
+		return model.ApplicationInfo{}, errors.New("не удалось проверить установленный пакет")
+	}
+	return info, nil
+}
+
+func updateApplications(c *client.Client, p Protector) error {
+	return c.RefreshAndroidApplications(func() ([]model.ApplicationInfo, error) {
+		raw, err := p.InstalledApplications()
+		if err != nil {
+			return nil, err
+		}
+		var apps []model.ApplicationInfo
+		if len(raw) > 2*1024*1024 || json.Unmarshal([]byte(raw), &apps) != nil || apps == nil {
+			return nil, errors.New("не удалось прочитать каталог приложений Android")
+		}
+		return apps, nil
+	}, func(name string) (model.ApplicationInfo, error) { return installedPackage(p, name) })
 }
 
 // Called after package changes; serializes with power and permission changes.

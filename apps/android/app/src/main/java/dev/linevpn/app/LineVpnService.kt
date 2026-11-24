@@ -104,6 +104,7 @@ class LineVpnService : VpnService() {
                     override fun checkDisable() {
                         if (isLockdownEnabled) throw IllegalStateException("Сначала отключите «Блокировать соединения без VPN» в системных настройках VPN. Android иначе заблокирует интернет.")
                     }
+                    override fun installedApplication(packageName: String): String = applicationResolver.selected(packageName)?.toString() ?: ""
                     override fun installedApplications(): String = applicationResolver.installed().toString()
                     override fun openTunnel(all: Boolean, applications: String): Long {
                         return synchronized(tunnelLock) {

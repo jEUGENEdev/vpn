@@ -153,6 +153,9 @@ class MainActivity : Activity() {
         }
         w.addJavascriptInterface(object {
             @JavascriptInterface fun theme(dark: Boolean) { runOnUiThread { systemTheme(dark) } }
+            @JavascriptInterface fun applicationChoices(): String = try {
+                ApplicationResolver(this@MainActivity).choices().toString()
+            } catch (_: Exception) { "[]" }
             @JavascriptInterface fun settings() { runOnUiThread { startActivity(Intent(Settings.ACTION_VPN_SETTINGS)) } }
             @JavascriptInterface fun prepareVPN(requestID: String) { runOnUiThread { this@MainActivity.prepareVPN(requestID) } }
             @JavascriptInterface fun notify(raw: String) { try { val e = JSONObject(raw); NativeNotifications.show(this@MainActivity, e.getString("kind"), e.getString("title"), e.getString("message")) } catch (_: Exception) { } }

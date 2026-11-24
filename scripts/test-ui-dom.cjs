@@ -52,6 +52,49 @@ function input(w, id, value) {
 }
 function visible(w, selector) { return [...w.document.querySelectorAll(selector)].filter(node => !node.hidden); }
 
+async function testApplicationPicker() {
+  const dom=load('client',['traffic.js','activity.js','app.js']), w=dom.window, d=w.document;
+  const get=id=>d.getElementById(id);
+  const added={id:'c'.repeat(64),name:'Тестовый клиент',path:'example.manual',platform:'android',decision:'pending'};
+  const state=copy(fixture), selected=[];
+  try {
+    await tick();
+    assert.equal(get('add-application').hidden,true);
+    w.LineBridge={applicationChoices:()=>JSON.stringify([added]),theme(){}};
+    w.fetch=async(path,options)=>{
+      if(path==='/local/applications/add'){
+        const {package:pkg}=JSON.parse(options.body);selected.push(pkg);
+        if(pkg!==added.path)return {ok:false,json:async()=>({error:'Пакет не установлен'})};
+        state.applications=[...state.applications,added];
+        return {ok:true,json:async()=>added};
+      }
+      return {ok:true,json:async()=>state};
+    };
+    await w.eval('update()');
+    assert.equal(get('add-application').hidden,false);
+    w.eval("view('applications')");
+    await get('add-application').onclick();
+    assert.equal(get('package-picker').open,true);
+    get('package-cancel').click();assert.deepEqual(selected,[]);
+    const submit=()=>get('package-form').onsubmit({preventDefault(){}});
+    await get('add-application').onclick();
+    get('package-query').value='example.missing';get('package-query').oninput();await submit();
+    assert.equal(get('package-picker').open,true);assert.match(get('package-error').textContent,/не установлен/);
+    get('applications-search').value='other row';get('applications-search').oninput();
+    get('package-query').value='тестовый';get('package-query').oninput();await submit();
+    assert.deepEqual(selected,['example.missing',added.path]);
+    assert.equal(get('package-picker').open,false);
+    const card=d.querySelector('#applications-list [data-key="'+added.id+'"]');
+    assert.equal(card.hidden,false);assert.equal(card.contains(d.activeElement),true);
+    delete w.LineBridge;
+    let picked=null;
+    w.linevpn={pickApplication:async()=>picked,notify(){}};
+    await get('add-application').onclick();
+    assert.equal(selected.length,2,'cancelled desktop picker changed settings');
+    picked=added;await get('add-application').onclick();assert.equal(card.contains(d.activeElement),true);
+  } finally {w.close()}
+}
+
 async function testQueuedConfirmation(w, confirm) {
   const dialog = w.document.getElementById('confirm'), originalClose = dialog.close, queued = [];
   // Native dialog close events arrive later; a user may already reopen it.
@@ -83,6 +126,7 @@ async function testQueuedConfirmation(w, confirm) {
 }
 
 (async () => {
+  await testApplicationPicker();
   const client = load('client',['traffic.js','activity.js','app.js']);
   const w = client.window, d = w.document, $ = id => d.getElementById(id);
   try {

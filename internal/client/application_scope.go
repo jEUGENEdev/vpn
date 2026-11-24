@@ -4,7 +4,9 @@ import (
 	"errors"
 	"maps"
 	"reflect"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/jEUGENEdev/vpn/internal/model"
@@ -98,11 +100,90 @@ func (c *Client) applyApplicationScope() error {
 // Accept a complete, locally signed package inventory from Android instead.
 // No names/paths are uploaded by the existing account permission sync.
 func (c *Client) SetInstalledApplications(installed []model.ApplicationInfo) error {
+	c.change.Lock()
+	defer c.change.Unlock()
+	return c.updateInstalledApplications(installed, true)
+}
+
+type installedPackageResolver interface {
+	InstalledPackage(name string) (model.ApplicationInfo, error)
+}
+
+// A package broadcast and a manual selection can race. Take the snapshot and
+// verify omissions under the same change lock used to publish the catalogue.
+func (c *Client) RefreshAndroidApplications(scan func() ([]model.ApplicationInfo, error), resolve func(string) (model.ApplicationInfo, error)) error {
+	c.change.Lock()
+	defer c.change.Unlock()
+	apps, err := scan()
+	if err != nil {
+		return err
+	}
+	listed := make(map[string]bool, len(apps))
+	for _, app := range apps {
+		listed[app.Path] = true
+	}
+	c.mu.RLock()
+	missing := map[string]bool{}
+	for _, app := range c.apps {
+		if app.Platform == "android" && !listed[app.Path] {
+			missing[app.Path] = true
+		}
+	}
+	c.mu.RUnlock()
+	for name := range missing {
+		info, err := resolve(name)
+		if err != nil {
+			return err
+		} // Keep the installed scope on a transient PackageManager failure.
+		if info == (model.ApplicationInfo{}) {
+			continue
+		}
+		if info.Path != name || info.Platform != "android" {
+			return errors.New("Android не подтвердил приложение")
+		}
+		apps = append(apps, info)
+	}
+	return c.updateInstalledApplications(apps, true)
+}
+
+func (c *Client) addAndroidPackage(name string) (model.Application, error) {
+	c.change.Lock()
+	defer c.change.Unlock()
+	resolver, ok := c.power.(installedPackageResolver)
+	if !ok || name == "" || len(name) > 255 || strings.TrimSpace(name) != name {
+		return model.Application{}, errors.New("укажите имя установленного пакета Android")
+	}
+	info, err := resolver.InstalledPackage(name)
+	if err != nil {
+		return model.Application{}, err
+	}
+	if info == (model.ApplicationInfo{}) {
+		return model.Application{}, errors.New("Пакет недоступен. Проверьте установку в этом профиле Android, разрешение на интернет и отдельный UID приложения.")
+	}
+	if info.Platform != "android" || info.Path != name || !validApplication(info) {
+		return model.Application{}, errors.New("Android не подтвердил приложение")
+	}
+	c.mu.RLock()
+	existing, found := c.apps[info.ID]
+	visible := c.appInventory == nil || c.appInventory[info.ID]
+	c.mu.RUnlock()
+	if found && visible && existing.ApplicationInfo == info {
+		return existing, nil
+	}
+	if err = c.updateInstalledApplications([]model.ApplicationInfo{info}, false); err != nil {
+		return model.Application{}, err
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.apps[info.ID], nil
+}
+
+// Caller holds change. A single verified package updates only its own entry.
+// A nil inventory means the full scan is unavailable, so keep its existing scope.
+func (c *Client) updateInstalledApplications(installed []model.ApplicationInfo, full bool) error {
 	if len(installed) > 512 {
 		return errors.New("слишком много установленных приложений")
 	}
-	c.change.Lock()
-	defer c.change.Unlock()
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -112,6 +193,14 @@ func (c *Client) SetInstalledApplications(installed []model.ApplicationInfo) err
 	// an unsynced denial must not disappear and restore old server-side trust.
 	next := maps.Clone(c.apps)
 	inventory := make(map[string]bool, len(installed))
+	if !full {
+		inventory = maps.Clone(c.appInventory)
+		for id, app := range c.apps {
+			if app.Path == installed[0].Path {
+				delete(inventory, id)
+			}
+		}
+	}
 	paths := map[string]bool{}
 	for _, info := range installed {
 		if !validApplication(info) || info.Platform != "android" || paths[info.Path] || inventory[info.ID] {
@@ -119,7 +208,9 @@ func (c *Client) SetInstalledApplications(installed []model.ApplicationInfo) err
 			return errors.New("неверный каталог Android")
 		}
 		paths[info.Path] = true
-		inventory[info.ID] = true
+		if inventory != nil {
+			inventory[info.ID] = true
+		}
 		app, exists := c.apps[info.ID]
 		if !exists {
 			app = model.Application{ApplicationInfo: info, FirstSeen: time.Now()}
@@ -129,7 +220,7 @@ func (c *Client) SetInstalledApplications(installed []model.ApplicationInfo) err
 		next[info.ID] = app
 	}
 	for id, app := range next {
-		if !inventory[id] && app.Decision == "pending" {
+		if inventory != nil && !inventory[id] && app.Decision == "pending" {
 			delete(next, id)
 		}
 	}
@@ -138,6 +229,16 @@ func (c *Client) SetInstalledApplications(installed []model.ApplicationInfo) err
 		return errors.New("слишком много сохранённых приложений")
 	}
 	mode := c.trafficModeLocked()
+	if !full {
+		_, before := applicationScope(mode, c.apps, c.appInventory)
+		_, after := applicationScope(mode, next, inventory)
+		if mode == TrafficAll || slices.Equal(before, after) {
+			// A catalogue-only selection works offline and leaves live flows alone.
+			err := c.saveInventoryLocked(next, inventory)
+			c.mu.Unlock()
+			return err
+		}
+	}
 	changed := !reflect.DeepEqual(next, c.apps) || !reflect.DeepEqual(inventory, c.appInventory)
 	c.mu.Unlock()
 	if !changed {
@@ -147,12 +248,10 @@ func (c *Client) SetInstalledApplications(installed []model.ApplicationInfo) err
 		return err
 	}
 	c.mu.Lock()
-	if err := c.saveApplications(next); err != nil {
+	if err := c.saveInventoryLocked(next, inventory); err != nil {
 		c.mu.Unlock()
 		return errors.Join(err, c.applyApplicationScope())
 	}
-	c.apps = next
-	c.appInventory = inventory
 	c.routeEpoch++
 	for flow := range c.active {
 		delete(c.active, flow)
@@ -160,4 +259,12 @@ func (c *Client) SetInstalledApplications(installed []model.ApplicationInfo) err
 	}
 	c.mu.Unlock()
 	return c.applyApplicationScope()
+}
+
+func (c *Client) saveInventoryLocked(apps map[string]model.Application, inventory map[string]bool) error {
+	if err := c.saveApplications(apps); err != nil {
+		return err
+	}
+	c.apps, c.appInventory = apps, inventory
+	return nil
 }

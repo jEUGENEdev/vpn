@@ -5,10 +5,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/netip"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/jEUGENEdev/vpn/internal/model"
@@ -75,6 +78,44 @@ func (c *Client) saveApplications(apps map[string]model.Application) error {
 	}
 	return secure.Save(filepath.Join(c.dir, "applications.json"), raw)
 }
+
+// A manual selection adds an identity to the local catalogue without inventing
+// a connection. Routing still requires a matching OS-attributed socket owner.
+func (c *Client) addDesktopApplication(info model.ApplicationInfo) (model.Application, error) {
+	if runtime.GOOS == "android" || info.Platform != runtime.GOOS || !validApplication(info) ||
+		info.ID != strings.ToLower(info.ID) || !filepath.IsAbs(info.Path) {
+		return model.Application{}, errors.New("неверный исполняемый файл приложения")
+	}
+	c.change.Lock()
+	defer c.change.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return model.Application{}, errors.New("клиент остановлен")
+	}
+	if c.appScope {
+		return model.Application{}, errors.New("выберите установленный пакет Android")
+	}
+	if app, ok := c.apps[info.ID]; ok {
+		return app, nil
+	}
+	if len(c.apps) >= 512 {
+		return model.Application{}, errors.New("список приложений заполнен")
+	}
+	app := model.Application{ApplicationInfo: info, FirstSeen: time.Now()}
+	app.Decision, app.SyncConfirmed = c.restoredApplicationDecisionLocked(info)
+	next := maps.Clone(c.apps)
+	next[info.ID] = app
+	if err := c.saveApplications(next); err != nil {
+		return model.Application{}, err
+	}
+	c.apps = next
+	if app.Decision != "pending" {
+		c.routeEpoch++
+	}
+	return app, nil
+}
+
 func (c *Client) SetOwnerLookup(lookup owner.Lookup) {
 	c.mu.Lock()
 	c.ownerLookup = lookup

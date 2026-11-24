@@ -15,7 +15,7 @@ func TestControlSessionNotReadableByOrdinaryUsers(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer channel.Listener.Close()
-	for _, p := range []string{"control", "control/session.json"} {
+	for _, p := range []string{"control", "control/session.json", "control/settings.key"} {
 		info, err := os.Stat(filepath.Join(dir, p))
 		if err != nil {
 			t.Fatal(err)

@@ -356,6 +356,15 @@ public class VpnSmokeTest {
             if (entry.getString("path").equals(getInstrumentation().getContext().getPackageName())) otherID = entry.getString("id");
         }
         assertNotNull("Excluded app must be selectable before sending traffic through TUN", otherID);
+        String packageName = getInstrumentation().getContext().getPackageName();
+        JSONObject picked = new JSONObject(request(base+"local/applications/add", token,
+                new JSONObject().put("package", packageName).toString()));
+        assertEquals("Manual selection must use Android's signed package identity", otherID, picked.getString("id"));
+        assertEquals("pending", picked.getString("decision"));
+        try {
+            request(base+"local/applications/add", token, "{\"package\":\"dev.linevpn.missing.fixture\"}");
+            fail("Missing package was accepted");
+        } catch (IOException expected) { }
         request(base+"local/applications",token,new JSONObject().put("id",otherID).put("decision","trusted").toString());
         JSONObject protectedProbe = probeOtherApplication();
         assertTrue("Approved app still bypasses Android VPN", protectedProbe.getBoolean("vpn"));

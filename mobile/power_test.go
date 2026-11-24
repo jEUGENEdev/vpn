@@ -2,6 +2,7 @@ package mobile
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/jEUGENEdev/vpn/internal/client"
+	"github.com/jEUGENEdev/vpn/internal/model"
 	"github.com/jEUGENEdev/vpn/internal/transport"
 )
 
@@ -26,7 +28,10 @@ func (*idleService) Protect(int64) bool                                         
 func (*idleService) DeviceName() string                                             { return "Test phone" }
 func (*idleService) WaitTunnelReady(string) error                                   { return nil }
 func (*idleService) ResolveApplication(string, string, int64, string, int64) string { return "{}" }
-func (p *idleService) InstalledApplications() (string, error)                       { return "[]", p.catalogueError }
+func (*idleService) InstalledApplication(string) (string, error) {
+	return "", errors.New("package unavailable")
+}
+func (p *idleService) InstalledApplications() (string, error) { return "[]", p.catalogueError }
 func (p *idleService) OpenTunnel(all bool, applications string) (int64, error) {
 	p.opens++
 	p.all, p.applications = all, applications
@@ -213,5 +218,58 @@ func TestAndroidLockdownOffUsesDirectWithoutReleasingTunnel(t *testing.T) {
 	}
 	if tunnel.closes != 1 || p.closes != 1 || c.State().(map[string]any)["tunnel"] != false {
 		t.Fatal("ordinary off retained interface")
+	}
+}
+
+type omittedPackageService struct {
+	idleService
+	selected model.ApplicationInfo
+}
+
+func (p *omittedPackageService) InstalledApplication(name string) (string, error) {
+	if p.catalogueError != nil {
+		return "", p.catalogueError
+	}
+	if name != p.selected.Path {
+		return "", nil
+	}
+	raw, err := json.Marshal(p.selected)
+	return string(raw), err
+}
+
+func TestRefreshVerifiesKnownPackageOmittedByEnumeration(t *testing.T) {
+	c, err := client.New(t.TempDir(), &transport.Dialer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	app := model.ApplicationInfo{ID: strings.Repeat("a", 64), Name: "Manual", Path: "example.manual", Platform: "android"}
+	p := &omittedPackageService{selected: app}
+	if err = c.SetInstalledApplications([]model.ApplicationInfo{app}); err != nil {
+		t.Fatal(err)
+	}
+	if err = updateApplications(c, p); err != nil {
+		t.Fatal(err)
+	}
+	apps := c.State().(map[string]any)["applications"].([]model.Application)
+	if len(apps) != 1 || apps[0].ID != app.ID {
+		t.Fatal("verified application disappeared after refresh")
+	}
+	// The package still exists but its identity lookup, unlike the scan, failed.
+	if err := c.RefreshAndroidApplications(func() ([]model.ApplicationInfo, error) { return []model.ApplicationInfo{}, nil },
+		func(string) (model.ApplicationInfo, error) {
+			return model.ApplicationInfo{}, errors.New("package manager offline")
+		}); err == nil {
+		t.Fatal("incomplete refresh accepted")
+	}
+	if len(c.State().(map[string]any)["applications"].([]model.Application)) != 1 {
+		t.Fatal("lookup failure removed saved app")
+	}
+	p.selected = model.ApplicationInfo{}
+	if err = updateApplications(c, p); err != nil {
+		t.Fatal(err)
+	}
+	if apps := c.State().(map[string]any)["applications"].([]model.Application); len(apps) != 0 {
+		t.Fatal("uninstalled application still selectable")
 	}
 }

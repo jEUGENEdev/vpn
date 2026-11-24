@@ -3,6 +3,7 @@ package client
 import (
 	"encoding/json"
 	"errors"
+	"github.com/jEUGENEdev/vpn/internal/model"
 	"github.com/jEUGENEdev/vpn/internal/secure"
 	"github.com/jEUGENEdev/vpn/internal/server"
 	"io"
@@ -52,6 +53,15 @@ func (c *Client) Handler(token string, static http.Handler) http.Handler {
 			out = map[string]bool{"ok": e == nil}
 		case "login", "register", "pair/claim":
 			out, e = c.Auth(r.Context(), action, data)
+		case "applications/add":
+			if name, ok := data["package"].(string); ok {
+				out, e = c.addAndroidPackage(name)
+				break
+			}
+			var info model.ApplicationInfo
+			if e = json.Unmarshal(raw, &info); e == nil {
+				out, e = c.addDesktopApplication(info)
+			}
 		case "rules", "dismiss", "pair", "revoke", "applications", "vpn", "traffic-mode", "access-key/rotate":
 			out, e = c.Action(r.Context(), action, data)
 		default:

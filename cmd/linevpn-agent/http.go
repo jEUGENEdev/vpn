@@ -12,7 +12,7 @@ func desktopHandler(c *client.Client, token string, static http.Handler) http.Ha
 		if strings.HasPrefix(r.URL.Path, "/local/") && (r.Method != "GET" || r.URL.Path != "/local/state") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
-			w.Write([]byte(`{"error":"Изменение настроек требует системного подтверждения в приложении «Сеть»"}`))
+			w.Write([]byte(`{"error":"Для изменения настроек откройте приложение «Сеть»"}`))
 			return
 		}
 		handler.ServeHTTP(w, r)
