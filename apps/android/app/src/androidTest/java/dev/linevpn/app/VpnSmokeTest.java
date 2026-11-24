@@ -335,7 +335,7 @@ public class VpnSmokeTest {
         assertDirectProbe("Selective mode must resume forwarding on the replacement interface", connectivity);
         // Exercise rapid replacement of the OS VPN, including reuse of tunN
         // names. Every transition must work on its first packet probe.
-        for (int replacement = 0; replacement < 8; replacement++) {
+        for (int replacement = 0; replacement < 32; replacement++) {
             request(base+"local/traffic-mode",token,"{\"mode\":\"all\"}");
             awaitVPNNetwork(connectivity, true);
             try { request(PROBE_URL,null,null); fail("Repeated full mode leaked directly"); }

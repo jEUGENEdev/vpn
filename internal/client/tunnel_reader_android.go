@@ -30,11 +30,13 @@ func monitorTunnelReader(device tun.Tun, options tun.Options) (tun.Tun, func()) 
 }
 
 func (device *monitoredAndroidTunnel) NewEndpoint() (stack.LinkEndpoint, stack.NICOptions, error) {
+	name, _ := device.Name()
+	log.Printf("VPN packet reader starting: interface=%s fd=%d", name, device.fd)
 	endpoint, err := fdbased.New(&fdbased.Options{
 		FDs: []int{device.fd}, MTU: device.mtu, ProcessorsPerChannel: 1, RXChecksumOffload: true,
 		ClosedFunc: func(err tcpip.Error) {
 			if device.active.Load() {
-				log.Printf("VPN packet reader stopped unexpectedly: %v", err)
+				log.Printf("VPN packet reader stopped unexpectedly: interface=%s fd=%d: %v", name, device.fd, err)
 			}
 		},
 	})
