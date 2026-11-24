@@ -28,7 +28,7 @@ func TestLegacyUninstallCleanup(t *testing.T) {
 		if err := s.AddProvider(&wf.Provider{ID: provider, Name: "LineVPN legacy fixture", Persistent: true}); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.AddSublayer(&wf.Sublayer{ID: sublayer, Provider: provider, Persistent: true, Weight: 65535}); err != nil {
+		if err := s.AddSublayer(&wf.Sublayer{ID: sublayer, Name: "LineVPN legacy test sublayer", Provider: provider, Persistent: true, Weight: 65535}); err != nil {
 			t.Fatal(err)
 		}
 		for _, layer := range []wf.LayerID{wf.LayerALEAuthConnectV4, wf.LayerALEAuthConnectV6} {

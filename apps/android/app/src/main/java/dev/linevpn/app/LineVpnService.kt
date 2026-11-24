@@ -6,6 +6,11 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.IntentFilter
 import android.net.VpnService
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import android.net.LinkProperties
 import android.os.*
 import android.content.pm.ServiceInfo
 import mobile.Mobile
@@ -122,6 +127,29 @@ class LineVpnService : VpnService() {
                         }
                     }
                     override fun closeTunnel() { releaseTunnel() }
+                    override fun waitTunnelReady(name: String) {
+                        val connectivity = getSystemService(ConnectivityManager::class.java)
+                        val ready = java.util.concurrent.CountDownLatch(1)
+                        val callback = object : ConnectivityManager.NetworkCallback() {
+                            override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) {
+                                // Android sends this after onAvailable, when routes/UID
+                                // ranges are ready. Never poll stale synchronous getters
+                                // here, or accept a callback from the previous interface.
+                                if (properties.interfaceName == name) ready.countDown()
+                            }
+                        }
+                        val request = NetworkRequest.Builder()
+                            .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+                            .addTransportType(NetworkCapabilities.TRANSPORT_VPN).build()
+                        // Default Connectivity callback thread is independent of the
+                        // main thread, which may currently be waiting on Go's lock.
+                        connectivity.registerNetworkCallback(request, callback)
+                        try {
+                            check(ready.await(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                                "Android не подтвердил применение VPN-сети; разрешение не сохранено"
+                            }
+                        } finally { connectivity.unregisterNetworkCallback(callback) }
+                    }
                     override fun deviceName(): String {
                         val model = Build.MODEL?.trim().orEmpty()
                         if (model.isBlank() || model.equals("unknown", true)) return ""

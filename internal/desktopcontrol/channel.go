@@ -52,7 +52,10 @@ func Open(dir string) (*Channel, error) {
 	if err != nil {
 		return nil, err
 	}
-	template := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "Set local control"}, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().AddDate(10, 0, 0), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}}
+	// This self-signed certificate is the explicit trust anchor used by the
+	// desktop TLS client. Electron/BoringSSL rejects a leaf without CA/key-sign
+	// constraints here, even though Go and OpenSSL accept that same pinned leaf.
+	template := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "Set local control"}, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().AddDate(10, 0, 0), KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign, BasicConstraintsValid: true, IsCA: true, MaxPathLenZero: true, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	if err != nil {
 		return nil, err

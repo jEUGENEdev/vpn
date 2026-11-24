@@ -80,7 +80,10 @@ function pinnedFetch(url,options,certificate){
    res.on('error',reject);
    res.on('end',()=>{try{const value=JSON.parse(Buffer.concat(chunks).toString('utf8'));resolve({ok:res.statusCode>=200&&res.statusCode<300,json:async()=>value})}catch{reject(Error('Неверный ответ службы'))}});
   });
-  req.on('error',()=>reject(Error('Служба недоступна или не прошла проверку сертификата')));
+  req.on('error',error=>{
+   const code=typeof error.code==='string'&&/^[A-Z0-9_]{1,80}$/.test(error.code)?' ('+error.code+')':'';
+   reject(Error('Служба недоступна или не прошла проверку сертификата'+code));
+  });
   if(options.body!==undefined)req.write(options.body);
   req.end();
  });

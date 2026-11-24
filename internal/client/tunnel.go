@@ -22,6 +22,8 @@ type Tunnel struct {
 	c      *Client
 }
 
+func (t *Tunnel) Name() (string, error) { return t.device.Name() }
+
 func (c *Client) StartTunnel(ctx context.Context, options tun.Options) (*Tunnel, error) {
 	options.Logger = logger.NOP()
 	options.MTU = 1400

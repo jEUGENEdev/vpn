@@ -26,6 +26,7 @@ type Protector interface {
 	DeviceName() string
 	ResolveApplication(network, source string, sourcePort int64, destination string, destinationPort int64) string
 	OpenTunnel(all bool, applications string) (int64, error)
+	WaitTunnelReady(name string) error
 	InstalledApplications() (string, error)
 	CheckDisable() error
 	CloseTunnel() error
@@ -181,6 +182,18 @@ func (s *session) applyScope(enabled, all bool, apps []model.ApplicationInfo) er
 		return err
 	}
 	s.t = t
+	// establish() returns before Android has applied routes and UID ranges.
+	// Start consuming packets first, then wait for this exact interface's OS
+	// readiness callback before a new application grant may be committed.
+	s.scope = ""
+	name, err := t.Name()
+	if err == nil {
+		err = s.p.WaitTunnelReady(name)
+	}
+	if err != nil {
+		s.c.SetNetworkError(err)
+		return err // Retain the new tunnel with the previous, restrictive policy.
+	}
 	s.scope = key
 	return nil
 }

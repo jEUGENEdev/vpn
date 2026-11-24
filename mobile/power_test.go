@@ -24,6 +24,7 @@ type idleService struct {
 
 func (*idleService) Protect(int64) bool                                             { return true }
 func (*idleService) DeviceName() string                                             { return "Test phone" }
+func (*idleService) WaitTunnelReady(string) error                                   { return nil }
 func (*idleService) ResolveApplication(string, string, int64, string, int64) string { return "{}" }
 func (p *idleService) InstalledApplications() (string, error)                       { return "[]", p.catalogueError }
 func (p *idleService) OpenTunnel(all bool, applications string) (int64, error) {
