@@ -39,6 +39,7 @@ func (c *Client) StartTunnel(ctx context.Context, options tun.Options) (*Tunnel,
 		}
 		return nil, e
 	}
+	dev = guardTunnelDevice(dev)
 	st, e := tun.NewStack("gvisor", c.stackOptions(ctx, dev, options))
 	if e != nil {
 		dev.Close()
