@@ -113,7 +113,7 @@ function Invoke-RemoteDeployment($Session, [string]$Command) {
             }
             $line = $pendingLine.GetAwaiter().GetResult()
             if ($null -eq $line) { break }
-            if ($line -match '^LINEVPN_(PROFILE_B64|CERT_B64|REMOTE_OK)=(.*)$') { $data[$Matches[1]] = $Matches[2] }
+            if ($line -match '^LINEVPN_(PROFILE_B64|CERT_B64|REALITY_SNI_B64|REMOTE_OK)=(.*)$') { $data[$Matches[1]] = $Matches[2] }
             else { Write-Host $line }
         }
         $commandObject.EndExecute($pendingCommand) | Out-Null

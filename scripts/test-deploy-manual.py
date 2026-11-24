@@ -74,7 +74,7 @@ class RemoteDeploymentTest(unittest.TestCase):
                 with mock.patch.object(remote, 'ROOT', root), mock.patch.object(remote, 'TOOLS', root / 'tools'), \
                      mock.patch.object(remote, 'verify_binaries', side_effect=RuntimeError('binary checksum failed') if failure == 'binaries' else None), mock.patch.object(remote,'prepare_tools'), \
                      mock.patch.object(remote, 'run', side_effect=fake_run), \
-                     mock.patch.object(remote, 'verify_server', side_effect=RuntimeError('health failed') if failure == 'health' else None) as verify, \
+                     mock.patch.object(remote, 'verify_server', return_value='example.org', side_effect=RuntimeError('health failed') if failure == 'health' else None) as verify, \
                      contextlib.redirect_stdout(output):
                     if failure:
                         with self.assertRaises(RuntimeError):
@@ -124,6 +124,7 @@ elif cmd.startswith('bash '):
  if os.environ['TEST_FAIL']=='deploy':sys.exit(1)
  print('LINEVPN_PROFILE_B64='+base64.b64encode(b'linevpn://8.8.8.8:8443?pin=test\\n').decode())
  print('LINEVPN_CERT_B64='+base64.b64encode(b'certificate').decode())
+ print('LINEVPN_REALITY_SNI_B64='+base64.b64encode(b'example.org').decode())
  print('LINEVPN_REMOTE_OK=1')
 ''')
             stub.chmod(0o755)
@@ -133,7 +134,7 @@ elif cmd.startswith('bash '):
                        VPS_HOST='8.8.8.8', VPS_USERNAME='root', VPS_PASSWORD=password, VPN_ADMIN_PASSWORD=admin,
                        TEST_STATE=str(tmp), TEST_PASSWORD=password, TEST_FAIL=failure)
             env.update(overrides or {})
-            code = 'source ./deploy.sh; prepare_source() { tar -czf "$linevpn_tmp/source.tar.gz" -C "$linevpn_root" -T "$linevpn_root/deploy/source-files.txt"; }; verify_public() { return ' + ('1' if failure == 'port' else '0') + '; }; main'
+            code = 'source ./deploy.sh; prepare_source() { tar -czf "$linevpn_tmp/source.tar.gz" -C "$linevpn_root" -T "$linevpn_root/deploy/source-files.txt"; }; verify_public() { [[ ${2:-} == example.org ]] || return 99; return ' + ('1' if failure == 'port' else '0') + '; }; main'
             result = subprocess.run(['bash', '-c', code], cwd=root, env=env, capture_output=True, text=True)
             combined = result.stdout + result.stderr
             self.assertNotIn(password, combined)

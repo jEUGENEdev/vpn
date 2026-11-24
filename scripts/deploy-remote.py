@@ -76,6 +76,7 @@ def verify_server(host, certificate):
     spec.loader.exec_module(actions)
     config = json.loads(Path('/etc/linevpn/server.json').read_text())
     actions.verify(host, str(certificate), config['transport']['sni'])
+    return config['transport']['sni']
 
 
 def prepare_tools():
@@ -129,10 +130,11 @@ def deploy(host, port, admin):
     finally:
         env.pop('VPN_ADMIN_PASSWORD', None)
     certificate = ansible / 'generated/vpn1-api-cert.pem'
-    verify_server(host, certificate)
+    reality_sni = verify_server(host, certificate)
     profile = ansible / 'generated/vpn1-bootstrap.txt'
     print('LINEVPN_PROFILE_B64=' + base64.b64encode(profile.read_bytes()).decode('ascii'))
     print('LINEVPN_CERT_B64=' + base64.b64encode(certificate.read_bytes()).decode('ascii'))
+    print('LINEVPN_REALITY_SNI_B64=' + base64.b64encode(reality_sni.encode('utf-8')).decode('ascii'))
     print('LINEVPN_REMOTE_OK=1', flush=True)
 
 

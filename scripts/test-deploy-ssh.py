@@ -70,7 +70,8 @@ class PasswordSSHTest(unittest.TestCase):
                         elif command.startswith(('bash ', 'if ')):
                             profile = base64.b64encode(b'linevpn://127.0.0.1:8443?pin=test\n').decode()
                             cert = base64.b64encode(b'test certificate').decode()
-                            channel.sendall(f'LINEVPN_PROFILE_B64={profile}\nLINEVPN_CERT_B64={cert}\nLINEVPN_REMOTE_OK=1\n'.encode())
+                            sni = base64.b64encode(b'example.org').decode()
+                            channel.sendall(f'LINEVPN_PROFILE_B64={profile}\nLINEVPN_CERT_B64={cert}\nLINEVPN_REALITY_SNI_B64={sni}\nLINEVPN_REMOTE_OK=1\n'.encode())
                         channel.send_exit_status(1 if command == 'if fail-fixture' else 0)
                         channel.close()
                         # Let OpenSSH consume CHANNEL_CLOSE and disconnect before

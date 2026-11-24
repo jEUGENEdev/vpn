@@ -85,7 +85,7 @@ decode64() {
 }
 
 verify_public() {
-  python3 "$linevpn_root/scripts/deploy-actions.py" --host "$linevpn_host" --certificate "$1"
+  python3 "$linevpn_root/scripts/deploy-actions.py" --host "$linevpn_host" --certificate "$1" --reality-sni "$2"
 }
 
 cleanup() {
@@ -157,19 +157,21 @@ SHA
   printf '%s\n%s\n%s\n%s\n' "$linevpn_host" "$linevpn_port" "$linevpn_password" "$linevpn_admin" |
     ssh_run "umask 077; cat > '$linevpn_remote/input'"
   printf '%s\n' 'Deploying prebuilt binaries on VPS. Installing packages may take several minutes.'
-  ssh_run "bash '$linevpn_remote/bootstrap.sh' '$linevpn_remote'" </dev/null | tee "$linevpn_tmp/result" | sed '/^LINEVPN_PROFILE_B64=/d; /^LINEVPN_CERT_B64=/d; /^LINEVPN_REMOTE_OK=/d'
+  ssh_run "bash '$linevpn_remote/bootstrap.sh' '$linevpn_remote'" </dev/null | tee "$linevpn_tmp/result" | sed '/^LINEVPN_PROFILE_B64=/d; /^LINEVPN_CERT_B64=/d; /^LINEVPN_REALITY_SNI_B64=/d; /^LINEVPN_REMOTE_OK=/d'
   grep -qx 'LINEVPN_REMOTE_OK=1' "$linevpn_tmp/result" || { fail 'The server did not confirm successful deployment.'; return 1; }
-  local profile64 cert64 output
+  local profile64 cert64 sni64 reality_sni output
   profile64=$(sed -n 's/^LINEVPN_PROFILE_B64=//p' "$linevpn_tmp/result")
   cert64=$(sed -n 's/^LINEVPN_CERT_B64=//p' "$linevpn_tmp/result")
-  [[ -n "$profile64" && -n "$cert64" ]] || { fail 'Missing profile or certificate.'; return 1; }
+  sni64=$(sed -n 's/^LINEVPN_REALITY_SNI_B64=//p' "$linevpn_tmp/result")
+  [[ -n "$profile64" && -n "$cert64" && -n "$sni64" ]] || { fail 'Missing profile, certificate or REALITY identity.'; return 1; }
   output="$linevpn_root/deploy/ansible/generated"
   mkdir -p "$output"
   decode64 "$profile64" > "$linevpn_tmp/profile"
   decode64 "$cert64" > "$linevpn_tmp/certificate"
   install -m 600 "$linevpn_tmp/profile" "$output/vpn1-bootstrap.txt"
   install -m 600 "$linevpn_tmp/certificate" "$output/vpn1-api-cert.pem"
-  verify_public "$output/vpn1-api-cert.pem"
+  reality_sni=$(decode64 "$sni64")
+  verify_public "$output/vpn1-api-cert.pem" "$reality_sni"
   local address=$linevpn_host
   [[ "$address" != *:* ]] || address="[$address]"
   printf '\nDeployment verified: authenticated HTTPS API and REALITY TLS listener.\n'

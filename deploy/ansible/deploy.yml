@@ -170,6 +170,22 @@
         src: /etc/linevpn/api-cert.pem
         dest: "{{ playbook_dir }}/generated/{{ inventory_hostname }}-api-cert.pem"
         flat: true
+    - name: Read configured public REALITY identity for external TLS verification
+      become_user: linevpn
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - "import json; print(json.load(open('/etc/linevpn/server.json'))['transport']['sni'])"
+      register: vpn_runtime_sni
+      changed_when: false
+    - name: Save public REALITY identity on the deployment controller
+      delegate_to: localhost
+      become: false
+      ansible.builtin.copy:
+        content: "{{ vpn_runtime_sni.stdout | trim }}\n"
+        dest: "{{ playbook_dir }}/generated/{{ inventory_hostname }}-reality-sni.txt"
+        mode: '0600'
   handlers:
     - name: Restart LineVPN
       ansible.builtin.systemd:

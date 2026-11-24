@@ -141,7 +141,7 @@ jobs:
           cd deploy/ansible
           ansible-playbook -i inventory.github.yml deploy.yml
           cd ../..
-          python scripts/deploy-actions.py --certificate deploy/ansible/generated/vpn1-api-cert.pem
+          python scripts/deploy-actions.py --certificate deploy/ansible/generated/vpn1-api-cert.pem --reality-sni "$(cat deploy/ansible/generated/vpn1-reality-sni.txt)"
       - name: Save client bootstrap and public certificate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
