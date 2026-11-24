@@ -32,14 +32,14 @@ func (c *Client) StartTunnel(ctx context.Context, options tun.Options) (*Tunnel,
 	options.Inet6Address = []netip.Prefix{netip.MustParsePrefix("fd04:6c69:6e65:ffff::1/126")}
 	options.DNSAddress = []netip.Addr{netip.MustParseAddr("172.29.255.2")}
 	options.EXP_MultiPendingPackets = true
-	dev, e := tun.New(options)
+	native, e := tun.New(options)
 	if e != nil {
 		if options.FileDescriptor > 0 {
 			os.NewFile(uintptr(options.FileDescriptor), "tun").Close()
 		}
 		return nil, e
 	}
-	dev = guardTunnelDevice(dev)
+	dev := guardTunnelDevice(native)
 	st, e := tun.NewStack("gvisor", c.stackOptions(ctx, dev, options))
 	if e != nil {
 		dev.Close()
