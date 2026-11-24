@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -38,22 +39,86 @@ func Pin(cert *x509.Certificate) string {
 	s := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
 	return base64.RawURLEncoding.EncodeToString(s[:])
 }
+
+var (
+	ErrPinMismatch            = errors.New("сертификат сервера не совпадает с профилем")
+	ErrCertificateNotYetValid = errors.New("сертификат сервера ещё не действует; проверьте дату и время устройства")
+	ErrCertificateExpired     = errors.New("сертификат сервера истёк; требуется продление на сервере")
+	ErrRedirect               = errors.New("redirects prohibited")
+)
+
 func HTTPClient(pin string) *http.Client {
-	return &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirects prohibited") }, Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, InsecureSkipVerify: true, VerifyConnection: func(c tls.ConnectionState) error {
-		if len(c.PeerCertificates) == 0 || pin == "" || !Equal(Pin(c.PeerCertificates[0]), pin) {
-			return errors.New("сертификат сервера не совпадает с профилем")
-		}
-		cert := c.PeerCertificates[0]
-		if time.Now().Before(cert.NotBefore) || time.Now().After(cert.NotAfter) {
-			return errors.New("сертификат просрочен")
-		}
-		return nil
-	}}}}
+	return &http.Client{
+		Timeout:       20 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return ErrRedirect },
+		Transport: &http.Transport{
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 15 * time.Second,
+			IdleConnTimeout:       60 * time.Second,
+			MaxIdleConns:          8,
+			MaxIdleConnsPerHost:   2,
+			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, InsecureSkipVerify: true, VerifyConnection: func(c tls.ConnectionState) error {
+				if len(c.PeerCertificates) == 0 || pin == "" || !Equal(Pin(c.PeerCertificates[0]), pin) {
+					return ErrPinMismatch
+				}
+				cert := c.PeerCertificates[0]
+				now := time.Now()
+				if now.Before(cert.NotBefore) {
+					return ErrCertificateNotYetValid
+				}
+				if now.After(cert.NotAfter) {
+					return ErrCertificateExpired
+				}
+				return nil
+			}},
+		},
+	}
+}
+
+// PrepareDirectory permits intentional traversal of desktop state, but rejects
+// a writable/symlinked leaf directory. Individual secret files get private ACLs.
+func PrepareDirectory(path string) error {
+	if err := os.MkdirAll(path, 0700); err != nil {
+		return err
+	}
+	return checkDirectory(path)
+}
+
+// OpenPrivateFile is also used by bbolt: its creation mode alone does not fix
+// existing files or Windows inherited ACLs. Tighten access before reading state.
+func OpenPrivateFile(path string, flag int, mode os.FileMode) (*os.File, error) {
+	if err := PrepareDirectory(filepath.Dir(path)); err != nil {
+		return nil, err
+	}
+	if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
+		return nil, errors.New("secret file must be a regular file")
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, flag, mode)
+	if err != nil {
+		return nil, err
+	}
+	if err = protectFile(f); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+// ReadPrivateFile also repairs legacy file permissions before loading secrets.
+func ReadPrivateFile(path string) ([]byte, error) {
+	f, err := OpenPrivateFile(path, os.O_RDONLY, 0600)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
 }
 
 // Save persists before publishing new policy. Existing files are never relaxed.
 func Save(path string, data []byte) error {
-	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
+	if e := PrepareDirectory(filepath.Dir(path)); e != nil {
 		return e
 	}
 	f, e := os.CreateTemp(filepath.Dir(path), ".pending-*")
@@ -62,7 +127,7 @@ func Save(path string, data []byte) error {
 	}
 	tmp := f.Name()
 	defer os.Remove(tmp)
-	if e = f.Chmod(0600); e == nil {
+	if e = protectFile(f); e == nil {
 		_, e = f.Write(data)
 	}
 	if e == nil {
@@ -75,5 +140,8 @@ func Save(path string, data []byte) error {
 	if e != nil {
 		return e
 	}
-	return os.Rename(tmp, path)
+	if e = os.Rename(tmp, path); e != nil {
+		return e
+	}
+	return syncDirectory(filepath.Dir(path))
 }

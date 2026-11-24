@@ -95,7 +95,7 @@ func New(dir string, dialer *transport.Dialer) (*Client, error) {
 	}
 	c := &Client{identity: nativeDeviceIdentity(), dir: dir, Direct: dialer, DNS: f, Events: events.New(), pending: map[string]time.Time{}, sent: map[string]time.Time{}, resolved: map[string]time.Time{}, dismissed: map[string]bool{}, active: map[io.Closer]activeFlow{}, apps: map[string]model.Application{}, observed: map[string]*observation{}, status: "setup", requests: []model.Request{}, devices: []model.Device{}}
 	c.dnsSlots = make(chan struct{}, 64)
-	raw, e := os.ReadFile(filepath.Join(dir, "profile.json"))
+	raw, e := secure.ReadPrivateFile(filepath.Join(dir, "profile.json"))
 	if e == nil {
 		if e = json.Unmarshal(raw, &c.config); e != nil {
 			f.Close()
@@ -148,12 +148,19 @@ func (c *Client) Close() {
 		v.Close()
 	}
 	c.ready = false
+	client := c.http
 	c.mu.Unlock()
 	c.vpn.Close()
 	c.appVPN.Close()
+	if client != nil {
+		client.CloseIdleConnections()
+	}
 	c.DNS.Close()
 }
 func (c *Client) configureHTTP() {
+	if c.http != nil {
+		c.http.CloseIdleConnections()
+	}
 	c.http = secure.HTTPClient(c.config.Pin)
 	c.http.Transport.(*http.Transport).DialContext = c.Direct.DialContext
 }

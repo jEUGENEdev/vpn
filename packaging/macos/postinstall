@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-# preinstall stopped the old service before Installer replaced the payload.
+# preinstall rejected existing services and payload before this fresh install.
 [[ "${3:-/}" == / ]] || { echo 'Install Сеть on the running system volume.' >&2; exit 1; }
 # Called by Apple's Installer as root; no credentials are stored here.
 [[ "$EUID" -eq 0 && "${3:-/}" == / ]] || { echo 'Install on the running system volume as root.' >&2; exit 1; }
@@ -28,14 +28,7 @@ if /bin/launchctl print system/dev.linevpn.agent >/dev/null 2>&1 || /usr/bin/pgr
   echo 'A previous Сеть service is still running; refusing to start a second instance.' >&2
   exit 1
 fi
-# Retire the old bundle only after the replacement with the same identity exists.
-if [[ -d /Applications/Сеть.app && -d /Applications/LineVPN.app ]] &&
-   [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' /Applications/Сеть.app/Contents/Info.plist)" == dev.linevpn.desktop ]] &&
-   [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' /Applications/LineVPN.app/Contents/Info.plist)" == dev.linevpn.desktop ]]; then
-  /bin/rm -rf /Applications/LineVPN.app
-fi
-# Migrate the old hook as well as installing a missing one. Validate a temporary
-# copy before touching system config; never reload/flush live rules on upgrade.
+# Install only our PF hook; preserve every unrelated anchor and live rule.
 vpn_pf="$(/usr/bin/mktemp /etc/pf.conf.linevpn.XXXXXX)"
 trap '/bin/rm -f "$vpn_pf"' EXIT
 /usr/bin/awk '

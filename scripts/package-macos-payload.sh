@@ -7,17 +7,22 @@ vpn_arch="${1:-arm64}"
 case "$vpn_arch" in arm64) vpn_electron_arch=arm64;; amd64) vpn_electron_arch=x64;; *) echo 'Use arm64 or amd64' >&2; exit 1;; esac
 export LINEVPN_MACOS_SIGNING="${LINEVPN_MACOS_SIGNING:-preview}"
 vpn_sign_args=(--force --sign -)
-vpn_pkg_args=()
+vpn_pkg_command=(pkgbuild)
 vpn_builder_args=(-c.mac.identity=- -c.mac.entitlements=../../packaging/macos/entitlements.preview.plist -c.mac.entitlementsInherit=../../packaging/macos/entitlements.preview.plist)
 case "$LINEVPN_MACOS_SIGNING" in
-  preview) export CSC_IDENTITY_AUTO_DISCOVERY=false;;
+  preview)
+    # PR packages still need a valid ad-hoc signature after Electron is renamed.
+    # This path never imports a certificate or uses a signing secret.
+    unset CSC_LINK CSC_KEY_PASSWORD CSC_INSTALLER_LINK CSC_INSTALLER_KEY_PASSWORD CSC_NAME CSC_KEYCHAIN
+    export CSC_IDENTITY_AUTO_DISCOVERY=false CSC_FOR_PULL_REQUEST=true
+    ;;
   release)
     : "${LINEVPN_MACOS_APP_IDENTITY:?Developer ID Application identity is required}"
     : "${LINEVPN_MACOS_INSTALLER_IDENTITY:?Developer ID Installer identity is required}"
     : "${LINEVPN_MACOS_NOTARY_PROFILE:?notarytool keychain profile is required}"
     export CSC_IDENTITY_AUTO_DISCOVERY=true
     vpn_sign_args=(--force --sign "$LINEVPN_MACOS_APP_IDENTITY" --options runtime --timestamp)
-    vpn_pkg_args=(--sign "$LINEVPN_MACOS_INSTALLER_IDENTITY" --timestamp)
+    vpn_pkg_command+=(--sign "$LINEVPN_MACOS_INSTALLER_IDENTITY" --timestamp)
     # electron-builder selects the certificate type itself and rejects its prefix.
     vpn_builder_identity="${LINEVPN_MACOS_APP_IDENTITY#Developer ID Application: }"
     vpn_builder_args=("-c.mac.identity=$vpn_builder_identity" -c.mac.type=distribution -c.forceCodeSigning=true -c.mac.entitlements=../../packaging/macos/entitlements.release.plist -c.mac.entitlementsInherit=../../packaging/macos/entitlements.release.plist)
@@ -32,7 +37,7 @@ GOOS=darwin GOARCH="$vpn_arch" CGO_ENABLED=0 go build -tags with_gvisor -trimpat
 cp packaging/macos/dev.linevpn.agent.plist build/macos-root/Library/LaunchDaemons/
 cp packaging/macos/preinstall packaging/macos/postinstall packaging/macos/stop-service.sh build/macos-scripts/
 printf '%s\n' "$vpn_version" > build/macos-scripts/version
-cp packaging/macos/recover-network.sh packaging/macos/service-wrapper.sh packaging/macos/uninstall.sh packaging/macos/stop-service.sh 'build/macos-root/Library/Application Support/LineVPN/'
+cp packaging/macos/service-wrapper.sh packaging/macos/uninstall.sh packaging/macos/stop-service.sh 'build/macos-root/Library/Application Support/LineVPN/'
 cp packaging/macos/Uninstall-LineVPN.command apps/desktop/assets/
 chmod 755 apps/desktop/assets/Uninstall-LineVPN.command
 chmod 755 build/macos-scripts/preinstall build/macos-scripts/postinstall build/macos-scripts/stop-service.sh 'build/macos-root/Library/Application Support/LineVPN/'*
@@ -65,7 +70,9 @@ path.write_bytes(plistlib.dumps(components))
 PY
 mkdir -p build/macos-payloads
 vpn_pkg="build/macos-payloads/payload-$vpn_electron_arch.pkg"
-pkgbuild --root build/macos-root --scripts build/macos-scripts --component-plist build/macos-components.plist --identifier dev.linevpn.service --version "$vpn_version" --install-location / "${vpn_pkg_args[@]}" "$vpn_pkg"
+# Keep the array nonempty: macOS /bin/bash 3.2 treats an empty array as unset
+# under nounset, even when it was explicitly initialized.
+"${vpn_pkg_command[@]}" --root build/macos-root --scripts build/macos-scripts --component-plist build/macos-components.plist --identifier dev.linevpn.service --version "$vpn_version" --install-location / "$vpn_pkg"
 if [[ "$LINEVPN_MACOS_SIGNING" == release ]]; then
   pkgutil --check-signature "$vpn_pkg"
   xcrun notarytool submit "$vpn_pkg" --keychain-profile "$LINEVPN_MACOS_NOTARY_PROFILE" --wait

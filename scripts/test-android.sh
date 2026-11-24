@@ -10,7 +10,7 @@ cleanup() {
   trap - EXIT
   set +e
   timeout 10s adb shell dumpsys connectivity > build/android-connectivity.txt 2>&1
-  timeout 10s adb shell 'ip addr; ip rule; ip route show table all' > build/android-network.txt 2>&1
+  timeout 10s adb shell 'ip -s addr; ip rule; ip route show table all' > build/android-network.txt 2>&1
   if [[ -n "$vpn_logcat_pid" ]]; then
     kill "$vpn_logcat_pid" 2>/dev/null
     wait "$vpn_logcat_pid" 2>/dev/null
@@ -27,6 +27,16 @@ trap cleanup EXIT
 adb logcat -c
 adb logcat -v threadtime > build/android-logcat.txt 2>&1 &
 vpn_logcat_pid=$!
+# Use one physical uplink for strict first-request assertions. The emulator's
+# background Wi-Fi/cellular handover can reset an in-flight HTTP connection;
+# that is independent of replacing the VPN interface under test. The fixture
+# below still waits for an actual successful host connection before starting.
+# Exclude Wi-Fi from the airplane-mode radio set on this disposable emulator.
+# The airplane-mode broadcast is asynchronous: otherwise it can disable Wi-Fi
+# after `svc wifi enable` has returned, leaving the preflight with no network.
+adb shell settings put global airplane_mode_radios cell,bluetooth,nfc,wimax
+adb shell cmd connectivity airplane-mode enable
+adb shell svc wifi enable
 python3 -u -m http.server 8765 --bind 0.0.0.0 --directory build/native-probe > build/android-probe-server.txt 2>&1 &
 vpn_probe_pid=$!
 # Fail as a fixture error if the host server never became ready.
@@ -74,5 +84,17 @@ done
 printf 'PASS: repeated APK installation preserves profile and application decisions\n' > build/android-update.txt
 
 # Package removal must leave ordinary networking without recovery commands.
+adb uninstall dev.linevpn.app
+adb shell ping -c 1 -W 5 10.0.2.2
+
+# Explicit uninstall must also allow a fresh installation without old state.
+adb install apps/android/app/build/outputs/apk/debug/app-debug.apk
+# exec-out does not propagate the remote process exit code. Use shell v2 so a
+# missing file is distinguished from a successful cat of an old profile.
+adb shell run-as dev.linevpn.app test ! -e files/core/profile.json
+adb shell pm grant dev.linevpn.app android.permission.POST_NOTIFICATIONS
+adb shell appops set dev.linevpn.app ACTIVATE_VPN allow
+adb shell am instrument -w dev.linevpn.app.test/androidx.test.runner.AndroidJUnitRunner | tee build/android-clean-install.txt
+grep -q '^OK (1 test)' build/android-clean-install.txt
 adb uninstall dev.linevpn.app
 adb shell ping -c 1 -W 5 10.0.2.2

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-for tool in actionlint gitleaks osv-scanner python3; do
+for tool in actionlint gitleaks osv-scanner govulncheck python3; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     printf 'Missing %s; see docs/security-quality.md\n' "$tool" >&2
     exit 1
@@ -22,4 +22,5 @@ osv-scanner scan source --offline --download-offline-databases \
   --lockfile go.mod --lockfile apps/desktop/package-lock.json \
   --lockfile tools/ui-tests/package-lock.json --lockfile tools/checks/requirements.txt \
   --lockfile deploy/requirements.txt --lockfile deploy/remote-requirements.txt
+govulncheck -tags with_gvisor ./...
 printf '\nPASS: workflow lint, source secret scan and dependency audits\n'

@@ -9,76 +9,56 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import tarfile
-import tempfile
-import urllib.request
 
 ROOT = Path(__file__).resolve().parent.parent
 TOOLS = Path('/opt/linevpn-tools')
-GO_VERSION = '1.27.4'
 
 
-def read_input(path):
-    lines = path.read_bytes().decode('utf-8').split('\n')
+def read_input(stream):
+    try:
+        lines = stream.read().decode('utf-8').split('\n')
+    except UnicodeDecodeError:
+        raise ValueError('Bootstrap input must be UTF-8.') from None
     if lines and lines[-1] == '':
         lines.pop()
-    path.unlink()
-    if len(lines) != 4:
-        raise ValueError('Expected host, port, SSH password and VPN admin password.')
+    if len(lines) != 3:
+        raise ValueError('Expected host, port and VPN admin password.')
     host = ipaddress.ip_address(lines[0])
-    if not host.is_global:
+    if not host.is_global or host.is_multicast or host.is_reserved:
         raise ValueError('host must be a public IP address.')
     if not lines[1].isascii() or not lines[1].isdigit() or not 1 <= int(lines[1]) <= 65535:
         raise ValueError('Invalid SSH port.')
-    admin = lines[3]
-    if not 16 <= len(admin.encode('utf-8')) <= 72 or admin != admin.strip():
+    admin = lines[2]
+    if not 16 <= len(admin.encode('utf-8')) <= 72 or admin != admin.strip() or '\r' in admin or '\0' in admin:
         raise ValueError('VPN admin password must be 16-72 UTF-8 bytes without surrounding whitespace.')
     return str(host), int(lines[1]), admin
 
 
 def run(command, *, env=None):
-    result = subprocess.run([str(item) for item in command], cwd=ROOT, env=env)
+    result = subprocess.run([str(item) for item in command], cwd=ROOT, env=env, stdin=subprocess.DEVNULL)
     if result.returncode:
         raise RuntimeError(f'{Path(command[0]).name} failed (exit {result.returncode}).')
 
 
-def go_archive_metadata(releases):
-    filename = f'go{GO_VERSION}.linux-amd64.tar.gz'
-    for release in releases:
-        if release.get('version') == f'go{GO_VERSION}':
-            for item in release.get('files', []):
-                if item.get('filename') == filename and item.get('os') == 'linux' and item.get('arch') == 'amd64':
-                    checksum = item.get('sha256', '')
-                    if len(checksum) == 64 and all(c in '0123456789abcdef' for c in checksum):
-                        return filename, checksum
-    raise RuntimeError(f'Go {GO_VERSION} checksum was not found in the official download index.')
-
-
-def install_go():
-    target = TOOLS / f'go{GO_VERSION}'
-    executable = target / 'bin/go'
-    if executable.is_file():
-        return executable
-    with urllib.request.urlopen('https://go.dev/dl/?mode=json&include=all', timeout=60) as response:
-        filename, checksum = go_archive_metadata(json.load(response))
-    with tempfile.TemporaryDirectory(prefix='go-', dir=TOOLS) as tmp:
-        archive = Path(tmp) / filename
-        digest = hashlib.sha256()
-        with urllib.request.urlopen('https://go.dev/dl/' + filename, timeout=120) as response, archive.open('wb') as output:
-            while chunk := response.read(1024 * 1024):
-                digest.update(chunk)
-                output.write(chunk)
-        if digest.hexdigest() != checksum:
-            raise RuntimeError('Go archive SHA-256 mismatch; installation stopped.')
-        with tarfile.open(archive, 'r:gz') as bundle:
-            for member in bundle.getmembers():
-                path = Path(member.name)
-                if path.is_absolute() or '..' in path.parts or not path.parts or path.parts[0] != 'go' or not (member.isfile() or member.isdir()):
-                    raise RuntimeError('Unexpected entry in the Go archive.')
-            options = {'filter': 'data'} if hasattr(tarfile, 'data_filter') else {}
-            bundle.extractall(tmp, **options)
-        (Path(tmp) / 'go').rename(target)
-    return executable
+def verify_binaries():
+    build = ROOT / 'build'
+    manifest = build / 'SHA256SUMS'
+    expected = {}
+    for line in manifest.read_text(encoding='ascii').splitlines():
+        digest, name = line.split()
+        if name in expected or len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest):
+            raise RuntimeError('Invalid server binary checksum manifest.')
+        expected[name] = digest
+    names = {'linevpn-server-linux-amd64', 'linevpn-keygen-linux-amd64'}
+    if set(expected) != names:
+        raise RuntimeError('Expected both prebuilt Linux amd64 server binaries.')
+    for name in sorted(names):
+        path = build / name
+        if path.is_symlink() or not path.is_file():
+            raise RuntimeError('Server binary must be a regular file.')
+        with path.open('rb') as binary:
+            if hashlib.file_digest(binary, 'sha256').hexdigest() != expected[name]:
+                raise RuntimeError('Server binary SHA-256 mismatch.')
 
 
 def local_inventory(host, port):
@@ -94,25 +74,47 @@ def verify_server(host, certificate):
     spec = importlib.util.spec_from_file_location('actions', ROOT / 'scripts/deploy-actions.py')
     actions = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(actions)
-    actions.verify(host, str(certificate))
+    config = json.loads(Path('/etc/linevpn/server.json').read_text())
+    actions.verify(host, str(certificate), config['transport']['sni'])
+    return config['transport']['sni']
+
+
+def prepare_tools():
+    TOOLS.mkdir(parents=True, exist_ok=True, mode=0o700)
+    info = TOOLS.lstat()
+    if TOOLS.is_symlink() or info.st_uid != 0 or info.st_mode & 0o022:
+        raise RuntimeError('Deployment tools directory must be root-owned and not writable by others.')
+    TOOLS.chmod(0o700)
+    # Validate existing descendants too: securing only the parent cannot repair
+    # a writable Python module left by an older/manual installation.
+    for directory, folders, files in os.walk(TOOLS, followlinks=False):
+        for name in folders + files:
+            path = Path(directory) / name
+            info = path.lstat()
+            if info.st_uid != 0 or (not path.is_symlink() and info.st_mode & 0o022):
+                raise RuntimeError('Cached deployment tools must be root-owned and not writable by others.')
+            if path.is_symlink():
+                target = path.resolve(strict=True)
+                if target.is_dir() and TOOLS not in target.parents:
+                    raise RuntimeError('Cached tool directory must not link outside its protected root.')
+                for item in (target, *target.parents):
+                    info = item.stat()
+                    if info.st_uid != 0 or info.st_mode & 0o022:
+                        raise RuntimeError('Cached tool link has an untrusted target.')
 
 
 def deploy(host, port, admin):
     existing = Path('/etc/linevpn/server.json')
     if existing.exists() and json.loads(existing.read_text()).get('public_ip') != host:
         raise ValueError('Existing LineVPN uses another IP. Update its configuration/certificate explicitly before redeploying.')
-    TOOLS.mkdir(parents=True, exist_ok=True, mode=0o700)
-    go = install_go()
+    prepare_tools()
+    verify_binaries()
     env = os.environ.copy()
-    env.update(PATH=str(go.parent) + os.pathsep + env.get('PATH', ''), GOTOOLCHAIN='local',
-               GOMAXPROCS='2', GOFLAGS='-p=1', CGO_ENABLED='0')
-    print('Testing and compiling server on VPS...', flush=True)
-    run([go, 'test', './internal/policy', './internal/secure', './internal/server', './internal/transport'], env=env)
-    run(['bash', ROOT / 'scripts/build-server.sh'], env=env)
+    print('Installing verified prebuilt server binaries...', flush=True)
     venv = TOOLS / f'ansible-py{sys.version_info.major}.{sys.version_info.minor}'
     if not (venv / 'bin/python').is_file():
         run([sys.executable, '-m', 'venv', venv])
-    run([venv / 'bin/python', '-m', 'pip', 'install', '--disable-pip-version-check',
+    run([venv / 'bin/python', '-m', 'pip', 'install', '--require-hashes', '--only-binary=:all:', '--disable-pip-version-check',
          '-r', ROOT / 'deploy/remote-requirements.txt'])
     ansible = ROOT / 'deploy/ansible'
     env.update(ANSIBLE_CONFIG=str(ansible / 'ansible.cfg'),
@@ -128,10 +130,11 @@ def deploy(host, port, admin):
     finally:
         env.pop('VPN_ADMIN_PASSWORD', None)
     certificate = ansible / 'generated/vpn1-api-cert.pem'
-    verify_server(host, certificate)
+    reality_sni = verify_server(host, certificate)
     profile = ansible / 'generated/vpn1-bootstrap.txt'
     print('LINEVPN_PROFILE_B64=' + base64.b64encode(profile.read_bytes()).decode('ascii'))
     print('LINEVPN_CERT_B64=' + base64.b64encode(certificate.read_bytes()).decode('ascii'))
+    print('LINEVPN_REALITY_SNI_B64=' + base64.b64encode(reality_sni.encode('utf-8')).decode('ascii'))
     print('LINEVPN_REMOTE_OK=1', flush=True)
 
 
@@ -139,9 +142,9 @@ def main():
     try:
         if os.geteuid() != 0:
             raise ValueError('Run the bootstrap as root or with sudo.')
-        if len(sys.argv) != 2:
-            raise ValueError('Missing protected input file.')
-        deploy(*read_input(Path(sys.argv[1])))
+        if sys.argv[1:] != ['--stdin']:
+            raise ValueError('Expected --stdin bootstrap input.')
+        deploy(*read_input(sys.stdin.buffer))
         return 0
     except Exception as error:
         print(f'ERROR: {error}', file=sys.stderr)

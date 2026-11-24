@@ -14,7 +14,7 @@ $agent = Join-Path $env:ProgramFiles 'LineVPN/resources/agent/linevpn-agent.exe'
 $log = Join-Path (Get-Location) 'build/windows-install.log'
 $nativeOK = $false
 $env:LINEVPN_NATIVE_RECOVERY_TEST = "1"
-go test ./internal/platform -run TestLegacyRecoveryAndStandaloneScript -v
+go test ./internal/platform -run TestLegacyUninstallCleanup -v
 if ($LASTEXITCODE -ne 0) { throw "Legacy WFP migration failed" }
 try {
     $install = Start-Process msiexec.exe -ArgumentList @('/i', ('"' + $msi + '"'), '/qn', '/norestart', '/l*v', ('"' + $log + '"')) -Wait -PassThru
@@ -30,7 +30,9 @@ try {
     if (-not $state.tunnel -or -not $state.guard) { throw 'TUN or persistent guard unavailable' }
     # Exercise the shipped Electron/ASAR against the actual service, too.
     $env:LINEVPN_SMOKE_TEST_REPORT = Join-Path (Get-Location) 'build/windows-gui.txt'
-    $gui = Start-Process (Join-Path $env:ProgramFiles 'LineVPN/Сеть.exe') -ArgumentList '--background' -PassThru
+    $shortcut = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'Сеть.lnk'
+    Copy-Item -LiteralPath $shortcut -Destination build/windows-shortcut.lnk -Force
+    $gui = Start-Process $shortcut -ArgumentList '--background' -PassThru
     if (-not $gui.WaitForExit(45000)) { $gui.Kill(); throw 'Packaged Сеть UI did not become ready' }
     if ($gui.ExitCode -ne 0 -or -not (Test-Path $env:LINEVPN_SMOKE_TEST_REPORT)) { throw 'Packaged Сеть UI cannot communicate with its service' }
     Remove-Item Env:LINEVPN_SMOKE_TEST_REPORT
@@ -58,28 +60,6 @@ try {
     if ($LASTEXITCODE -eq 0) { throw 'Offline approved address bypassed VPN' }
     python scripts/test-desktop-power.py
     if ($LASTEXITCODE -ne 0) { throw 'Native power cycle regression failed' }
-    # Same MSI = repair of the existing product, with the existing state intact.
-    Stop-Service LineVPN
-    $dataPath = Join-Path $env:ProgramData 'LineVPN'
-    python scripts/test-upgrade-state.py snapshot $dataPath build/windows-upgrade-state.json
-    if ($LASTEXITCODE -ne 0) { throw 'Could not snapshot configured client state' }
-    $repair = Start-Process msiexec.exe -ArgumentList @('/i', ('"' + $msi + '"'), '/qn', '/norestart') -Wait -PassThru
-    if ($repair.ExitCode -notin @(0, 3010)) { throw "MSI repeat installation failed: $($repair.ExitCode)" }
-    python scripts/test-upgrade-state.py check $dataPath build/windows-upgrade-state.json
-    if ($LASTEXITCODE -ne 0) { throw 'Repair changed saved client data' }
-    $products = @(Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' | Get-ItemProperty | Where-Object { $_.DisplayName -in @('Сеть', 'LineVPN') })
-    if ($products.Count -ne 1 -or $products[0].DisplayVersion -ne $vpnVersion) { throw 'Duplicate or stale installed product after repair' }
-    if ((Get-Service LineVPN).Status -ne 'Running') { throw 'Repair did not start the service itself' }
-    # A broken installation may be missing its SCM registration entirely.
-    Stop-Service LineVPN
-    & sc.exe delete LineVPN | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Could not create missing-service fixture' }
-    $repair = Start-Process msiexec.exe -ArgumentList @('/i', ('"' + $msi + '"'), '/qn', '/norestart') -Wait -PassThru
-    if ($repair.ExitCode -notin @(0,3010) -or (Get-Service LineVPN).Status -ne 'Running') { throw 'Repeat MSI did not restore the missing service' }
-    python scripts/test-upgrade-state.py check $dataPath build/windows-upgrade-state.json
-    if ($LASTEXITCODE -ne 0) { throw 'Service restoration changed saved client data' }
-    python scripts/test-desktop-update.py $msi
-    if ($LASTEXITCODE -ne 0) { throw 'Native MSI update regression failed' }
     Write-Output 'Checking abrupt process termination and retained protection'
     Set-Service LineVPN -StartupType Disabled
     $vpnProcess = (Get-CimInstance Win32_Service -Filter "Name='LineVPN'").ProcessId
@@ -89,6 +69,8 @@ try {
     if ($LASTEXITCODE -eq 0) { throw 'Protected traffic escaped after process termination' }
     Set-Service LineVPN -StartupType Automatic
     Start-Service LineVPN
+    python scripts/test-desktop-clean-install.py $msi
+    if ($LASTEXITCODE -ne 0) { throw 'Clean install lifecycle failed' }
     # An enabled service must stop cleanly before MSI removes its executable.
     $remove = Start-Process msiexec.exe -ArgumentList @('/x', ('"' + $msi + '"'), '/qn', '/norestart') -Wait -PassThru
     if ($remove.ExitCode -notin @(0,3010)) { throw "MSI removal failed: $($remove.ExitCode)" }
@@ -99,11 +81,17 @@ try {
     Resolve-DnsName example.com -Type A -DnsOnly -QuickTimeout | Out-Null
     $nativeOK = $true
 } finally {
+    # MSI type-2 custom actions lose stderr; the helper records its failure in
+    # the OS Application log. Collect only our source, never unrelated events.
+    Get-WinEvent -LogName Application -MaxEvents 500 -ErrorAction SilentlyContinue |
+        Where-Object { $_.ProviderName -eq 'LineVPN Installer' } |
+        ForEach-Object { "$($_.TimeCreated): $($_.Properties.Value -join ' ')" } |
+        Tee-Object -FilePath build/windows-installer-errors.txt
     if (Get-Service LineVPN -ErrorAction SilentlyContinue) {
         Set-Service LineVPN -StartupType Disabled
         Stop-Service LineVPN -ErrorAction Continue
     }
-    if (Test-Path $agent) { & $agent -recover-network }
+    & apps/desktop/assets/linevpn-agent.exe -recover-network
     if (-not $nativeOK) { Start-Process msiexec.exe -ArgumentList @('/x', ('"' + $msi + '"'), '/qn', '/norestart') -Wait | Out-Null }
 }
-if ($nativeOK) { 'PASS: MSI install/repair preserves state and one product, DNS, protected failures, off/on, process termination and automatic uninstall recovery' | Set-Content build/windows-native.txt }
+if ($nativeOK) { 'PASS: MSI uninstall/fresh install clears state and leaves one product, DNS, protected failures, off/on, process termination and automatic uninstall recovery' | Set-Content build/windows-native.txt }

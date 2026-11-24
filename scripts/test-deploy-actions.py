@@ -54,31 +54,30 @@ class DeploymentSettingsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             deploy.settings(dict(self.env, VPN_ADMIN_PASSWORD='я' * 40))
 
-    def test_verification_uses_trusted_certificate_and_requires_both_ports(self):
+    def test_verification_authenticates_tls_and_rejects_public_admin(self):
         response = mock.MagicMock()
         response.__enter__.return_value = response
         response.status = 200
         response.read.return_value = b'{"status":"ok"}'
-        with mock.patch.object(deploy.ssl, 'create_default_context') as ssl_context, \
-             mock.patch.object(deploy.urllib.request, 'build_opener') as build_opener, \
-             mock.patch.object(deploy.socket, 'create_connection') as tcp:
-            build_opener.return_value.open.return_value = response
-            deploy.verify('2606:4700:4700::1111', 'trusted.pem')
-            ssl_context.assert_called_once_with(cafile='trusted.pem')
-            build_opener.return_value.open.assert_called_once_with(
-                'https://[2606:4700:4700::1111]:8443/healthz', timeout=20)
-            tcp.assert_called_once_with(('2606:4700:4700::1111', 443), timeout=20)
-            response.read.return_value = b'{"status":"broken"}'
-            with self.assertRaises(RuntimeError):
-                deploy.verify('8.8.8.8', 'trusted.pem')
+        hidden = deploy.urllib.error.HTTPError('https://fixture',404,'missing',{},None)
+        with mock.patch.object(deploy.ssl,'create_default_context') as context, \
+             mock.patch.object(deploy.urllib.request,'build_opener') as opener, \
+             mock.patch.object(deploy.socket,'create_connection') as tcp:
+            opener.return_value.open.side_effect = [response, hidden, hidden]
+            deploy.verify('2606:4700:4700::1111','trusted.pem')
+            self.assertEqual(context.call_args_list[0],mock.call(cafile='trusted.pem'))
+            tcp.assert_called_once_with(('2606:4700:4700::1111',443),timeout=20)
+            context.return_value.wrap_socket.assert_called_once()
+            opener.return_value.open.side_effect = [response,response]
+            with self.assertRaises(RuntimeError): deploy.verify('8.8.8.8','trusted.pem')
 
     @unittest.skipUnless(shutil.which('ansible-playbook'), 'requires deployment tools')
-    def test_generated_admin_password_survives_redeploy(self):
+    def test_admin_hash_survives_redeploy(self):
         import yaml
         root = SCRIPT.parent.parent
         play = yaml.safe_load((root / 'deploy/ansible/deploy.yml').read_text())[0]
         task = copy.deepcopy(next(t for t in play['tasks'] if t['name'] ==
-                                 'Install configured admin password or generate it once'))
+                                 'Install configured admin password hash'))
         task.pop('notify')
         with tempfile.TemporaryDirectory() as tmp:
             password_file = Path(tmp) / 'admin-password'
@@ -86,7 +85,7 @@ class DeploymentSettingsTest(unittest.TestCase):
                 owner=pwd.getpwuid(os.getuid()).pw_name,
                 group=grp.getgrgid(os.getgid()).gr_name)
             local_play = [{'hosts': 'localhost', 'gather_facts': False, 'connection': 'local',
-                           'vars': {'vpn_admin_password': '',
+                           'vars': {'vpn_admin_password': 'synthetic test password', 'vpn_admin_hash':{'stdout':'bcrypt-hash-from-keygen'},
                                     'ansible_python_interpreter': sys.executable}, 'tasks': [task]}]
             playbook = Path(tmp) / 'test.yml'
             playbook.write_text(yaml.safe_dump(local_play))
@@ -96,14 +95,17 @@ class DeploymentSettingsTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             run_playbook()
             generated = password_file.read_text()
-            self.assertEqual(len(generated), 48)
-            self.assertEqual(stat.S_IMODE(password_file.stat().st_mode), 0o600)
+            self.assertEqual(generated, 'bcrypt-hash-from-keygen')
+            self.assertEqual(stat.S_IMODE(password_file.stat().st_mode), 0o640)
+            local_play[0]['vars']['vpn_admin_password']=''
+            playbook.write_text(yaml.safe_dump(local_play))
             run_playbook()
             self.assertEqual(password_file.read_text(), generated)
             local_play[0]['vars']['vpn_admin_password'] = 'Explicit admin test password'
+            local_play[0]['vars']['vpn_admin_hash']['stdout'] = 'new-bcrypt-hash'
             playbook.write_text(yaml.safe_dump(local_play))
             run_playbook()
-            self.assertEqual(password_file.read_text(), 'Explicit admin test password')
+            self.assertEqual(password_file.read_text(), 'new-bcrypt-hash')
 
 
 if __name__ == '__main__':

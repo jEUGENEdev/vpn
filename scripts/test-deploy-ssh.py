@@ -62,17 +62,24 @@ class PasswordSSHTest(unittest.TestCase):
                         self.assertNotIn(PASSWORD, command)
                         self.assertNotIn(ADMIN, command)
                         if 'mktemp -d' in command:
-                            channel.sendall(b'/tmp/linevpn-deploy.1234abcd\n')
+                            channel.sendall(b'/dev/shm/linevpn-deploy.1234abcd\n')
                         elif command.startswith('umask'):
                             received.append(channel.makefile('rb').read())
                         elif 'cat >' in command:
                             channel.makefile('rb').read()
-                        elif command.startswith('if '):
+                        elif command.startswith(('bash ', 'if ')):
                             profile = base64.b64encode(b'linevpn://127.0.0.1:8443?pin=test\n').decode()
                             cert = base64.b64encode(b'test certificate').decode()
-                            channel.sendall(f'LINEVPN_PROFILE_B64={profile}\nLINEVPN_CERT_B64={cert}\nLINEVPN_REMOTE_OK=1\n'.encode())
+                            sni = base64.b64encode(b'example.org').decode()
+                            channel.sendall(f'LINEVPN_PROFILE_B64={profile}\nLINEVPN_CERT_B64={cert}\nLINEVPN_REALITY_SNI_B64={sni}\nLINEVPN_REMOTE_OK=1\n'.encode())
                         channel.send_exit_status(1 if command == 'if fail-fixture' else 0)
                         channel.close()
+                        # Let the client acknowledge CHANNEL_CLOSE and disconnect
+                        # before closing TCP. Immediate transport teardown races
+                        # OpenSSH's final write and yields a spurious exit 255.
+                        transport.join(10)
+                        if transport.is_active():
+                            raise RuntimeError('SSH client did not finish disconnecting')
                 except Exception as error:
                     errors.append(error)
 
@@ -108,7 +115,7 @@ class PasswordSSHTest(unittest.TestCase):
                            VPS_HOST='127.0.0.1', VPS_PORT=str(port), VPS_USERNAME='tester',
                            VPS_PASSWORD=PASSWORD, VPN_ADMIN_PASSWORD=ADMIN,
                            TEST_KNOWN_HOSTS=str(known_hosts), TEST_ROOT=str(root), TEST_LAUNCHER=str(ROOT / 'deploy.sh'))
-                result = subprocess.run(['bash', '-c', 'source "$TEST_LAUNCHER"; linevpn_root=$TEST_ROOT; check_port() { return 0; }; main'],
+                result = subprocess.run(['bash', '-c', 'source "$TEST_LAUNCHER"; linevpn_root=$TEST_ROOT; prepare_source() { tar -czf "$linevpn_tmp/source.tar.gz" -C "$linevpn_root" -T "$linevpn_root/deploy/source-files.txt"; }; verify_public() { return 0; }; original_validate=$(declare -f validate_inputs); validate_inputs() { local linevpn_host=8.8.8.8; eval "${original_validate/validate_inputs/original_validate}"; original_validate; }; main'],
                                         env=env, capture_output=True, text=True, timeout=45)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn('Deployment verified:', result.stdout)

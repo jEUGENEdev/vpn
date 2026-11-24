@@ -29,15 +29,25 @@ type Runtime struct {
 	config   *core.Config
 }
 
+// ValidateConfig rejects invalid generated configuration before a server mutation
+// commits. It creates no instance, listeners or live router changes.
+func ValidateConfig(config obj) error {
+	_, err := parseConfig(config)
+	return err
+}
+
+func parseConfig(config obj) (*core.Config, error) {
+	raw, err := json.Marshal(config)
+	if err != nil {
+		return nil, err
+	}
+	return core.LoadConfig("json", bytes.NewReader(raw))
+}
+
 func (r *Runtime) Apply(config obj) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	raw, e := json.Marshal(config)
-	if e != nil {
-		r.closeLocked()
-		return e
-	}
-	parsed, e := core.LoadConfig("json", bytes.NewReader(raw))
+	parsed, e := parseConfig(config)
 	if e != nil {
 		r.closeLocked()
 		return e
@@ -115,6 +125,7 @@ func (r *Runtime) Dial(ctx context.Context, network, address string) (net.Conn, 
 type Dialer struct {
 	Control    func(string, string, syscall.RawConn) error
 	PublicOnly bool
+	Deny       []netip.Prefix
 	Resolver   *net.Resolver
 }
 
@@ -123,6 +134,8 @@ func (d *Dialer) Dial(ctx context.Context, _ xnet.Address, dest xnet.Destination
 	return d.DialContext(ctx, dest.Network.SystemString(), dest.NetAddr())
 }
 func (d *Dialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
 	host, port, e := net.SplitHostPort(address)
 	if e != nil {
 		return nil, e
@@ -142,6 +155,16 @@ func (d *Dialer) DialContext(ctx context.Context, network, address string) (net.
 	}
 	var last error = errors.New("no permitted address")
 	for _, ip := range ips {
+		denied := false
+		for _, prefix := range d.Deny {
+			if prefix.Contains(ip.Unmap()) {
+				denied = true
+				break
+			}
+		}
+		if denied {
+			continue
+		}
 		if d.PublicOnly && !policy.Public(ip) {
 			continue
 		}

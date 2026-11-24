@@ -52,11 +52,42 @@ function input(w, id, value) {
 }
 function visible(w, selector) { return [...w.document.querySelectorAll(selector)].filter(node => !node.hidden); }
 
+async function testQueuedConfirmation(w, confirm) {
+  const dialog = w.document.getElementById('confirm'), originalClose = dialog.close, queued = [];
+  // Native dialog close events arrive later; a user may already reopen it.
+  dialog.close = function(value) { this.returnValue=value; this.open=false; queued.push(()=>this.dispatchEvent(new w.Event('close'))); };
+  const submit = value => {
+    const button = dialog.querySelector('button[value="'+value+'"]');
+    const event = new w.SubmitEvent('submit',{bubbles:true,cancelable:true,submitter:button});
+    if(button.form.dispatchEvent(event))dialog.close(value);
+  };
+  try {
+    let first, second;
+    confirm('First','Cancel this request').then(value=>{first=value;});
+    submit('cancel');
+    confirm('Second','Confirm this request').then(value=>{second=value;});
+    queued.shift()(); await tick();
+    assert.equal(first,false,'cancelled request changed its decision');
+    assert.equal(second,undefined,'old close event answered the reopened dialog');
+    assert.equal(dialog.open,true,'old close event closed the new dialog');
+    submit('ok'); await tick();
+    assert.equal(second,true,'confirmation waited for an unrelated close event');
+    queued.shift()(); await tick();
+    let escaped;
+    confirm('Third','Cancel with Escape').then(value=>{escaped=value;});
+    const cancel=new w.Event('cancel',{cancelable:true});
+    if(dialog.dispatchEvent(cancel))dialog.close('');
+    await tick(); assert.equal(escaped,false,'Escape did not cancel immediately');
+    queued.shift()();
+  } finally { dialog.close=originalClose; }
+}
+
 (async () => {
   const client = load('client',['traffic.js','activity.js','app.js']);
   const w = client.window, d = w.document, $ = id => d.getElementById(id);
   try {
     await tick();
+    await testQueuedConfirmation(w,w.confirmChange);
     assert.equal($('dashboard').hidden,false,'client failed to render');
     assert.ok($('traffic-mode'), 'missing device-wide traffic mode control');
     assert.equal($('traffic-mode').value, 'selective');
@@ -201,6 +232,7 @@ function visible(w, selector) { return [...w.document.querySelectorAll(selector)
   const a = admin.window, ad = a.document;
   try {
     await tick();
+    await testQueuedConfirmation(a,a.confirm);
     ad.querySelector('[data-filter="all"]').click();
     input(a,'accounts-search',' ALICE ');
     assert.equal(ad.querySelectorAll('#accounts > .list-row').length,1);
@@ -224,8 +256,37 @@ function visible(w, selector) { return [...w.document.querySelectorAll(selector)
     assert.equal(ad.querySelectorAll('#accounts > .list-row').length,2);
   } finally { a.close(); }
   await testCombinedAuthentication();
+  await testReopenedConfirmation();
   console.log('DOM checks passed: sources, historical search, every list, stable polling, correct action targets and safe text rendering.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
+
+async function testReopenedConfirmation() {
+  for (const name of ['client', 'admin']) {
+    const dom=load(name,name==='client'?['traffic.js','activity.js','app.js']:['app.js']);
+    const w=dom.window,d=w.document.getElementById('confirm'),queued=[];
+    try {
+      await tick();
+      // Native dialog.close queues its event; a user can reopen before it runs.
+      d.close=function(value){this.returnValue=value;this.open=false;queued.push(()=>this.dispatchEvent(new w.Event('close')))};
+      const submit=value=>{
+        const button=d.querySelector(`button[value="${value}"]`);
+        if(d.querySelector('form').dispatchEvent(new w.SubmitEvent('submit',{bubbles:true,cancelable:true,submitter:button})))d.close(value);
+      };
+      const ask=()=>w.eval(`${name==='client'?'confirmChange':'confirm'}('Confirm test','Test-only action')`);
+      const cancelled=ask();submit('cancel');
+      const accepted=ask();
+      queued.shift()();
+      assert.equal(d.open,true,'old close event dismissed the new confirmation');
+      submit('ok');while(queued.length)queued.shift()();
+      assert.equal(await cancelled,false,'cancelled action was approved by a later confirmation');
+      assert.equal(await accepted,true,'old close event consumed the new confirmation');
+      const escaped=ask();
+      if(d.dispatchEvent(new w.Event('cancel',{cancelable:true})))d.close('');
+      while(queued.length)queued.shift()();
+      assert.equal(await escaped,false,'Escape approved the action');
+    } finally { w.close(); }
+  }
+}
 
 async function testCombinedAuthentication() {
   const dom = load('client', ['traffic.js', 'activity.js', 'app.js']);
@@ -251,6 +312,10 @@ async function testCombinedAuthentication() {
       assert.equal(body.access_key,undefined);
       assert.equal(body.password,undefined);
       out = {login:body.login,access_key:key,status:'pending'};
+    } else if (url === '/local/access-key/rotate') {
+      assert.equal(body.confirm,true);
+      assert.equal(body.current_key,key,'rotation did not prove knowledge of current key');
+      out = {login:'Alice',access_key:key};
     } else if (url === '/local/vpn') {
       state.vpn_enabled = body.enabled;
       state.status = body.enabled ? 'setup' : 'disabled';
@@ -275,6 +340,22 @@ async function testCombinedAuthentication() {
     assert.equal($('access-key').value,'','successful login retained key');
     assert.equal($('dashboard').hidden,false);
     assert.equal($('accounts-search'),null);
+
+    const beforeRotate=calls.length;
+    // HTML pattern uses Unicode sets (v), including its stricter escaping rules.
+    const keyPattern=new RegExp('^(?:'+$('rotation-current-key').pattern+')$','v');
+    assert.equal(keyPattern.test(key),true);
+    assert.equal(keyPattern.test('lnv_'+'?'.repeat(43)),false);
+    const cancelled=$('rotate-access-key').onclick();await tick();
+    input(w,'rotation-current-key',key);$('rotation-cancel').click();await cancelled;
+    assert.equal(calls.length,beforeRotate,'cancel submitted rotation');
+    assert.equal($('rotation-current-key').value,'','cancel retained current key');
+    const rotating=$('rotate-access-key').onclick();await tick();
+    input(w,'rotation-current-key',key);$('key-rotation').close('rotate');await rotating;
+    assert.equal(calls.at(-1).url,'/local/access-key/rotate');
+    assert.equal($('rotation-current-key').value,'','rotation retained current key');
+    assert.equal($('issued-key').value,key,'rotation lost one-time result');
+    $('key-result').close('saved');
 
     Object.assign(state,{account_id:'',status:'setup'}); await w.eval('update()');
     $('tab-pair').click();input(w,'pair-code',code);
@@ -302,6 +383,31 @@ async function testCombinedAuthentication() {
     await $('vpn-toggle').onclick();
     assert.equal($('setup').hidden,false,'power toggle hid required login');
     assert.equal($('dashboard').hidden,true);
+    Object.assign(state,{status:'disabled',vpn_enabled:false,power_error:'',power_transition:false});
+    let permissionID, permissionRequests=0;
+    w.LineBridge={theme(){},settings(){},prepareVPN(id){permissionID=id;permissionRequests++;}};
+    await w.eval('update()');
+    const beforeConsent=calls.length;
+    const deniedEnable=$('vpn-toggle').onclick();
+    await tick();
+    assert.equal(permissionRequests,1,'Android enable did not request native VPN permission');
+    assert.equal(calls.length,beforeConsent,'enable reached API before Android consent');
+    assert.equal($('vpn-toggle').disabled,true,'enable can race the permission dialog');
+    w.lineVpnPermissionResult(permissionID,false,'Проверьте «Постоянная VPN» другого приложения.');
+    await deniedEnable;
+    assert.equal(calls.length,beforeConsent,'cancelled permission enabled VPN');
+    assert.equal(state.vpn_enabled,false);
+    assert.match($('toast').textContent,/Постоянная VPN/);
+    const deniedID=permissionID;
+    const allowedEnable=$('vpn-toggle').onclick();
+    await tick();
+    w.lineVpnPermissionResult(deniedID,true,'');
+    assert.equal(calls.length,beforeConsent,'stale permission result enabled VPN');
+    w.lineVpnPermissionResult(permissionID,true,'');
+    await allowedEnable;
+    assert.equal(calls.length,beforeConsent+1);
+    assert.equal(calls.at(-1).body.enabled,true);
+    assert.equal(state.vpn_enabled,true);
     Object.assign(state,{account_id:'test',auth_required:false,status:'ready',vpn_enabled:true,guard:false,power_error:'',power_transition:false});
     restartPower=true;await w.eval('update()');
     const switchOff=$('vpn-toggle').onclick();
@@ -311,6 +417,8 @@ async function testCombinedAuthentication() {
     assert.doesNotMatch($('toast').textContent,/настройки восстановлены/);
     Object.assign(state,{status:'disabled',power_transition:false,tunnel:false,guard:false});
     await switchOff;
+    assert.equal(permissionRequests,2,'explicit off requested Android VPN permission');
+    delete w.LineBridge;
     assert.equal($('vpn-toggle').textContent,'Включить VPN');
     assert.match($('toast').textContent,/Все соединения идут напрямую/);
     restartPower=false;

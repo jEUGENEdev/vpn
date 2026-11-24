@@ -26,12 +26,41 @@ function Test-DeployInput([string]$Server, [string]$UserName, [string]$Password,
     if ($bytes -lt 16 -or $bytes -gt 72 -or $AdminPassword -match '[\r\n\x00]' -or $AdminPassword -cne $AdminPassword.Trim()) { throw 'VPN admin password must be 16-72 UTF-8 bytes without surrounding whitespace.' }
 }
 
+function Prepare-ServerBinaries {
+    if ($env:LINEVPN_SERVER_BUILD_DIR) {
+        $source = $env:LINEVPN_SERVER_BUILD_DIR
+        New-Item -ItemType Directory -Path (Join-Path $LineVpnRoot 'build') -Force | Out-Null
+        foreach ($name in @('linevpn-server-linux-amd64','linevpn-keygen-linux-amd64','SHA256SUMS')) {
+            Copy-Item -LiteralPath (Join-Path $source $name) -Destination (Join-Path $LineVpnRoot "build/$name") -Force
+        }
+        return
+    }
+    if (-not (Get-Command go -ErrorAction SilentlyContinue)) { throw 'Install Go 1.27.4 locally, or set LINEVPN_SERVER_BUILD_DIR to extracted CI build files.' }
+    $saved = @($env:CGO_ENABLED,$env:GOOS,$env:GOARCH)
+    Push-Location $LineVpnRoot
+    try {
+        $env:CGO_ENABLED='0';$env:GOOS='linux';$env:GOARCH='amd64'
+        New-Item -ItemType Directory -Path 'build' -Force | Out-Null
+        foreach ($name in @('server','keygen')) {
+            & go build -trimpath '-ldflags=-s -w' -o "build/linevpn-$name-linux-amd64" "./cmd/linevpn-$name"
+            if ($LASTEXITCODE -ne 0) { throw 'Local server build failed.' }
+        }
+        $lines = foreach ($name in @('linevpn-server-linux-amd64','linevpn-keygen-linux-amd64')) {
+            (Get-FileHash -Algorithm SHA256 "build/$name").Hash.ToLowerInvariant() + '  ' + $name
+        }
+        [IO.File]::WriteAllText((Join-Path $LineVpnRoot 'build/SHA256SUMS'), ($lines -join "`n") + "`n", (New-Object Text.UTF8Encoding($false)))
+    } finally {
+        $env:CGO_ENABLED=$saved[0];$env:GOOS=$saved[1];$env:GOARCH=$saved[2]
+        Pop-Location
+    }
+}
+
 function New-SourceArchive([string]$Destination) {
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archive = [IO.Compression.ZipFile]::Open($Destination, [IO.Compression.ZipArchiveMode]::Create)
     try {
-        foreach ($entry in Get-Content -LiteralPath (Join-Path $LineVpnRoot 'deploy/source-files.txt')) {
+        foreach ($entry in @((Get-Content -LiteralPath (Join-Path $LineVpnRoot 'deploy/source-files.txt')) + @('build/linevpn-server-linux-amd64','build/linevpn-keygen-linux-amd64','build/SHA256SUMS'))) {
             if (-not $entry) { continue }
             $item = Get-Item -LiteralPath (Join-Path $LineVpnRoot $entry)
             $files = if ($item.PSIsContainer) { Get-ChildItem -LiteralPath $item.FullName -File -Recurse } else { @($item) }
@@ -84,7 +113,7 @@ function Invoke-RemoteDeployment($Session, [string]$Command) {
             }
             $line = $pendingLine.GetAwaiter().GetResult()
             if ($null -eq $line) { break }
-            if ($line -match '^LINEVPN_(PROFILE_B64|CERT_B64|REMOTE_OK)=(.*)$') { $data[$Matches[1]] = $Matches[2] }
+            if ($line -match '^LINEVPN_(PROFILE_B64|CERT_B64|REALITY_SNI_B64|REMOTE_OK)=(.*)$') { $data[$Matches[1]] = $Matches[2] }
             else { Write-Host $line }
         }
         $commandObject.EndExecute($pendingCommand) | Out-Null
@@ -122,15 +151,19 @@ function Invoke-Deployment {
             Install-Module -Name Posh-SSH -RequiredVersion 4.0.0 -Repository PSGallery -Scope CurrentUser -Force -AllowClobber -Confirm:$false
         }
         Import-Module Posh-SSH -RequiredVersion 4.0.0
+        Prepare-ServerBinaries
         New-SourceArchive (Join-Path $localWork 'source.zip')
         $securePassword = ConvertTo-SecureString -String $password -AsPlainText -Force
         $credential = New-Object Management.Automation.PSCredential($username, $securePassword)
         Write-Host 'Connecting. New host keys are saved on first use; changed keys are rejected.'
         $sshSession = New-SSHSession -ComputerName $server -Port ([int]$port) -Credential $credential -AcceptKey -ConnectionTimeout 20 -KeepAliveInterval 30
-        $remoteWork = Invoke-CheckedSsh $sshSession 'umask 077; mktemp -d /tmp/linevpn-deploy.XXXXXXXX'
-        if ($remoteWork -cnotmatch '^/tmp/linevpn-deploy\.[a-zA-Z0-9]{8}$') { $remoteWork = $null; throw 'Invalid SSH response.' }
+        $remoteWork = Invoke-CheckedSsh $sshSession 'umask 077; test -d /dev/shm || exit 1; mktemp -d /dev/shm/linevpn-deploy.XXXXXXXX'
+        if ($remoteWork -cnotmatch '^/dev/shm/linevpn-deploy\.[a-zA-Z0-9]{8}$') { $remoteWork = $null; throw 'Invalid SSH response.' }
         $sftpSession = New-SFTPSession -ComputerName $server -Port ([int]$port) -Credential $credential -AcceptKey -ConnectionTimeout 20
+        $checksum = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $localWork 'source.zip')).Hash.ToLowerInvariant()
+        [IO.File]::WriteAllText((Join-Path $localWork 'source.sha256'), "$checksum  source.zip`n", (New-Object Text.UTF8Encoding($false)))
         Send-File $sftpSession (Join-Path $localWork 'source.zip') "$remoteWork/source.zip"
+        Send-File $sftpSession (Join-Path $localWork 'source.sha256') "$remoteWork/source.sha256"
         Send-File $sftpSession (Join-Path $PSScriptRoot 'deploy-bootstrap.sh') "$remoteWork/bootstrap.sh"
         # Credentials go directly from memory to a protected remote directory over SFTP.
         $inputBytes = [Text.Encoding]::UTF8.GetBytes("$server`n$port`n$password`n$adminPassword`n")
@@ -140,8 +173,8 @@ function Invoke-Deployment {
         $sftpSession.Session.ChangePermissions("$remoteWork/input", [uint16]384)
         Remove-SFTPSession -SessionId $sftpSession.SessionId | Out-Null
         $sftpSession = $null
-        $command = 'if [ "$(id -u)" = 0 ]; then bash ''{0}/bootstrap.sh'' ''{0}''; else sed -n ''3p'' ''{0}/input'' | sudo -S -p '''' bash ''{0}/bootstrap.sh'' ''{0}''; fi' -f $remoteWork
-        Write-Host 'Installing tools and deploying on VPS. The first build may take several minutes.'
+        $command = "bash '$remoteWork/bootstrap.sh' '$remoteWork' </dev/null"
+        Write-Host 'Installing verified server binaries on VPS.'
         $resultData = Invoke-RemoteDeployment $sshSession $command
         if (-not $resultData['PROFILE_B64'] -or -not $resultData['CERT_B64']) { throw 'Missing profile or certificate.' }
         $output = Join-Path $LineVpnRoot 'deploy/ansible/generated'
@@ -152,7 +185,8 @@ function Invoke-Deployment {
         Test-PublicPort $server 8443
         $address = if ($server.Contains(':')) { "[$server]" } else { $server }
         Write-Host "`nDeployment verified: remote HTTPS health and public TCP 443/8443."
-        Write-Host "Admin: https://${address}:8443/"
+        Write-Host "Admin tunnel: ssh -N -p $port -L 8443:127.0.0.1:8444 $username@$address"
+        Write-Host 'Admin (after starting the tunnel): https://127.0.0.1:8443/'
         Write-Host 'Public API identity (no enrollment key):'
         Write-Host (Get-Content -LiteralPath (Join-Path $output 'vpn1-bootstrap.txt') -Raw)
         Write-Host 'Get the current connection profile in Admin > Server profile.'

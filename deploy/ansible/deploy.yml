@@ -12,15 +12,16 @@
           - >-
             (ansible_facts.distribution == 'Debian' and ansible_facts.distribution_major_version in ['12', '13'])
             or (ansible_facts.distribution == 'Ubuntu' and ansible_facts.distribution_version in ['24.04', '26.04'])
-          - vpn_admin_password | length == 0 or (vpn_admin_password | length >= 16 and vpn_admin_password | length <= 72)
           - vpn_public_ip | length > 0
         fail_msg: Use a supported Linux amd64 host, a public IP and an optional 16-72 byte admin password.
       no_log: true
     - name: Install system packages
       ansible.builtin.apt:
-        name: [ca-certificates, ufw]
+        # An unprivileged SSH user needs setfacl to run checks as linevpn.
+        name: [ca-certificates, ufw, acl]
         state: present
         update_cache: true
+        lock_timeout: 600
   tasks:
     - name: Create service account
       ansible.builtin.user:
@@ -29,14 +30,20 @@
         home: /var/lib/linevpn
         create_home: false
         shell: /usr/sbin/nologin
-    - name: Create protected state and configuration directories
+    - name: Create configuration directory read-only for service
       ansible.builtin.file:
-        path: "{{ item }}"
+        path: /etc/linevpn
+        state: directory
+        owner: root
+        group: linevpn
+        mode: '0750'
+    - name: Create protected state directory
+      ansible.builtin.file:
+        path: /var/lib/linevpn
         state: directory
         owner: linevpn
         group: linevpn
         mode: '0700'
-      loop: [/etc/linevpn, /var/lib/linevpn]
     - name: Install executables
       ansible.builtin.copy:
         src: "{{ item.src }}"
@@ -59,28 +66,61 @@
       ansible.builtin.copy:
         content: "{{ vpn_bootstrap.stdout | trim }}\n"
         dest: /etc/linevpn/bootstrap.txt
-        owner: linevpn
+        owner: root
         group: linevpn
-        mode: '0600'
+        mode: '0640'
       when: vpn_bootstrap.changed
       no_log: true
-    - name: Set ownership of generated configuration
-      ansible.builtin.file:
-        path: /etc/linevpn
-        owner: linevpn
-        group: linevpn
-        recurse: true
-    - name: Install configured admin password or generate it once
+    - name: Check for an existing administrator credential
+      ansible.builtin.stat:
+        path: /etc/linevpn/admin-password
+      register: vpn_admin_file
+    - name: Upgrade API certificate SANs while retaining the pinned key
+      ansible.builtin.command:
+        argv: [/usr/local/bin/linevpn-keygen, -dir, /etc/linevpn, -ip, "{{ vpn_public_ip }}", -ensure-admin-san]
+      register: vpn_cert_upgrade
+      changed_when: vpn_cert_upgrade.stdout | length > 0
+      no_log: true
+    - name: Require a known admin password on first deployment
+      ansible.builtin.assert:
+        that: vpn_admin_file.stat.exists or vpn_admin_password | length > 0
+        fail_msg: Set VPN_ADMIN_PASSWORD or vault_admin_password for the first deployment.
+      no_log: true
+    - name: Hash supplied admin password with byte-length validation
+      ansible.builtin.command:
+        argv: [/usr/local/bin/linevpn-keygen, -hash-admin-password]
+        stdin: "{{ vpn_admin_password }}"
+        stdin_add_newline: false
+      register: vpn_admin_hash
+      when: vpn_admin_password | length > 0
+      changed_when: false
+      no_log: true
+    - name: Install configured admin password hash
       ansible.builtin.copy:
-        content: "{{ vpn_admin_password or lookup('ansible.builtin.password', '/dev/null', length=48, chars=['ascii_letters', 'digits']) }}"
+        content: "{{ vpn_admin_hash.stdout | trim }}"
         dest: /etc/linevpn/admin-password
-        owner: linevpn
+        owner: root
         group: linevpn
-        mode: '0600'
-        force: "{{ vpn_admin_password | length > 0 }}"
+        mode: '0640'
+      when: vpn_admin_password | length > 0
       no_log: true
       notify: Restart LineVPN
+    - name: Migrate legacy plaintext administrator password
+      ansible.builtin.command:
+        argv: [/usr/local/bin/linevpn-keygen, -migrate-admin-password, /etc/linevpn/admin-password]
+      register: vpn_admin_migration
+      changed_when: "'changed' in vpn_admin_migration.stdout"
+      no_log: true
+      notify: Restart LineVPN
+    - name: Make configuration files read-only for service
+      ansible.builtin.file:
+        path: "/etc/linevpn/{{ item }}"
+        owner: root
+        group: linevpn
+        mode: '0640'
+      loop: [server.json, admin-password, bootstrap.txt, api-cert.pem, api-key.pem]
     - name: Validate server configuration
+      become_user: linevpn
       ansible.builtin.command: /usr/local/bin/linevpn-server -config /etc/linevpn/server.json -check
       changed_when: false
     - name: Install systemd units
@@ -100,6 +140,7 @@
         rule: allow
         port: "{{ item }}"
         proto: tcp
+      # XHTTP uses TCP; forwarded application UDP is carried inside this tunnel.
       loop: ['443', '8443']
     - name: Deny unsolicited inbound connections
       community.general.ufw:
@@ -130,6 +171,22 @@
         src: /etc/linevpn/api-cert.pem
         dest: "{{ playbook_dir }}/generated/{{ inventory_hostname }}-api-cert.pem"
         flat: true
+    - name: Read configured public REALITY identity for external TLS verification
+      become_user: linevpn
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - "import json; print(json.load(open('/etc/linevpn/server.json'))['transport']['sni'])"
+      register: vpn_runtime_sni
+      changed_when: false
+    - name: Save public REALITY identity on the deployment controller
+      delegate_to: localhost
+      become: false
+      ansible.builtin.copy:
+        content: "{{ vpn_runtime_sni.stdout | trim }}\n"
+        dest: "{{ playbook_dir }}/generated/{{ inventory_hostname }}-reality-sni.txt"
+        mode: '0600'
   handlers:
     - name: Restart LineVPN
       ansible.builtin.systemd:

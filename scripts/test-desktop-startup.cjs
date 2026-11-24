@@ -27,7 +27,9 @@ vm.runInNewContext(main,{
  await interval();await interval();assert.equal(dialogs.length,0,'startup grace period');
  await interval();assert.equal(dialogs.length,1);
  assert.ok(!dialogs[0].detail.includes('выберите восстановление'));
- assert.ok(dialogs[0].detail.includes('автоматически'));
+ assert.ok(dialogs[0].detail.includes('Удалите'));
+ assert.ok(!dialogs[0].detail.toLowerCase().includes('восстанов'));
+ assert.ok(dialogs[0].detail.includes('ключ доступа'));
  ready=true;await interval();assert.equal(loads,1,'recovery must not reload the UI or lose input');
- console.log('PASS: installed UI loads before service readiness; grace period and accurate repair guidance');
+ console.log('PASS: installed UI loads before service readiness; grace period and explicit clean-install guidance');
 })().catch(error=>{console.error(error);process.exitCode=1});

@@ -17,7 +17,7 @@ def version_parts(value):
 
 
 def product_version():
-    value = json.loads((ROOT / "apps/desktop/package.json").read_text())["version"]
+    value = json.loads((ROOT / "apps/desktop/package.json").read_text(encoding="utf-8"))["version"]
     version_parts(value)
     return value
 
@@ -29,7 +29,7 @@ def android_code(value):
 
 def check_consistent():
     current = product_version()
-    lock = json.loads((ROOT / "apps/desktop/package-lock.json").read_text())
+    lock = json.loads((ROOT / "apps/desktop/package-lock.json").read_text(encoding="utf-8"))
     if lock["version"] != current or lock["packages"][""]["version"] != current:
         raise ValueError("Desktop lockfile version does not match package.json")
 
@@ -37,7 +37,7 @@ def check_consistent():
 def check_newer():
     check_consistent()
     current = product_version()
-    previous = json.loads((ROOT / "installers/current/manifest.json").read_text())["version"].split("-", 1)[0]
+    previous = json.loads((ROOT / "installers/current/manifest.json").read_text(encoding="utf-8"))["version"].split("-", 1)[0]
     if version_parts(current) <= version_parts(previous):
         raise ValueError("Bump apps/desktop/package.json and package-lock.json before publishing another release")
 

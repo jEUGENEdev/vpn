@@ -51,7 +51,23 @@ function view(name) {
 for(const b of document.querySelectorAll('[data-view]'))b.onclick=()=>view(b.dataset.view);
 $('open-requests').onclick=()=>view('requests');
 
-function confirmChange(title,description){$('confirm-title').textContent=title;$('confirm-description').textContent=description;const d=$('confirm');d.returnValue='';d.showModal();return new Promise(resolve=>d.addEventListener('close',()=>resolve(d.returnValue==='ok'),{once:true}))}
+function confirmChange(title,description){
+  $('confirm-title').textContent=title;$('confirm-description').textContent=description;
+  const d=$('confirm');d.returnValue='';
+  return new Promise(resolve=>{
+    const finish=accepted=>{
+      d.removeEventListener('submit',submit);d.removeEventListener('cancel',cancel);d.removeEventListener('close',close);
+      if(d.open)d.close(accepted?'ok':'cancel');
+      resolve(accepted);
+    };
+    // Capture the decision before a queued close event can reach a reopened dialog.
+    const submit=e=>{e.preventDefault();finish(e.submitter?.value==='ok')};
+    const cancel=e=>{e.preventDefault();finish(false)};
+    const close=()=>{if(!d.open)finish(d.returnValue==='ok')};
+    d.addEventListener('submit',submit);d.addEventListener('cancel',cancel);d.addEventListener('close',close);
+    d.showModal();
+  });
+}
 async function approve(target){if(!await confirmChange('Разрешить '+target+'?','Домен и его поддомены будут использовать VPN. При сбое соединения блокируются до восстановления VPN или ручного выключения.'+(state.status==='disabled'?' Сейчас VPN выключен: до включения трафик идёт напрямую.':'')))return;await act('rules',{target,action:'approve',revision:state.revision});toast('Разрешение сохранено')}
 function row(title,description,buttons){const e=element('div',undefined,'list-row'),copy=element('div',undefined,'row-copy');copy.append(element('strong',title),element('p',description));e.append(copy);const actions=element('div',undefined,'row-actions');actions.append(...buttons);e.append(actions);return e}
 function empty(list,text){if(!list.childElementCount)list.append(element('div',text,'empty'))}
@@ -119,10 +135,16 @@ $('key-result').addEventListener('cancel',e=>e.preventDefault());
 $('key-result').addEventListener('close',()=>{$('issued-key').value='';$('key-owner').textContent='';});
 $('key-reveal').onclick=()=>{const visible=$('issued-key').type==='password';$('issued-key').type=visible?'text':'password';$('key-reveal').textContent=visible?'Скрыть':'Показать'};
 $('key-copy').onclick=async()=>{try{await navigator.clipboard.writeText($('issued-key').value);$('key-copy-status').textContent='Ключ скопирован. Сохраните его в надёжном месте.'}catch{const field=$('issued-key');field.type='text';field.focus();field.select();$('key-reveal').textContent='Скрыть';$('key-copy-status').textContent='Скопируйте выделенный ключ вручную.'}};
+$('rotation-cancel').onclick=()=>$('key-rotation').close('cancel');
 $('rotate-access-key').onclick=async()=>{
-  if(!await confirmChange('Заменить ключ доступа?','Старый ключ, все устройства этого аккаунта и коды привязки будут отозваны. Сохраните новый ключ и войдите с ним заново.'))return;
+  const dialog=$('key-rotation'), field=$('rotation-current-key');
+  field.value='';dialog.returnValue='';dialog.showModal();
+  const currentKey=await new Promise(resolve=>dialog.addEventListener('close',()=>{
+    const value=dialog.returnValue==='rotate'?field.value.trim():'';field.value='';resolve(value);
+  },{once:true}));
+  if(!currentKey)return;
   const b=$('rotate-access-key');b.disabled=true;
-  try{const out=await act('access-key/rotate',{confirm:true});showKey(out,'Новый ключ доступа')}catch(e){}finally{b.disabled=false}
+  try{const out=await act('access-key/rotate',{confirm:true,current_key:currentKey});showKey(out,'Новый ключ доступа')}catch(e){}finally{b.disabled=false}
 };
 function renderPower(){
   const enabled=state.vpn_enabled!==false, pending=powerBusy||state.power_transition;
@@ -169,12 +191,27 @@ async function waitForPower(enabled){
   }
   throw Error('Служба не завершила переключение. Проверьте её состояние; сеть ещё не подтверждена.');
 }
+let vpnPermissionSequence=0;
+function prepareAndroidVPN(){
+  if(!window.LineBridge?.prepareVPN)return Promise.resolve();
+  return new Promise((resolve,reject)=>{
+    const id=Date.now()+':'+(++vpnPermissionSequence);
+    const finish=(granted,message)=>{
+      clearTimeout(timeout);window.lineVpnPermissionResult=null;
+      if(granted)resolve();else reject(Error(message||'Android не разрешил VPN. Проверьте системные настройки VPN.'));
+    };
+    const timeout=setTimeout(()=>finish(false,'Подтверждение Android не получено. Повторите включение VPN.'),60000);
+    window.lineVpnPermissionResult=(request,granted,message)=>{if(request===id)finish(granted,message)};
+    try{window.LineBridge.prepareVPN(id)}catch(e){finish(false,e.message)}
+  });
+}
 $('vpn-toggle').onclick=async()=>{
   if(powerBusy||trafficBusy||state.power_transition)return;
   const enabled=state.vpn_enabled===false&&!state.power_error;
   if(!enabled&&!await confirmChange('Выключить VPN?','Весь трафик этого устройства, включая разрешённые адреса и доверенные приложения, будет идти напрямую. Правила сохранятся.'))return;
   ++updateSequence;powerBusy=true;render();
   try{
+    if(enabled)await prepareAndroidVPN();
     const out=await api('vpn',{enabled,confirm:!enabled});
     ++updateSequence;state=out;render();
     if(out.power_transition)await waitForPower(enabled);

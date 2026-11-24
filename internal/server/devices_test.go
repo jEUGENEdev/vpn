@@ -47,7 +47,7 @@ func deviceTestServer(t *testing.T) (*Server, func(string, string, any, int) map
 		r.Header.Set("Authorization", "Bearer "+token)
 		s.Store.View(func(st store.State) error { r.Header.Set("X-LineVPN-Profile", st.BootstrapKey); return nil })
 		w := httptest.NewRecorder()
-		s.Handler(nil).ServeHTTP(w, r)
+		testServerHandler(s).ServeHTTP(w, r)
 		if w.Code != status {
 			t.Fatalf("%s: got %d want %d: %s", path, w.Code, status, w.Body)
 		}
