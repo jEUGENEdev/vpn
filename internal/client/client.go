@@ -647,7 +647,7 @@ func (c *Client) Action(ctx context.Context, path string, data any) (any, error)
 	if path == "rules" {
 		if fields, ok := data.(map[string]any); ok && fields["action"] == "approve" {
 			target, _ := fields["target"].(string)
-			target, e := policy.Normalize(target)
+			target, e := policy.NormalizeRule(target)
 			if e != nil {
 				return nil, e
 			}

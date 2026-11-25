@@ -113,7 +113,7 @@ func (f *FakeDNS) Answer(payload []byte) ([]byte, error) {
 		return r.Pack()
 	}
 	question := q.Question[0]
-	name, e := policy.Normalize(question.Name)
+	name, e := policy.NormalizeTarget(question.Name)
 	if e != nil {
 		r.Rcode = dns.RcodeNameError
 		return r.Pack()

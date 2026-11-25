@@ -30,16 +30,28 @@ func TestBoundaryAndInheritance(t *testing.T) {
 		}
 	}
 }
-func TestInvalidTargets(t *testing.T) {
-	for _, s := range []string{"com", "co.uk", "github.io", "*.example.com", "https://example.com", "example.com:443", "a..com", "127.1", "0127.0.0.1", "1.2.3.999", "fe80::1%eth0", "example.com/path", "_srv.example.com"} {
-		if n, e := Normalize(s); e == nil {
+func TestInvalidRules(t *testing.T) {
+	for _, s := range []string{"com", "co.uk", "github.io", "sdmntprnortheu.oaiusercontent.com", "*.example.com", "https://example.com", "example.com:443", "a..com", "127.1", "0127.0.0.1", "1.2.3.999", "fe80::1%eth0", "example.com/path", "_srv.example.com"} {
+		if n, e := NormalizeRule(s); e == nil {
 			t.Fatalf("accepted %q as %q", s, n)
 		}
 	}
 }
-func TestNormalize(t *testing.T) {
+
+func TestApprovedParentOfPublicSuffixHost(t *testing.T) {
+	rules, err := Clean([]string{"oaiusercontent.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, host := range []string{"sdmntprdenmarkeast.oaiusercontent.com", "sdmntprnortheu.oaiusercontent.com"} {
+		if !Approved(rules, host) || Decide(rules, host, true) != VPN || Decide(rules, host, false) != Block {
+			t.Errorf("approved parent does not protect %s", host)
+		}
+	}
+}
+func TestNormalizeRule(t *testing.T) {
 	for in, want := range map[string]string{"EXAMPLE.COM.": "example.com", "пример.рф": "xn--e1afmkfd.xn--p1ai", "::ffff:1.2.3.4": "1.2.3.4"} {
-		got, e := Normalize(in)
+		got, e := NormalizeRule(in)
 		if e != nil || got != want {
 			t.Fatal(in, got, e)
 		}

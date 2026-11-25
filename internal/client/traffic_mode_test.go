@@ -40,6 +40,35 @@ func TestAddressPermissionRequiresApplicationConsent(t *testing.T) {
 	}
 }
 
+func TestPublicSuffixHostFollowsTrafficPolicy(t *testing.T) {
+	const host = "sdmntprnortheu.oaiusercontent.com"
+	c := testTrafficClient(t)
+	app := testApp("a")
+	c.config.Profile.AppUUID = "configured"
+	for _, tc := range []struct {
+		name, mode, decision string
+		rules                []string
+		ready                bool
+		want                 policy.Route
+	}{
+		{"unapproved", TrafficSelective, "addresses", nil, true, policy.Direct},
+		{"parent approved", TrafficSelective, "addresses", []string{"oaiusercontent.com"}, true, policy.VPN},
+		{"parent offline", TrafficSelective, "addresses", []string{"oaiusercontent.com"}, false, policy.Block},
+		{"app denied", TrafficSelective, "denied", []string{"oaiusercontent.com"}, true, policy.Block},
+		{"trusted app", TrafficSelective, "trusted", nil, true, policy.AppVPN},
+		{"whole device", TrafficAll, "pending", nil, true, policy.AppVPN},
+		{"whole device offline", TrafficAll, "pending", nil, false, policy.Block},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c.config.TrafficMode, c.config.Profile.Rules, c.ready = tc.mode, tc.rules, tc.ready
+			c.apps[app.ID] = model.Application{ApplicationInfo: app, Decision: tc.decision}
+			if got := c.routeLocked(host, app.ID); got != tc.want {
+				t.Errorf("route %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestTrafficModePersistsAndRestoresSelectiveDecisions(t *testing.T) {
 	c := testTrafficClient(t)
 	app := testApp("a")

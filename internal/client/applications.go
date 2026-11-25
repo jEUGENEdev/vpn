@@ -190,7 +190,7 @@ func (c *Client) observeLocked(target string, app model.ApplicationInfo, now tim
 // A destination permission never grants application consent. Full mode is an
 // explicit device-wide grant; selective mode requires an OS-identified app.
 func (c *Client) routeLocked(target, appID string) policy.Route {
-	if _, err := policy.Normalize(target); err != nil {
+	if _, err := policy.NormalizeTarget(target); err != nil {
 		return policy.Block
 	}
 	if c.config.Disabled {
@@ -535,13 +535,18 @@ func (c *Client) directFailureLocked(target, appID string, now time.Time) {
 	}
 	f.Failed = true
 	o.Failed = true
+	if app, ok := c.apps[appID]; ok && app.Decision == "pending" {
+		c.Events.NewApplication(now, app.ApplicationInfo, target)
+	}
+	// Discovery proposes inheritable address rules. A suffix host can prompt
+	// for application trust, but sending it as a rule rejects the whole batch.
+	if _, err := policy.NormalizeRule(target); err != nil {
+		return
+	}
 	if len(c.pending) < 1000 {
 		c.pending[target] = now
 	}
 	delete(c.resolved, target)
-	if app, ok := c.apps[appID]; ok && app.Decision == "pending" {
-		c.Events.NewApplication(now, app.ApplicationInfo, target)
-	}
 	c.Events.DirectUnavailable(now, target, o.Sources[appID])
 }
 func (c *Client) directRecovered(target, appID string, now time.Time) {
@@ -564,7 +569,9 @@ func (c *Client) directRecovered(target, appID string, now time.Time) {
 		return
 	}
 	if wasFailed {
-		c.resolved[target] = now
+		if _, err := policy.NormalizeRule(target); err == nil {
+			c.resolved[target] = now
+		}
 	}
 	o.Recovered = now
 	delete(c.pending, target)

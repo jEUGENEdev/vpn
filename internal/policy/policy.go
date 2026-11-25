@@ -13,8 +13,9 @@ import (
 
 var ErrTarget = errors.New("укажите домен или IP, без схемы, порта, пути и маски")
 
-// Normalize deliberately rejects URLs, CIDRs, wildcards and ambiguous IPv4 forms.
-func Normalize(s string) (string, error) {
+// NormalizeTarget validates a network destination. A public suffix can itself
+// be a reachable host, including one covered by a wildcard in the suffix list.
+func NormalizeTarget(s string) (string, error) {
 	s = strings.TrimSpace(s)
 	if ip, err := netip.ParseAddr(s); err == nil {
 		if ip.Zone() != "" {
@@ -51,11 +52,21 @@ func Normalize(s string) (string, error) {
 	if numeric {
 		return "", ErrTarget
 	}
-	suffix, _ := publicsuffix.PublicSuffix(ascii)
-	if suffix == ascii {
-		return "", errors.New("нельзя разрешить целую публичную зону")
-	}
 	return ascii, nil
+}
+
+// NormalizeRule additionally checks that a domain can grant access to subdomains.
+func NormalizeRule(s string) (string, error) {
+	target, err := NormalizeTarget(s)
+	if err != nil {
+		return "", err
+	}
+	if _, err := netip.ParseAddr(target); err != nil {
+		if suffix, _ := publicsuffix.PublicSuffix(target); suffix == target {
+			return "", errors.New("нельзя разрешить целую публичную зону")
+		}
+	}
+	return target, nil
 }
 
 func Matches(rule, target string) bool {
@@ -73,7 +84,7 @@ func Matches(rule, target string) bool {
 }
 
 func Approved(rules []string, target string) bool {
-	target, err := Normalize(target)
+	target, err := NormalizeTarget(target)
 	if err != nil {
 		return false
 	}
@@ -88,7 +99,7 @@ func Approved(rules []string, target string) bool {
 func Clean(rules []string) ([]string, error) {
 	seen := map[string]bool{}
 	for _, s := range rules {
-		n, e := Normalize(s)
+		n, e := NormalizeRule(s)
 		if e != nil {
 			return nil, e
 		}
@@ -122,7 +133,7 @@ const (
 )
 
 func Decide(rules []string, target string, ready bool) Route {
-	normalized, err := Normalize(target)
+	normalized, err := NormalizeTarget(target)
 	if err != nil {
 		return Block
 	}

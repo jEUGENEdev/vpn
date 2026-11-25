@@ -716,7 +716,7 @@ func (s *Server) rules(w http.ResponseWriter, r *http.Request) {
 	if !body(w, r, &c) {
 		return
 	}
-	target, e := policy.Normalize(c.Target)
+	target, e := policy.NormalizeRule(c.Target)
 	if e != nil {
 		fail(w, 400, e)
 		return
@@ -777,7 +777,7 @@ func (s *Server) dismiss(w http.ResponseWriter, r *http.Request) {
 	if !body(w, r, &c) {
 		return
 	}
-	c.Target, e = policy.Normalize(c.Target)
+	c.Target, e = policy.NormalizeRule(c.Target)
 	if e != nil {
 		fail(w, 400, e)
 		return

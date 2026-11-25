@@ -35,6 +35,34 @@ func observe(t *testing.T, c *Client, target string, app model.ApplicationInfo, 
 func pendingRequests(c *Client) []model.Request {
 	return c.State().(map[string]any)["requests"].([]model.Request)
 }
+
+func TestPublicSuffixHostDoesNotPreventAddressSuggestions(t *testing.T) {
+	const host = "sdmntprnortheu.oaiusercontent.com"
+	const other = "cdn.example.com"
+	c := testTrafficClient(t)
+	app := testApp("a")
+	now := time.Now()
+	for _, target := range []string{host, other} {
+		observe(t, c, target, app, now)
+		c.directFailure(target, app.ID, now)
+		c.directFailure(target, app.ID, now.Add(time.Second))
+		if target == host {
+			_, pendingApps := c.applicationSnapshotLocked()
+			if len(pendingApps) != 1 || pendingApps[0].Target != host {
+				t.Fatal("the failed destination must still identify the application")
+			}
+		}
+	}
+	if requests := pendingRequests(c); len(requests) != 1 || requests[0].Target != other {
+		t.Fatalf("unexpected address suggestions: %+v", requests)
+	}
+	c.directRecovered(host, app.ID, now.Add(2*time.Second))
+	c.directRecovered(other, app.ID, now.Add(2*time.Second))
+	if _, ok := c.resolved[other]; !ok || len(c.resolved) != 1 {
+		t.Fatalf("unexpected recovery batch: %+v", c.resolved)
+	}
+}
+
 func TestOnlyRepeatedDirectFailuresAreSuggestedAndSuccessClears(t *testing.T) {
 	c := testTrafficClient(t)
 	app := testApp("a")
