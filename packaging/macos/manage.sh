@@ -12,13 +12,19 @@ vpn_agent="$vpn_resources/recovery-$vpn_arch"
 [[ -f "$vpn_package" && -x "$vpn_agent" ]] || { echo 'Установщик повреждён. Скачайте полный DMG заново.' >&2; exit 1; }
 
 vpn_lock=/var/run/dev.linevpn.installer.lock
-if ! /bin/mkdir "$vpn_lock" 2>/dev/null; then
+if ! /bin/mkdir -m 700 "$vpn_lock" 2>/dev/null; then
   echo 'Другая операция установки уже выполняется. Дождитесь её завершения; после аварийного завершения перезагрузите Mac.' >&2
   exit 1
 fi
-trap '/bin/rmdir "$vpn_lock"' EXIT
+trap '/bin/rm -f "$vpn_lock/operator.uid"; /bin/rmdir "$vpn_lock"' EXIT
 vpn_log="$(/usr/bin/mktemp /var/log/linevpn-installer.XXXXXX)"
 if [[ "$vpn_action" == install ]]; then
+  # Capture the account that opened the DMG before OS elevation. The package
+  # reads the handoff only from this installer-owned directory.
+  vpn_operator="${2:-}"
+  if [[ "$vpn_operator" =~ ^[1-9][0-9]{2,9}$ ]] && (( vpn_operator >= 500 && vpn_operator < 4294967295 )); then
+    (umask 077; printf '%s\n' "$vpn_operator" > "$vpn_lock/operator.uid")
+  fi
   if ! /usr/sbin/installer -pkg "$vpn_package" -target / > "$vpn_log" 2>&1; then
     /usr/bin/tail -n 20 "$vpn_log" >&2
     echo "Журнал установки: $vpn_log (подробности также в /var/log/install.log)." >&2

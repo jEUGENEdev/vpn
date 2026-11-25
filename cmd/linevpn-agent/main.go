@@ -27,6 +27,12 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "--operator-dialog" {
+		if err := serveOperatorDialog(os.Args[2]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "--identify-application" {
 		info, err := owner.IdentifySelection(context.Background(), os.Args[2])
 		if err != nil {
@@ -130,6 +136,13 @@ func serve(ctx context.Context, dir string) error {
 		return e
 	}
 	defer control.Listener.Close()
+	operator, err := openDesktopOperator(dir)
+	if err != nil {
+		log.Printf("desktop operator approval unavailable: %v", err)
+	}
+	if operator != nil && operator.close != nil {
+		defer operator.close()
+	}
 	// Publish only the public certificate, never the administrative credential.
 	publicSession, e := json.Marshal(map[string]string{"certificate": control.Credentials.Certificate})
 	if e != nil {
@@ -164,7 +177,12 @@ func serve(ctx context.Context, dir string) error {
 			return id
 		})
 	})
-	h := &http.Server{Handler: bridge.Public(desktopHandler(d.Client, token, http.NotFoundHandler())), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second}
+	mux := http.NewServeMux()
+	mux.Handle("/", bridge.Public(desktopHandler(d.Client, token, http.NotFoundHandler())))
+	if operator != nil {
+		mux.Handle("/local/control/confirm", bridge.Operator(operator.token, operator.confirm))
+	}
+	h := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second}
 	admin := &http.Server{Handler: bridge.Privileged(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second}
 	go func() {
 		if err := admin.Serve(control.Listener); err != nil && err != http.ErrServerClosed {

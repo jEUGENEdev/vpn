@@ -38,7 +38,7 @@ PYHEALTH
   if [[ -f build/macos-network.log ]]; then cat build/macos-network.log; fi
 }
 trap recover EXIT
-sudo /bin/bash build/macos-tested-setup.app/Contents/Resources/manage.sh install > build/macos-install.log
+sudo /bin/bash build/macos-tested-setup.app/Contents/Resources/manage.sh install "$(/usr/bin/id -u)" > build/macos-install.log
 vpn_ready=false
 for ((i=0; i<20; i++)); do
   if [[ -f /var/lib/linevpn/ui-token ]]; then

@@ -3,7 +3,10 @@ const assert=require('node:assert/strict');
 const {createControl,elevationCommand,pickExecutable}=require('../apps/desktop/control.cjs');
 const id='a'.repeat(43),receipt='b'.repeat(43);
 (async()=>{
- for(const platform of ['darwin','win32'])await testSettingsSession(platform);
+ for(const platform of ['darwin','win32']){
+  await testSettingsSession(platform);
+  await testInstallerDelegation(platform);
+ }
  for(const [platform,system,selected,agent] of [
   ['darwin','darwin','/Applications/Тест.app','/Library/Application Support/LineVPN/linevpn-agent'],
   ['win32','windows',"C:\\Test's Apps\\Тест.exe",'C:\\Program Files\\LineVPN\\resources\\agent\\linevpn-agent.exe'],
@@ -31,8 +34,35 @@ const id='a'.repeat(43),receipt='b'.repeat(43);
  assert.equal(await rotating('state'),'Bearer first');
  currentToken='second';assert.equal(await rotating('state'),'Bearer second','stale status token after service restart');
  await testPinnedStatusChannel();
- console.log('PASS: one OS approval for consecutive settings changes on Windows and macOS');
+ console.log('PASS: delegated Windows and macOS users manage settings and accounts without elevation; administrative fallback requires consent');
 })().catch(e=>{console.error(e);process.exitCode=1});
+
+async function testInstallerDelegation(platform) {
+ const grant='s'.repeat(96), operator='o'.repeat(43), approvals=[];
+ let action, denied=false;
+ const response=(body,status=200)=>({ok:status===200,status,json:async()=>body});
+ const api=createControl({platform,resources:'/fixture',systemRoot:'C:\\Windows',token:'status-token',operatorToken:()=>operator,
+  execute:async()=>{throw Error('unexpected administrator prompt')},
+  fetchImpl:async(url,opts)=>{
+   switch(new URL(url).pathname){
+    case '/local/control/request':
+     action=JSON.parse(opts.body).action;return response({id,receipt});
+    case '/local/control/confirm':
+     assert.equal(opts.headers.Authorization,'Bearer '+operator);
+     assert.deepEqual(JSON.parse(opts.body),{id,receipt});
+     approvals.push(action);return response({ok:true});
+    case '/local/control/result/'+id:
+     return response(denied?{status:403,body:{error:'Отменено'}}:{status:200,body:action==='settings-session'?{token:grant,expires_at:Math.floor(Date.now()/1000)+3600}:{saved:true}});
+    case '/local/control/settings/rules': case '/local/control/settings/dismiss':
+     assert.equal(opts.headers.Authorization,'Bearer '+grant);return response({saved:true});
+    default:throw Error('unexpected request');
+   }
+  }});
+ await api('rules',{action:'approve',target:'example.com'});await api('dismiss',{target:'example.net'});
+ await api('login',{access_key:'test-only'});
+ denied=true;await assert.rejects(()=>api('revoke',{id:'other'}),/Отменено/);
+ assert.deepEqual(approvals,['settings-session','login','revoke']);
+}
 
 async function testSettingsSession(platform) {
  const staged=[], changes=[], commands=[];

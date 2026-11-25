@@ -48,6 +48,13 @@ trap '/bin/rm -f "$vpn_pf"' EXIT
 ' /etc/pf.conf > "$vpn_pf"
 /sbin/pfctl -nf "$vpn_pf"
 /bin/cat "$vpn_pf" > /etc/pf.conf
+vpn_operator_file=/var/run/dev.linevpn.installer.lock/operator.uid
+if [[ -f "$vpn_operator_file" ]]; then
+  # The DMG handoff and installed copy are both controlled by root. A
+  # standalone/headless package installs the service without delegating it.
+  [[ ! -L "$vpn_operator_file" && "$(/usr/bin/stat -f '%u:%Lp' "$vpn_operator_file")" == 0:600 ]]
+  /usr/bin/install -o root -g wheel -m 644 "$vpn_operator_file" '/Library/Application Support/LineVPN/desktop-operator.uid'
+fi
 /bin/launchctl enable system/dev.linevpn.agent
 /bin/launchctl bootstrap system /Library/LaunchDaemons/dev.linevpn.agent.plist
 # A registered launchd job may still fail during startup. Check the authenticated
