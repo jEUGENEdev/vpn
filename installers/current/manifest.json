@@ -1,9 +1,9 @@
 {
-  "version": "0.4.1-preview",
-  "android_version_code": 4001,
+  "version": "0.4.2-preview",
+  "android_version_code": 4002,
   "android_certificate_sha256": "a5ed967ba9dd5cc7626793c6b8eae8ab7d8a904e855355b71d6ba9b17e84b8a5",
-  "source_commit": "680274bad416a1ae84f5507d5844ed74c5871d75",
-  "built_at": "2026-11-24T23:37:36.040684+00:00",
+  "source_commit": "4018b8e937bc527faff4373b9013755371e94326",
+  "built_at": "2026-11-25T17:17:42.290932+00:00",
   "status": "preview-native-acceptance-required",
   "signing": {
     "android": "persistent certificate verified against the pinned identity; see docs/android-signing.md for legacy migration",
@@ -12,19 +12,19 @@
   },
   "files": [
     {
-      "name": "\u0421\u0435\u0442\u044c-0.4.1-android-preview.apk",
-      "size": 86789959,
-      "sha256": "dce07cdfef65a5d6528961a5495232006557cb6d312b98e19efccea251dba1ba"
+      "name": "\u0421\u0435\u0442\u044c-0.4.2-android-preview.apk",
+      "size": 86792071,
+      "sha256": "91865a16ce6875f513fec48b37821f4aa6d95da93bcbd83d8a616ae537fa1c01"
     },
     {
-      "name": "\u0421\u0435\u0442\u044c-0.4.1-macos-universal.dmg",
-      "size": 313396456,
-      "sha256": "34fc520e6d5e20334159a77c897e4fb0814808153a7bc782fce7cf85ef2d1186"
+      "name": "\u0421\u0435\u0442\u044c-0.4.2-macos-universal.dmg",
+      "size": 313408951,
+      "sha256": "1961ecee0e0e41598f9494f5096190406cf803eb51d0e027286b419c927738fe"
     },
     {
-      "name": "\u0421\u0435\u0442\u044c-0.4.1-windows-x64.msi",
-      "size": 178319360,
-      "sha256": "fa512e6f55196e3ffc0bf45caae1710ec5ee8c8eee7c5901af29ee3567c778ad"
+      "name": "\u0421\u0435\u0442\u044c-0.4.2-windows-x64.msi",
+      "size": 178327552,
+      "sha256": "cb5fbd84b097eea7c99a448f0fa1aacf5b4e23326e6a66e876151a51c88cd618"
     }
   ]
 }
