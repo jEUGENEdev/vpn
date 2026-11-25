@@ -8,6 +8,7 @@ import platform
 import socket
 import subprocess
 import time
+import urllib.error
 import urllib.request
 
 from desktop_control_fixture import public_opener, request as approve, state as public_state
@@ -18,6 +19,21 @@ assert mac or platform.system() == "Windows"
 data = pathlib.Path("/var/lib/linevpn") if mac else pathlib.Path(os.environ["PROGRAMDATA"]) / "LineVPN"
 token = (data / "ui-token").read_text().strip()
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+# Exercise the installed operator ACL and the real pinned service as the
+# initiating user. A nonexistent ticket checks authorization without a dialog.
+operator_dir = pathlib.Path("/Library/Application Support/LineVPN") if mac else data
+operator = json.loads((operator_dir / "desktop-operator.json").read_bytes())["token"]
+for bearer, expected in ((token, 403), (operator, 409)):
+    probe = urllib.request.Request(
+        "https://127.0.0.1:17891/local/control/confirm", data=b'{"id":"missing","receipt":"missing"}',
+        headers={"Authorization": "Bearer " + bearer, "Content-Type": "application/json"})
+    try:
+        public_opener(data).open(probe, timeout=5).close()
+    except urllib.error.HTTPError as error:
+        assert error.code == expected, error.code
+    else:
+        raise AssertionError("an invalid confirmation was accepted")
 
 
 # Authorize once. The same scoped grant must survive every worker restart.

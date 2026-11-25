@@ -14,6 +14,17 @@ let controlAPI;
 let win,tray,quitting=false,failures=0,lastFailure=0;const noticeTimes=new Map();const seenEvents=new Set();
 const smokeReport=process.env.GITHUB_ACTIONS==='true'?process.env.LINEVPN_SMOKE_TEST_REPORT:'';
 const stateDir=process.platform==='win32'?path.join(process.env.PROGRAMDATA,'LineVPN'):'/var/lib/linevpn';
+function operatorToken(){
+ const dir=process.platform==='win32'?stateDir:'/Library/Application Support/LineVPN';
+ try {
+  const {token}=JSON.parse(fs.readFileSync(path.join(dir,'desktop-operator.json'),'utf8'));
+  if(typeof token!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(token))throw Error('Повреждены данные пользователя управления');
+  return token;
+ }catch(error){
+  if(['ENOENT','EACCES','EPERM'].includes(error.code))return null;
+  throw error;
+ }
+}
 function notify(event){if(!event||!['outage','recovered','suggestion','application'].includes(event.kind))return;if(event.id){const id=event.at+':'+event.id;if(seenEvents.has(id))return;seenEvents.add(id);if(seenEvents.size>300)seenEvents.delete(seenEvents.values().next().value)}const now=Date.now(),key=['suggestion','application'].includes(event.kind)?'suggestion':event.kind;const interval=['suggestion','application'].includes(event.kind)?300000:900000;if(now-(noticeTimes.get(key)||0)<(event.kind==='recovered'?60000:interval))return;noticeTimes.set(key,now);const notice=new Notification({title:String(event.title).slice(0,100),body:String(event.message).slice(0,500),icon:iconPath});notice.on('click',()=>{win?.show();win?.focus()});notice.show()}
 app.setAppUserModelId('dev.linevpn.desktop');
 if(!app.requestSingleInstanceLock())app.quit();else{
@@ -39,7 +50,7 @@ app.whenReady().then(async()=>{
  ipcMain.on('network-event',(event,value)=>{if(trustedFrame(event))notify(value)});
  ipcMain.handle('local-request',(event,action,data)=>{if(!trustedFrame(event)||!controlAPI)throw Error('Недоверенный источник команды');return controlAPI(action,data)});
  // Load the installed UI even while the service is starting; never leave a blank window.
- controlAPI=createControl({selectApplication:()=>pickExecutable(options=>dialog.showOpenDialog(win,options)),token:()=>fs.readFileSync(path.join(stateDir,'ui-token'),'utf8').trim(),session:()=>JSON.parse(fs.readFileSync(path.join(stateDir,'ui-session.json'),'utf8'))});
+ controlAPI=createControl({operatorToken,selectApplication:()=>pickExecutable(options=>dialog.showOpenDialog(win,options)),token:()=>fs.readFileSync(path.join(stateDir,'ui-token'),'utf8').trim(),session:()=>JSON.parse(fs.readFileSync(path.join(stateDir,'ui-session.json'),'utf8'))});
  await win.loadURL(uiURL);
  let startupNoticeShown=false,checking=false;
  async function check(){

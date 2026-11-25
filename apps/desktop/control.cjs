@@ -43,11 +43,12 @@ async function pickExecutable(showDialog, platform=process.platform, resources=p
   }catch(error){throw Error(error.stderr?.trim()||'Не удалось определить исполняемый файл выбранного приложения.')}
 }
 
-function createControl({token, session, platform=process.platform, resources=process.resourcesPath, systemRoot=process.env.SystemRoot, fetchImpl, execute=run, selectApplication, delay=ms=>new Promise(resolve=>setTimeout(resolve,ms))}) {
+function createControl({token, session, operatorToken, platform=process.platform, resources=process.resourcesPath, systemRoot=process.env.SystemRoot, fetchImpl, execute=run, selectApplication, delay=ms=>new Promise(resolve=>setTimeout(resolve,ms))}) {
   let busy=false, grant=null;
   const transport=fetchImpl||((url,options)=>pinnedFetch(url,options,session().certificate));
   async function request(pathName, body, bearer=token) {
-    const response=await transport(base+'/local/'+pathName, {method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+(typeof bearer==='function'?bearer():bearer),'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(pathName==='state'?3000:30000)});
+    const timeout=pathName==='control/confirm'?120000:pathName==='state'?3000:30000;
+    const response=await transport(base+'/local/'+pathName, {method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+(typeof bearer==='function'?bearer():bearer),'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(timeout)});
     const data=await response.json();
     if(!response.ok)throw Object.assign(Error(data.error||'Служба отклонила запрос'),{status:response.status});
     return data;
@@ -55,9 +56,14 @@ function createControl({token, session, platform=process.platform, resources=pro
   async function approved(action,data) {
     const ticket=await request('control/request',{action,data});
     if(!ticketPattern.test(ticket.id)||!ticketPattern.test(ticket.receipt))throw Error('Неверный ответ службы');
-    const [program,args]=elevationCommand(platform,resources,ticket.id,systemRoot);
-    try { await execute(program,args,{timeout:180000,maxBuffer:8192,windowsHide:true}); }
-    catch { throw Error('Системное подтверждение отменено или завершилось ошибкой.'); }
+    const operator=operatorToken?.();
+    if(operator){
+      await request('control/confirm',{id:ticket.id,receipt:ticket.receipt},operator);
+    }else{
+      const [program,args]=elevationCommand(platform,resources,ticket.id,systemRoot);
+      try { await execute(program,args,{timeout:180000,maxBuffer:8192,windowsHide:true}); }
+      catch { throw Error('Системное подтверждение отменено или завершилось ошибкой.'); }
+    }
     const result=await request('control/result/'+ticket.id,undefined,ticket.receipt);
     if(result.pending)throw Error('Служба ещё не подтвердила изменение');
     if(result.status<200||result.status>=300)throw Error(result.body?.error||'Служба отклонила изменение');

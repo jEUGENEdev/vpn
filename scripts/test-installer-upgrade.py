@@ -113,6 +113,8 @@ class VersionTests(unittest.TestCase):
             self.assertNotEqual(component.attrib['Guid'], '{9A5D6DC0-5C93-4DC6-82BC-9857E58B9B20}', 'renamed/moved shortcut must not reuse the legacy component')
             marker = component.find('w:RegistryValue', ns)
             self.assertEqual(marker.attrib['Name'], 'StartMenuShortcut')
+            operator = component.find('w:RegistryValue[@Name="DesktopOperatorSID"]', ns)
+            self.assertEqual((operator.get('Root'), operator.get('Value')), ('HKLM', '[UserSID]'))
             self.assertIsNone(first.find('.//w:StandardDirectory[@Id="CommonAppDataFolder"]', ns), 'user state must remain outside MSI ownership')
             self.assertEqual(len(first.findall('.//w:ServiceInstall', ns)), 1)
             self.assertEqual(first.find('.//w:ServiceInstall', ns).get('Vital'), 'yes',
@@ -254,6 +256,11 @@ elif name == 'uname':
 elif name == 'sysctl':
     print(os.environ.get('APPLE_SILICON', '0'))
 elif name == 'installer':
+    expected = os.environ.get('EXPECTED_OPERATOR_UID')
+    if expected:
+        handoff = root / 'dev.linevpn.installer.lock' / 'operator.uid'
+        if handoff.read_text().strip() != expected or handoff.stat().st_mode & 0o777 != 0o600 or handoff.parent.stat().st_mode & 0o777 != 0o700:
+            sys.exit(2)
     sys.exit(int(os.environ.get('INSTALL_CODE', '0')))
 elif name == 'launchctl':
     if sys.argv[1] == 'print':
@@ -594,14 +601,19 @@ class MacOSScriptTests(unittest.TestCase):
         self.assertEqual(pf.read_text(), '# fixture\nanchor "other"\nanchor "linevpn"\n')
         self.assertFalse(any(call[0] == 'pfctl' and '-F' in call for call in self.trace()))
 
-    def run_manager(self, action, **env):
+    def run_manager(self, action, *args, **env):
         for arch in ('arm64', 'x64'):
             (self.root / f'payload-{arch}.pkg').write_bytes(b'fixture')
             recovery = self.root / f'recovery-{arch}'
             if not recovery.exists():
                 recovery.symlink_to(self.commands / 'linevpn-agent')
-        return subprocess.run(['bash', str(self.root / 'manage.sh'), action],
+        return subprocess.run(['bash', str(self.root / 'manage.sh'), action, *args],
                               env=dict(self.env, **env), text=True, capture_output=True, timeout=15)
+
+    def test_manager_hands_off_only_initiating_uid(self):
+        result = self.run_manager('install', '501', EXPECTED_OPERATOR_UID='501')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.root / 'dev.linevpn.installer.lock').exists())
 
     def test_manager_selects_native_payload_including_rosetta(self):
         for arch, translated, expected in [('arm64', '0', 'arm64'), ('x86_64', '0', 'x64'), ('x86_64', '1', 'arm64')]:

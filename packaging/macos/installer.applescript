@@ -9,7 +9,8 @@ on run argv
             set operation to "uninstall"
         end if
         with timeout of 1800 seconds
-            set operationDetails to do shell script "/bin/bash " & quoted form of (resources & "/manage.sh") & " " & quoted form of operation with administrator privileges
+            set operatorUID to do shell script "/usr/bin/id -u"
+            set operationDetails to do shell script "/bin/bash " & quoted form of (resources & "/manage.sh") & " " & quoted form of operation & " " & quoted form of operatorUID with administrator privileges
         end timeout
         if operation is "install" then
             display dialog "Приложение «Сеть» установлено. Фоновая служба запущена и проверена. Добавьте профиль сервера и войдите." with title "Готово" buttons {"Закрыть", "Открыть «Сеть»"} default button "Открыть «Сеть»" with icon iconFile

@@ -56,6 +56,7 @@ programmenu=node(p,'StandardDirectory',Id='ProgramMenuFolder')
 c=node(programmenu,'Component',Id='SetStartMenuShortcut',Guid=str(uuid.uuid5(uuid.NAMESPACE_URL,'dev.linevpn.windows.shortcut:ProgramMenuFolder/Сеть.lnk')),Bitness='always64')
 node(c,'Shortcut',Id='StartShortcut',Name='Сеть',Target='[#ClientUI]',Advertise='no',Icon='SetIcon',IconIndex='0',WorkingDirectory='INSTALLFOLDER')
 node(c,'RegistryValue',Root='HKLM',Key='Software\\LineVPN\\Installer',Name='StartMenuShortcut',Type='integer',Value='1',KeyPath='yes')
+node(c,'RegistryValue',Root='HKLM',Key='Software\\LineVPN\\Installer',Name='DesktopOperatorSID',Type='string',Value='[UserSID]')
 node(feature,'ComponentRef',Id='SetStartMenuShortcut')
 # The cached MSI owns an independent copy. A missing installed executable must
 # not make explicit uninstall impossible or strand the persistent WFP filters.
