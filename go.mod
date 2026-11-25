@@ -3,7 +3,9 @@ module github.com/jEUGENEdev/vpn
 go 1.27
 
 require (
+	github.com/apernet/quic-go v0.61.1-0.20260806010916-184d081eef3e
 	github.com/miekg/dns v1.1.73
+	github.com/sagernet/gvisor v0.0.0-20260727.0-sing-box-mod.1
 	github.com/sagernet/sing v0.9.6
 	github.com/sagernet/sing-tun v0.9.6
 	github.com/tailscale/wf v0.0.0-20240214030419-6fbb0a674ee6
@@ -12,14 +14,13 @@ require (
 	go.etcd.io/bbolt v1.5.0
 	golang.org/x/crypto v0.59.0
 	golang.org/x/mobile v0.0.0-20261011034528-197770444867
-	golang.org/x/net v0.62.0
+	golang.org/x/net v0.63.0
 	golang.org/x/sys v0.50.0
 	google.golang.org/protobuf v1.36.12
 )
 
 require (
 	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c // indirect
-	github.com/apernet/quic-go v0.61.1-0.20260806010916-184d081eef3e // indirect
 	github.com/florianl/go-nfqueue/v2 v2.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/ghodss/yaml v1.0.1-0.20220118164431-d8423dcdf344 // indirect
@@ -53,7 +54,6 @@ require (
 	github.com/refraction-networking/utls v1.8.3-0.20261108164504-a13c59ffe98b // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/sagernet/fswatch v0.1.2 // indirect
-	github.com/sagernet/gvisor v0.0.0-20260727.0-sing-box-mod.1 // indirect
 	github.com/sagernet/netlink v0.0.0-20240612041022-b9a21c07ac6a // indirect
 	github.com/sagernet/nftables v0.3.0-mod.4 // indirect
 	github.com/vishvananda/netlink v1.3.1 // indirect
