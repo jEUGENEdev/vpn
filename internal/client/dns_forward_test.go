@@ -47,6 +47,63 @@ func fullDNSClient(t *testing.T, handler dns.HandlerFunc) *Client {
 	return c
 }
 
+func TestPublicSuffixHostDNS(t *testing.T) {
+	for _, mode := range []string{TrafficSelective, TrafficAll} {
+		t.Run(mode, func(t *testing.T) {
+			var c *Client
+			if mode == TrafficSelective {
+				c = testTrafficClient(t)
+			} else {
+				c = fullDNSClient(t, func(w dns.ResponseWriter, q *dns.Msg) {
+					r := new(dns.Msg)
+					r.SetReply(q)
+					h := dns.RR_Header{Name: q.Question[0].Name, Rrtype: q.Question[0].Qtype, Class: dns.ClassINET, Ttl: 60}
+					if h.Rrtype == dns.TypeA {
+						r.Answer = []dns.RR{&dns.A{Hdr: h, A: net.ParseIP("1.1.1.1")}}
+					} else {
+						r.Answer = []dns.RR{&dns.AAAA{Hdr: h, AAAA: net.ParseIP("2606:4700:4700::1111")}}
+					}
+					if err := w.WriteMsg(r); err != nil {
+						t.Error(err)
+					}
+				})
+			}
+			for _, host := range []string{"sdmntprdenmarkeast.oaiusercontent.com", "sdmntprnortheu.oaiusercontent.com"} {
+				for _, typ := range []uint16{dns.TypeA, dns.TypeAAAA} {
+					q := new(dns.Msg)
+					q.SetQuestion(dns.Fqdn(host), typ)
+					wire, err := q.Pack()
+					if err != nil {
+						t.Fatal(err)
+					}
+					reply, err := c.answerDNS(context.Background(), wire, netip.MustParseAddr("172.29.255.2"), false)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var r dns.Msg
+					if err := r.Unpack(reply); err != nil {
+						t.Fatal(err)
+					}
+					if r.Rcode != dns.RcodeSuccess || len(r.Answer) != 1 || r.Answer[0].Header().Rrtype != typ {
+						t.Errorf("%s %s: rcode=%s answers=%v", host, dns.TypeToString[typ], dns.RcodeToString[r.Rcode], r.Answer)
+						continue
+					}
+					var ip net.IP
+					if typ == dns.TypeA {
+						ip = r.Answer[0].(*dns.A).A
+					} else {
+						ip = r.Answer[0].(*dns.AAAA).AAAA
+					}
+					addr, _ := netip.AddrFromSlice(ip)
+					if target, err := c.target(addr); err != nil || target != host {
+						t.Errorf("%s routes to %q, want %q: %v", addr, target, host, err)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestFullModeDNSPreservesRecordTypesThroughTunnel(t *testing.T) {
 	var hits atomic.Int32
 	c := fullDNSClient(t, func(w dns.ResponseWriter, q *dns.Msg) {
